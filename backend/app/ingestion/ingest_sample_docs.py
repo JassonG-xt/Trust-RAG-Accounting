@@ -1,39 +1,73 @@
-"""Ingestion CLI — read sample_docs/*.md and write a JSON document store.
+"""Ingestion CLI — read sample_docs/* (Markdown / PDF / DOCX) and emit
+two JSON stores: documents-level and chunk-level.
 
-Usage:
+Phase 2A compat: the old ``--out`` argument still works and writes the
+document store. The chunk store defaults to a sibling
+``data/trustrag_chunks.json`` so RAG retrieval keeps working without
+extra flags.
 
-    python -m backend.app.ingestion.ingest_sample_docs \
-        --source sample_docs \
+Examples:
+
+    # Phase 2B (recommended)
+    python -m backend.app.ingestion.ingest_sample_docs \\
+        --source sample_docs \\
+        --documents-out data/trustrag_documents.json \\
+        --chunks-out data/trustrag_chunks.json
+
+    # Phase 2A compatibility
+    python -m backend.app.ingestion.ingest_sample_docs \\
+        --source sample_docs \\
         --out data/trustrag_documents.json
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from collections import Counter
 from pathlib import Path
 
-from .markdown_loader import load_markdown_documents
+from .chunker import chunk_documents
+from .store_writer import write_chunk_store, write_document_store
+from .unified_loader import load_documents_from_directory
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="ingest_sample_docs",
-        description="Ingest accounting Markdown documents into a JSON store.",
+        description=(
+            "Ingest accounting documents (Markdown / PDF / DOCX) into "
+            "documents-level and chunk-level JSON stores."
+        ),
     )
     p.add_argument(
         "--source",
         type=Path,
         default=Path("sample_docs"),
-        help="Directory containing the source Markdown files.",
+        help="Directory containing the source documents.",
     )
+    p.add_argument(
+        "--documents-out",
+        type=Path,
+        default=None,
+        help="Output path for the documents JSON store.",
+    )
+    p.add_argument(
+        "--chunks-out",
+        type=Path,
+        default=None,
+        help="Output path for the chunks JSON store.",
+    )
+    # Phase 2A compatibility alias.
     p.add_argument(
         "--out",
         type=Path,
-        default=Path("data/trustrag_documents.json"),
-        help="Output JSON store path.",
+        default=None,
+        help=(
+            "[Deprecated alias for --documents-out] Phase 2A path; "
+            "when used alone, chunks_out defaults to "
+            "data/trustrag_chunks.json next to it."
+        ),
     )
     p.add_argument(
         "--quiet",
@@ -43,46 +77,78 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return p
 
 
-def ingest(source: Path, out_path: Path, *, quiet: bool = False) -> dict:
-    """Run the ingestion and write the JSON store. Returns a summary dict."""
+def _resolve_paths(args: argparse.Namespace) -> tuple[Path, Path]:
+    documents_out: Path | None = args.documents_out or args.out
+    if documents_out is None:
+        documents_out = Path("data/trustrag_documents.json")
+    chunks_out: Path | None = args.chunks_out
+    if chunks_out is None:
+        # Default chunks store sits next to the documents store.
+        chunks_out = documents_out.parent / "trustrag_chunks.json"
+    return documents_out, chunks_out
 
-    documents = load_markdown_documents(source)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    payload = {
-        "schema_version": 1,
-        "source": str(source),
-        "count": len(documents),
-        "documents": [doc.model_dump() for doc in documents],
-    }
-    out_path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False, default=str),
-        encoding="utf-8",
-    )
+def ingest(
+    source: Path,
+    documents_out_legacy: Path | None = None,
+    *,
+    documents_out: Path | None = None,
+    chunks_out: Path | None = None,
+    quiet: bool = False,
+) -> dict:
+    """Run a full ingestion and write both JSON stores.
+
+    ``documents_out_legacy`` is a positional-only back-compat slot for the
+    Phase 2A signature ``ingest(source, out_path, quiet=...)``; new
+    callers should pass ``documents_out=`` / ``chunks_out=`` explicitly.
+    """
+
+    if documents_out is None:
+        documents_out = documents_out_legacy or Path("data/trustrag_documents.json")
+    if chunks_out is None:
+        chunks_out = documents_out.parent / "trustrag_chunks.json"
+
+    documents = load_documents_from_directory(source)
+    chunks = chunk_documents(documents)
+
+    write_document_store(documents, documents_out, source=str(source))
+    write_chunk_store(chunks, chunks_out, source=str(source))
 
     summary = {
         "document_count": len(documents),
+        "chunk_count": len(chunks),
         "document_types": dict(Counter(d.document_type for d in documents)),
         "clients": sorted({d.client for d in documents if d.client}),
-        "policy_families": sorted({d.policy_family for d in documents if d.policy_family}),
-        "out_path": str(out_path),
+        "policy_families": sorted(
+            {d.policy_family for d in documents if d.policy_family}
+        ),
+        "documents_out": str(documents_out),
+        "chunks_out": str(chunks_out),
     }
 
     if not quiet:
-        print(f"[ingest] source       : {source}")
+        print(f"[ingest] source        : {source}")
         print(f"[ingest] document_count: {summary['document_count']}")
+        print(f"[ingest] chunk_count   : {summary['chunk_count']}")
         print(f"[ingest] document_types: {summary['document_types']}")
         print(f"[ingest] clients       : {summary['clients']}")
         print(f"[ingest] policy_families: {summary['policy_families']}")
-        print(f"[ingest] out_path      : {summary['out_path']}")
+        print(f"[ingest] documents_out : {summary['documents_out']}")
+        print(f"[ingest] chunks_out    : {summary['chunks_out']}")
 
     return summary
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_arg_parser().parse_args(argv)
+    documents_out, chunks_out = _resolve_paths(args)
     try:
-        ingest(args.source, args.out, quiet=args.quiet)
+        ingest(
+            args.source,
+            documents_out=documents_out,
+            chunks_out=chunks_out,
+            quiet=args.quiet,
+        )
     except Exception as exc:
         print(f"[ingest] FAILED: {exc}", file=sys.stderr)
         return 1

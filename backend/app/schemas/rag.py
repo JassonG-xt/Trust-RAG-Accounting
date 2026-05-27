@@ -44,7 +44,7 @@ QuestionType = Literal[
 
 
 class Evidence(BaseModel):
-    """A single retrieved evidence snippet."""
+    """A single retrieved evidence snippet (chunk-level in Phase 2B)."""
 
     doc_id: str = Field(..., description="Stable identifier of the source document.")
     title: str
@@ -61,6 +61,17 @@ class Evidence(BaseModel):
             "Domain category, e.g. bookkeeping_sop / invoice_compliance / "
             "tax_policy_note / reimbursement_policy / document_checklist."
         ),
+    )
+    # Phase 2B chunk-level identity (optional for back-compat with any
+    # legacy fallback path that still produces document-level evidence).
+    chunk_id: str | None = Field(
+        default=None, description="Chunk identifier: '{document_id}::chunk_NNNN'."
+    )
+    section_title: str | None = Field(
+        default=None, description="Heading nearest the chunk content."
+    )
+    page_number: int | None = Field(
+        default=None, description="Page number for PDF-sourced chunks."
     )
     score: float = Field(default=0.0, description="Retriever score (higher is better).")
     source_type: Literal["policy", "faq", "wiki", "external", "unknown"] = "policy"
@@ -126,6 +137,7 @@ class DocumentSummary(BaseModel):
 
 class DocumentsResponse(BaseModel):
     count: int
+    chunk_count: int = 0
     source: str | None = None
     documents: list[DocumentSummary] = Field(default_factory=list)
 
@@ -177,6 +189,14 @@ class Citation(BaseModel):
     snippet: str
     valid_from: str | None = None
     client: str | None = None
+    # Phase 2B chunk-level identity.
+    chunk_id: str | None = None
+    document_id: str | None = None
+    source: str | None = Field(
+        default=None, description="Source path of the originating document."
+    )
+    section_title: str | None = None
+    page_number: int | None = None
 
 
 # ---------------------------------------------------------------------------

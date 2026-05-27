@@ -76,8 +76,20 @@ def test_bookkeeping_sop_query_routes_to_alpha_trading(client: TestClient) -> No
     # bookkeeping_sop, NOT invoice_compliance.
     assert payload["question_type"] == "bookkeeping_sop"
 
-    support_doc_ids = {e["doc_id"] for e in payload["support_evidence"]}
+    support = payload["support_evidence"]
+    support_doc_ids = {e["doc_id"] for e in support}
     assert "alpha_trading_bookkeeping_sop_2026" in support_doc_ids
+
+    # Phase 2B: support evidence must carry chunk_id and no Beta leakage.
+    support_chunk_ids = {e.get("chunk_id") for e in support}
+    assert any(
+        cid and cid.startswith("alpha_trading_bookkeeping_sop_2026::chunk_")
+        for cid in support_chunk_ids
+    )
+    assert not any(
+        cid and cid.startswith("beta_catering_invoice_rule_2026::chunk_")
+        for cid in support_chunk_ids
+    )
 
     answer = payload["answer"]
     assert (
@@ -88,6 +100,12 @@ def test_bookkeeping_sop_query_routes_to_alpha_trading(client: TestClient) -> No
     assert payload["citations"], "citations must be non-empty"
     primary = payload["citations"][0]
     assert primary["client"] == "Alpha Trading Co."
+    # Phase 2B: primary citation carries chunk_id pointing back into the
+    # ingested store.
+    assert primary.get("chunk_id", "").startswith(
+        "alpha_trading_bookkeeping_sop_2026::chunk_"
+    )
+    assert primary.get("section_title")
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +136,13 @@ def test_temporal_checker_uses_ingested_metadata(client: TestClient) -> None:
     assert any(
         pair.get("policy_family") == "reimbursement_policy"
         for pair in conflict["conflict_pairs"]
+    )
+
+    # Phase 2B: support evidence is chunk-level.
+    support_chunk_ids = {e.get("chunk_id") for e in payload["support_evidence"]}
+    assert any(
+        cid and cid.startswith("reimbursement_policy_2026::chunk_")
+        for cid in support_chunk_ids
     )
 
 
@@ -201,12 +226,16 @@ def test_prompt_injection_in_ingested_corpus_is_flagged_and_quarantined(
     assert "malicious_accounting_instruction_sample" in safety["flagged_doc_ids"]
     assert safety["risk_level"] == "high"
 
-    # Malicious doc MUST NOT have become the primary citation.
+    # Malicious doc MUST NOT have become the primary citation — at the
+    # document level OR the chunk level.
     citation_doc_ids = {c["doc_id"] for c in payload["citations"]}
+    citation_chunk_ids = {c.get("chunk_id") for c in payload["citations"]}
     assert "malicious_accounting_instruction_sample" not in citation_doc_ids
+    assert not any(
+        cid and cid.startswith("malicious_accounting_instruction_sample::chunk_")
+        for cid in citation_chunk_ids
+    )
 
-    # The answer must surface the injection rather than silently
-    # following it.
     answer_lower = payload["answer"].lower()
     assert (
         "injection" in answer_lower
@@ -265,13 +294,21 @@ def test_documents_endpoint_lists_ingested_corpus(client: TestClient) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["count"] >= 7
+    # Phase 2B: endpoint also exposes chunk_count.
+    assert payload["chunk_count"] >= payload["count"]
     doc_ids = {d["document_id"] for d in payload["documents"]}
     assert "reimbursement_policy_2026" in doc_ids
     assert "alpha_trading_bookkeeping_sop_2026" in doc_ids
     assert "monthly_bookkeeping_checklist_2026" in doc_ids
-    # Source should indicate either JSON store or sample_docs fallback.
+    # Source should indicate chunk store / document store / sample_docs /
+    # hardcoded fallback.
     assert payload["source"]
     assert any(
         payload["source"].startswith(prefix)
-        for prefix in ("json:", "sample_docs:", "hardcoded")
+        for prefix in (
+            "chunk_store:",
+            "document_store:",
+            "sample_docs:",
+            "hardcoded",
+        )
     )

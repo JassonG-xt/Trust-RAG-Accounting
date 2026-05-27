@@ -97,47 +97,68 @@ backend/app/
 ├── main.py            # FastAPI app, route handlers, state→response mapping
 ├── core/config.py     # Environment-driven Settings (frozen dataclass)
 ├── schemas/rag.py     # Pydantic request/response models (public contract)
-├── ingestion/         # Phase 2A: Markdown → AccountingDocument
+├── ingestion/         # Phase 2A/2B: multi-format → AccountingDocument → chunks
 │   ├── frontmatter.py     # YAML parser with date normalization
-│   ├── models.py          # AccountingDocument + checksum helpers
-│   ├── markdown_loader.py # File → model converter (required fields enforced)
-│   └── ingest_sample_docs.py  # CLI: writes data/trustrag_documents.json
+│   ├── sidecar.py         # PDF/DOCX sidecar (.metadata.yaml) loader
+│   ├── models.py          # AccountingDocument + DocumentChunk + checksum
+│   ├── markdown_loader.py
+│   ├── pdf_loader.py      # pypdf-based, sidecar-required, no OCR
+│   ├── docx_loader.py     # python-docx-based, sidecar-required
+│   ├── unified_loader.py  # directory → Markdown/PDF/DOCX dispatcher
+│   ├── chunker.py         # Markdown-heading + paragraph + sliding window
+│   ├── store_writer.py    # JSON store I/O (documents + chunks)
+│   └── ingest_sample_docs.py  # CLI: writes documents.json + chunks.json
 ├── graph/
 │   ├── state.py       # TrustRAGState (TypedDict) — accounting fields
 │   ├── workflow.py    # build_workflow() / get_workflow() / run_query()
 │   └── nodes/         # one file per node, accounting-aware behavior
 └── services/
-    ├── document_repository.py  # JSON → sample_docs → fallback chain
-    └── mock_knowledge_base.py  # legacy compat layer (kept gitignored seam)
+    ├── document_repository.py  # chunk store → document store → samples → fallback
+    └── mock_knowledge_base.py  # legacy compat layer (kept for old imports)
 ```
 
-**Phase 2A data flow:**
+**Phase 2B data flow:**
 
 ```
-sample_docs/*.md
-   │  (ingest CLI)
-   ▼
+sample_docs/*.md / *.pdf / *.docx
+  + sidecar metadata for PDF/DOCX
+       │  (ingest CLI)
+       ▼
 data/trustrag_documents.json
-   │  (DocumentRepository.load_documents)
-   ▼
-List[AccountingDocument]
-   │  (DocumentRepository.search, stance="support"/"counter")
-   ▼
-evidence dicts → LangGraph state → FastAPI response
+data/trustrag_chunks.json
+       │  (DocumentRepository._ensure_loaded — prefers chunks)
+       ▼
+List[DocumentChunk]
+       │  (DocumentRepository.search, stance="support"/"counter")
+       ▼
+chunk-level evidence dicts → LangGraph state → FastAPI response
 ```
 
-The repository is the **single seam** between graph nodes and the
-document store. Phase 3 will swap the in-memory keyword scan for a
-Qdrant + BM25 + reranker pipeline by replacing only
-``DocumentRepository.search`` — no node changes.
+Each chunk carries `chunk_id` + `section_title` + the parent document's
+metadata (client / policy_family / replaces / valid_from / is_malicious).
+A retriever hit can drive every downstream node (temporal_checker,
+conflict_detector, safety_checker, judge_agent) without joining back to
+the parent document table — important for the Phase 3 vector-store
+migration where the chunk's vector is the only addressable unit.
+
+**Sidecar metadata convention (PDF/DOCX):**
+
+```
+sample_docs/example_policy.pdf
+sample_docs/example_policy.metadata.yaml   ← required, same YAML shape as Markdown front matter
+```
+
+The loader refuses to guess accounting fields. If the sidecar is
+missing or required keys (`title`, `version`, `document_type`) are
+absent, ingestion fails with a clear error.
 
 **Boundary rules (unchanged):**
 
 - Routes import only `schemas/` and `graph/workflow.py`.
 - Nodes import services and state. They never import FastAPI.
 - Services know nothing about the graph or about HTTP.
-- ``mock_knowledge_base`` is kept as a thin compat shim for any
-  legacy import; new code uses ``document_repository``.
+- The repository is the **single seam** for Phase 3 vector-store
+  migration — only `DocumentRepository.search` needs to change.
 
 ## 7. Risk Review Flow
 

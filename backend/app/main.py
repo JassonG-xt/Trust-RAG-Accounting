@@ -48,14 +48,15 @@ def create_app() -> FastAPI:
     @app.get("/v1/documents", response_model=DocumentsResponse, tags=["meta"])
     def list_documents() -> DocumentsResponse:
         """Diagnostic listing of every document currently loaded into the
-        repository. Read-only — no upload / delete / update is exposed
-        through HTTP in this phase.
+        repository, plus the count of chunks it produced. Read-only — no
+        upload / delete / update is exposed through HTTP in this phase.
         """
 
         repository = get_repository()
         summaries = repository.describe()
         return DocumentsResponse(
             count=len(summaries),
+            chunk_count=repository.chunk_count(),
             source=repository.source,
             documents=summaries,
         )

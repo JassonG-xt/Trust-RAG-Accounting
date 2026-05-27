@@ -93,3 +93,89 @@ def compute_checksum(content: str, metadata: dict[str, Any]) -> str:
         + json.dumps(metadata, sort_keys=True, ensure_ascii=False, default=str)
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Phase 2B: chunk layer
+# ---------------------------------------------------------------------------
+
+
+class DocumentChunk(BaseModel):
+    """A retrievable, citation-addressable slice of an AccountingDocument.
+
+    The chunk inherits every document-level metadata field used by the
+    LangGraph workflow (temporal_checker, conflict_detector,
+    safety_checker, judge_agent) so a retriever hit can drive all
+    downstream reasoning without joining back to the parent document.
+    """
+
+    chunk_id: str = Field(
+        ...,
+        description="Stable identifier: '{document_id}::chunk_{NNNN}'.",
+    )
+    document_id: str
+    title: str
+    version: str
+    document_type: str
+    client: str | None = None
+    policy_family: str | None = None
+    replaces: str | None = None
+    valid_from: str | None = None
+    valid_to: str | None = None
+
+    chunk_index: int = Field(..., ge=0)
+    section_title: str | None = None
+    page_number: int | None = None
+    content: str
+    token_estimate: int = Field(..., ge=0)
+    source_path: str
+    checksum: str
+
+    risk_type: str | None = None
+    is_malicious: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    def to_evidence_dict(self, *, stance: str, score: float) -> dict:
+        """Render this chunk as a retriever evidence dict.
+
+        Includes the document_id-level metadata that downstream nodes
+        (temporal_checker / conflict_detector / safety_checker) use.
+        """
+
+        return {
+            # Chunk-level identity (new in Phase 2B)
+            "chunk_id": self.chunk_id,
+            "chunk_index": self.chunk_index,
+            "section_title": self.section_title,
+            "page_number": self.page_number,
+            # Document-level identity (kept for back-compat)
+            "doc_id": self.document_id,
+            "document_id": self.document_id,
+            "title": self.title,
+            "version": self.version,
+            "valid_from": self.valid_from,
+            "valid_to": self.valid_to,
+            "client": self.client,
+            "document_type": self.document_type,
+            "policy_family": self.policy_family,
+            "replaces": self.replaces,
+            "risk_type": self.risk_type,
+            "is_malicious": self.is_malicious,
+            "source_type": "external" if self.is_malicious else "policy",
+            "source_path": self.source_path,
+            # Chunk body
+            "content": self.content,
+            # Retrieval signals
+            "score": score,
+            "stance": stance,
+        }
+
+
+def estimate_tokens(text: str) -> int:
+    """Cheap token estimate (~4 chars per token)."""
+
+    return max(0, len(text) // 4)
+
+
+def make_chunk_id(document_id: str, chunk_index: int) -> str:
+    return f"{document_id}::chunk_{chunk_index:04d}"

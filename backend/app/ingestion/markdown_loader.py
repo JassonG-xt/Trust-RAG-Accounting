@@ -90,6 +90,13 @@ def load_markdown_document(path: Path) -> AccountingDocument:
 
     checksum = compute_checksum(body, canonical_metadata)
 
+    extra_metadata = {
+        k: v
+        for k, v in metadata.items()
+        if k not in canonical_metadata
+    }
+    extra_metadata["source_format"] = "markdown"
+
     return AccountingDocument(
         document_id=document_id,
         title=str(metadata.get("title")),
@@ -105,11 +112,7 @@ def load_markdown_document(path: Path) -> AccountingDocument:
         source_path=str(path),
         content=body,
         checksum=checksum,
-        metadata={
-            k: v
-            for k, v in metadata.items()
-            if k not in canonical_metadata
-        },
+        metadata=extra_metadata,
     )
 
 

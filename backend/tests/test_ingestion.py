@@ -96,10 +96,18 @@ def test_markdown_loader_requires_required_fields(tmp_path: Path):
 
 def test_ingest_sample_docs_produces_json_store(tmp_path: Path):
     out_path = tmp_path / "trustrag_documents.json"
-    summary = ingest(SAMPLE_DOCS, out_path, quiet=True)
+    chunks_out = tmp_path / "trustrag_chunks.json"
+    summary = ingest(
+        SAMPLE_DOCS,
+        documents_out=out_path,
+        chunks_out=chunks_out,
+        quiet=True,
+    )
 
     assert out_path.exists()
+    assert chunks_out.exists()
     assert summary["document_count"] >= 7
+    assert summary["chunk_count"] >= summary["document_count"]
 
     payload = json.loads(out_path.read_text(encoding="utf-8"))
     assert payload["count"] == summary["document_count"]
@@ -118,6 +126,30 @@ def test_ingest_sample_docs_produces_json_store(tmp_path: Path):
     assert by_id["malicious_accounting_instruction_sample"]["is_malicious"] is True
     assert by_id["reimbursement_policy_2026"]["replaces"] == "reimbursement_policy_2024"
 
+    chunk_payload = json.loads(chunks_out.read_text(encoding="utf-8"))
+    assert chunk_payload["count"] == summary["chunk_count"]
+    chunk_ids = {c["chunk_id"] for c in chunk_payload["chunks"]}
+    assert "reimbursement_policy_2026::chunk_0000" in chunk_ids
+    # Every chunk inherits its parent document's policy_family + is_malicious.
+    malicious_chunks = [c for c in chunk_payload["chunks"] if c["is_malicious"]]
+    assert malicious_chunks, "expected at least one malicious chunk"
+    assert all(
+        c["document_id"] == "malicious_accounting_instruction_sample"
+        for c in malicious_chunks
+    )
+
+
+def test_ingest_sample_docs_legacy_signature_still_works(tmp_path: Path):
+    """Phase 2A back-compat: ingest(source, out_path, quiet=True) must
+    still produce both stores, with the chunks JSON written next to the
+    documents JSON by default."""
+
+    out_path = tmp_path / "trustrag_documents.json"
+    summary = ingest(SAMPLE_DOCS, out_path, quiet=True)
+    assert out_path.exists()
+    assert (tmp_path / "trustrag_chunks.json").exists()
+    assert summary["chunk_count"] >= summary["document_count"]
+
 
 def test_load_markdown_documents_is_stable_order():
     docs_a = load_markdown_documents(SAMPLE_DOCS)
@@ -132,15 +164,26 @@ def test_load_markdown_documents_is_stable_order():
 
 @pytest.fixture
 def repository(tmp_path: Path) -> DocumentRepository:
-    out_path = tmp_path / "trustrag_documents.json"
-    ingest(SAMPLE_DOCS, out_path, quiet=True)
-    return DocumentRepository(store_path=out_path)
+    docs_out = tmp_path / "trustrag_documents.json"
+    chunks_out = tmp_path / "trustrag_chunks.json"
+    ingest(
+        SAMPLE_DOCS,
+        documents_out=docs_out,
+        chunks_out=chunks_out,
+        quiet=True,
+    )
+    return DocumentRepository(
+        chunk_store_path=chunks_out,
+        document_store_path=docs_out,
+    )
 
 
 def test_repository_loads_from_ingested_json(repository: DocumentRepository):
     docs = repository.load_documents()
+    chunks = repository.load_chunks()
     assert len(docs) >= 7
-    assert repository.source and repository.source.startswith("json:")
+    assert len(chunks) >= len(docs)
+    assert repository.source and repository.source.startswith("chunk_store:")
 
 
 def test_repository_client_filter_alpha_excludes_beta(repository: DocumentRepository):

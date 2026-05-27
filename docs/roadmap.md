@@ -61,12 +61,30 @@ docs. **Completed.**
 - ✅ Optional read-only `GET /v1/documents` diagnostic endpoint.
 - ✅ Phase 2A tests added (13 ingestion + 8 workflow = 21 new/updated).
 
-## Phase 2B — Document Persistence & Multi-format ingestion
+## Phase 2B — Multi-format ingestion + chunk layer (current) ✅
 
-- [ ] PDF / DOCX loader using LangChain Document Loaders.
-- [ ] Chunking strategy (recursive vs semantic; client/version-aware).
-- [ ] Postgres schema for documents + versions + ingestion audit.
-- [ ] Idempotent re-ingestion that detects content changes via `checksum`.
+- ✅ `pypdf` + `python-docx` added; PDF and DOCX loaders accept
+      sidecar `*.metadata.yaml` files (TrustRAG refuses to guess
+      accounting metadata).
+- ✅ `unified_loader.load_documents_from_directory` dispatches on
+      file suffix and skips sidecar / hidden files.
+- ✅ `DocumentChunk` Pydantic model inherits every document-level
+      field needed by graph nodes; stable
+      `{document_id}::chunk_{NNNN}` IDs.
+- ✅ `chunker.py` deterministic chunking: ATX-heading split for
+      Markdown, paragraph split for PDF/DOCX, sliding-window fallback
+      for oversize sections.
+- ✅ `store_writer` + `ingest_sample_docs` CLI v2:
+      `--documents-out` + `--chunks-out` (Phase 2A `--out` flag still
+      works via back-compat).
+- ✅ `DocumentRepository` loads chunks first
+      (`chunk_store → document_store → sample_docs → fallback`) and
+      returns chunk-level evidence dicts.
+- ✅ Workflow citations carry `chunk_id`, `section_title`, `source`,
+      `document_id`.
+- ✅ `GET /v1/documents` exposes `chunk_count` and load `source`.
+- ✅ 40 pytest tests pass: 9 chunking + 8 multiformat + 14 ingestion
+      + 8 workflow + 1 health.
 
 ## Phase 3 — Accounting Hybrid Retrieval
 
