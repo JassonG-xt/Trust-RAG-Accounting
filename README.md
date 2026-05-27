@@ -9,7 +9,7 @@
 
 <p align="left">
   <img alt="status" src="https://img.shields.io/badge/status-alpha-orange.svg">
-  <img alt="phase" src="https://img.shields.io/badge/phase-2A%20real%20ingestion-blue.svg">
+  <img alt="phase" src="https://img.shields.io/badge/phase-2B%20multiformat%20+%20chunks-blue.svg">
   <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-blue.svg">
   <img alt="framework" src="https://img.shields.io/badge/built%20with-LangGraph-7c3aed.svg">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-green.svg">
@@ -149,11 +149,22 @@ Full walkthrough with `curl` commands lives in
 
 What the workflow can do today, end-to-end:
 
-1. **Ingest real Markdown** — `sample_docs/*.md` with YAML front
-   matter are parsed into `AccountingDocument` records and written to
-   `data/trustrag_documents.json`. The runtime knowledge base is
-   driven by those ingested records, not by hardcoded Python data.
-2. Classify questions into 9 accounting types (`tax_policy`,
+1. **Ingest Markdown / PDF / DOCX** — `sample_docs/*.md` use inline
+   YAML front matter; PDF and DOCX files declare metadata via a
+   sibling `*.metadata.yaml` sidecar (TrustRAG refuses to guess
+   accounting metadata). All three formats produce the same
+   `AccountingDocument` shape.
+2. **Deterministic chunking** — Markdown is split by ATX headings;
+   non-Markdown by paragraphs. Oversize sections fall back to a
+   sliding character window. Every chunk inherits the parent
+   document's `client` / `policy_family` / `replaces` / `valid_from`
+   / `is_malicious` so retrieval hits carry the full context.
+3. **Two-tier JSON store** — `data/trustrag_documents.json` (Phase
+   2A compat) + `data/trustrag_chunks.json` (Phase 2B). The
+   repository loader prefers chunks, then documents, then
+   sample_docs/, then a hardcoded fallback so the workflow boots
+   even on a bare checkout.
+4. Classify questions into 9 accounting types (`tax_policy`,
    `bookkeeping_sop`, `invoice_compliance`, `reimbursement_rule`,
    `document_checklist`, `risk_review`,
    `temporal_policy_comparison`, `unsafe_request`,
@@ -161,31 +172,34 @@ What the workflow can do today, end-to-end:
    (`怎么入账` → bookkeeping_sop) from COMPLIANCE-questions
    (`能否入账` → invoice_compliance) even when both share invoice
    keywords.
-3. Decompose questions into structured claims with per-claim
+5. Decompose questions into structured claims with per-claim
    `needs_temporal_check` and `needs_counter_evidence` routing hints.
-4. Retrieve through `DocumentRepository` with **client-aware
-   filtering** — Alpha Trading SOP cannot leak into a Beta Catering
-   answer.
-5. **Temporal validation with `replaces` metadata** — picks the
+6. Retrieve through `DocumentRepository` with **client-aware
+   filtering** at the *chunk* level — Alpha Trading SOP cannot leak
+   into a Beta Catering answer.
+7. **Temporal validation with `replaces` metadata** — picks the
    currently effective version using `valid_from`/`valid_to` plus the
    explicit `replaces` graph. Emits `temporal_conflict=true` when two
    actives in the same family cannot be disambiguated. Shifts `as_of`
    to a historical year when the question mentions one ("2024 年" →
    2024-06-30).
-6. Detect conflicts inside a policy family using ingested
+8. Detect conflicts inside a policy family using ingested
    `policy_family` metadata.
-7. Run two-pass safety analysis: prompt-injection in retrieved
+9. Run two-pass safety analysis: prompt-injection in retrieved
    evidence + unsafe-accounting-intent in the user question.
-8. Produce a structured `judge_verdict.conclusion` and trigger
-   `needs_human_review` via **hard gates** (unsafe / injection /
-   tax_policy / invoice_compliance / evidence_conflict /
-   temporal_conflict / insufficient_evidence / low_confidence). The
-   confidence score is a *display signal*, not the sole decision.
-9. Generate three answer paths (refusal / insufficient / evidence-based)
-   each carrying the standing risk disclaimer.
-10. Expose a read-only `GET /v1/documents` diagnostic endpoint that
-    lists every record loaded into the repository (and where it came
-    from).
+10. Produce a structured `judge_verdict.conclusion` and trigger
+    `needs_human_review` via **hard gates** (unsafe / injection /
+    tax_policy / invoice_compliance / evidence_conflict /
+    temporal_conflict / insufficient_evidence / low_confidence). The
+    confidence score is a *display signal*, not the sole decision.
+11. Generate three answer paths (refusal / insufficient /
+    evidence-based) each carrying the standing risk disclaimer.
+12. **Chunk-level citations** — every citation carries `chunk_id`,
+    `section_title`, `source` path, and `document_id` so a human
+    reviewer can jump from any answer to the exact line that backed it.
+13. `GET /v1/documents` lists every loaded record plus `chunk_count`
+    and the load `source` (chunk_store / document_store /
+    sample_docs / hardcoded).
 
 ## Planned Features
 
@@ -215,10 +229,11 @@ source .venv/bin/activate
 # 2. Install the project in editable mode (with dev deps)
 pip install -e ".[dev]"
 
-# 3. Ingest sample_docs into a local JSON store (Phase 2A)
+# 3. Ingest sample_docs into documents + chunks JSON stores (Phase 2B)
 python -m backend.app.ingestion.ingest_sample_docs \
     --source sample_docs \
-    --out data/trustrag_documents.json
+    --documents-out data/trustrag_documents.json \
+    --chunks-out data/trustrag_chunks.json
 
 # 4. Run the backend
 bash scripts/run_dev.sh

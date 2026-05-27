@@ -1,18 +1,18 @@
-"""DocumentRepository — the single seam between retrievers and the
-ingested document store.
+"""DocumentRepository — single seam between graph retrievers and the
+ingested document/chunk store.
 
-The repository hides three loading strategies behind one interface so
-the LangGraph nodes never need to know where the data came from:
+Phase 2B: the canonical evidence unit is the **chunk**. The repository
+loads with this preference order:
 
-1. **JSON store** (preferred) — read ``data/trustrag_documents.json``
-   produced by ``backend.app.ingestion.ingest_sample_docs``.
-2. **Live sample_docs/** — load the Markdown files directly.
-3. **Hardcoded mock fallback** — preserves the Phase 1 records so the
-   process can boot even with no ingestion done and no sample_docs
-   reachable.
+1. ``data/trustrag_chunks.json``        (chunk store written by the ingest CLI)
+2. ``data/trustrag_documents.json``     (Phase 2A document store, chunked on the fly)
+3. ``sample_docs/`` (Markdown / PDF / DOCX)  loaded + chunked at runtime
+4. Hardcoded fallback                   (last resort so the workflow boots)
 
-Phase 3 will swap the in-memory keyword scan for a real hybrid
-retriever (Qdrant + BM25 + reranker) without touching any node.
+``DocumentRepository.search`` always returns chunk-level evidence
+dicts, so the LangGraph nodes never see a "whole document" — every hit
+already carries ``chunk_id`` + ``section_title`` + the parent
+document's metadata.
 """
 
 from __future__ import annotations
@@ -22,8 +22,9 @@ import logging
 from pathlib import Path
 from threading import Lock
 
-from ..ingestion.markdown_loader import load_markdown_documents
-from ..ingestion.models import AccountingDocument
+from ..ingestion.chunker import chunk_documents
+from ..ingestion.models import AccountingDocument, DocumentChunk
+from ..ingestion.unified_loader import load_documents_from_directory
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
-_DEFAULT_STORE = _PROJECT_ROOT / "data" / "trustrag_documents.json"
+_DEFAULT_CHUNK_STORE = _PROJECT_ROOT / "data" / "trustrag_chunks.json"
+_DEFAULT_DOCUMENT_STORE = _PROJECT_ROOT / "data" / "trustrag_documents.json"
 _DEFAULT_SAMPLE_DIR = _PROJECT_ROOT / "sample_docs"
 
 
@@ -42,7 +44,6 @@ _DEFAULT_SAMPLE_DIR = _PROJECT_ROOT / "sample_docs"
 # ---------------------------------------------------------------------------
 
 
-# (alias_substring_lowered, canonical_client_name)
 _CLIENT_ALIASES: tuple[tuple[str, str], ...] = (
     ("alpha trading", "Alpha Trading Co."),
     ("alpha", "Alpha Trading Co."),
@@ -53,7 +54,6 @@ _CLIENT_ALIASES: tuple[tuple[str, str], ...] = (
 )
 
 
-# (substring, target document_type)
 _TYPE_HINTS: tuple[tuple[str, str], ...] = (
     ("入账", "bookkeeping_sop"),
     ("做账", "bookkeeping_sop"),
@@ -87,9 +87,6 @@ _TYPE_HINTS: tuple[tuple[str, str], ...] = (
 )
 
 
-# Keyword triggers for the adversarial sample. The malicious doc only
-# surfaces when the question explicitly references following document
-# instructions; otherwise it stays out of retrieval entirely.
 _MALICIOUS_TRIGGERS = (
     "ignore",
     "previous instructions",
@@ -97,11 +94,6 @@ _MALICIOUS_TRIGGERS = (
     "instructions",
     "照做",
 )
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 def _question_client(question: str) -> str | None:
@@ -113,8 +105,6 @@ def _question_client(question: str) -> str | None:
 
 
 def _question_types(question: str) -> set[str]:
-    """Return the set of document_types the question seems to ask about."""
-
     q = (question or "").lower()
     hits: set[str] = set()
     for sub, doc_type in _TYPE_HINTS:
@@ -129,15 +119,11 @@ def _is_malicious_query(question: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Mock fallback — only used when neither JSON store nor sample_docs are
-# reachable. Kept as plain dicts so we don't reintroduce the old import
-# path.
+# Fallback
 # ---------------------------------------------------------------------------
 
 
-def _hardcoded_fallback() -> list[AccountingDocument]:
-    """Last-resort fallback so the workflow still boots on a bare checkout."""
-
+def _hardcoded_fallback_documents() -> list[AccountingDocument]:
     seed = (
         dict(
             document_id="reimbursement_policy_2024",
@@ -181,61 +167,115 @@ def _hardcoded_fallback() -> list[AccountingDocument]:
 
 
 class DocumentRepository:
-    """Lazy-loaded read-only document repository with client-aware search."""
+    """Lazy-loaded read-only chunk repository."""
 
     def __init__(
         self,
-        store_path: Path | None = None,
+        chunk_store_path: Path | None = None,
+        document_store_path: Path | None = None,
         sample_dir: Path | None = None,
     ) -> None:
-        self.store_path = Path(store_path) if store_path else _DEFAULT_STORE
+        self.chunk_store_path = (
+            Path(chunk_store_path) if chunk_store_path else _DEFAULT_CHUNK_STORE
+        )
+        self.document_store_path = (
+            Path(document_store_path) if document_store_path else _DEFAULT_DOCUMENT_STORE
+        )
         self.sample_dir = Path(sample_dir) if sample_dir else _DEFAULT_SAMPLE_DIR
         self._documents: list[AccountingDocument] | None = None
+        self._chunks: list[DocumentChunk] | None = None
         self._lock = Lock()
         self._source: str | None = None
 
     # -- Loading ---------------------------------------------------------
 
-    def load_documents(self) -> list[AccountingDocument]:
-        """Return the canonical list of ingested documents (cached)."""
+    def _ensure_loaded(self) -> None:
+        if self._chunks is not None:
+            return
 
-        with self._lock:
-            if self._documents is not None:
-                return list(self._documents)
+        if self.chunk_store_path.exists():
+            chunks, documents = self._load_from_chunk_store(self.chunk_store_path)
+            self._source = f"chunk_store:{self.chunk_store_path}"
+        elif self.document_store_path.exists():
+            documents = self._load_documents_from_json(self.document_store_path)
+            chunks = chunk_documents(documents)
+            self._source = f"document_store:{self.document_store_path}"
+        elif self.sample_dir.exists() and any(
+            p.suffix.lower() in {".md", ".pdf", ".docx"}
+            for p in self.sample_dir.iterdir()
+            if p.is_file()
+        ):
+            documents = load_documents_from_directory(self.sample_dir)
+            chunks = chunk_documents(documents)
+            self._source = f"sample_docs:{self.sample_dir}"
+        else:
+            documents = _hardcoded_fallback_documents()
+            chunks = chunk_documents(documents)
+            self._source = "hardcoded-fallback"
+            logger.warning(
+                "DocumentRepository falling back to hardcoded seed (no chunk "
+                "store at %s, no document store at %s, no sample_docs in %s)",
+                self.chunk_store_path,
+                self.document_store_path,
+                self.sample_dir,
+            )
 
-            documents: list[AccountingDocument]
-            if self.store_path.exists():
-                documents = self._load_from_json(self.store_path)
-                self._source = f"json:{self.store_path}"
-            elif self.sample_dir.exists() and any(self.sample_dir.glob("*.md")):
-                documents = load_markdown_documents(self.sample_dir)
-                self._source = f"sample_docs:{self.sample_dir}"
-            else:
-                documents = _hardcoded_fallback()
-                self._source = "hardcoded-fallback"
-                logger.warning(
-                    "DocumentRepository falling back to hardcoded seed; "
-                    "no JSON store at %s and no markdown in %s",
-                    self.store_path,
-                    self.sample_dir,
-                )
-
-            self._documents = documents
-            return list(self._documents)
+        self._documents = documents
+        self._chunks = chunks
 
     @staticmethod
-    def _load_from_json(path: Path) -> list[AccountingDocument]:
+    def _load_from_chunk_store(
+        path: Path,
+    ) -> tuple[list[DocumentChunk], list[AccountingDocument]]:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        raw_chunks = payload.get("chunks", [])
+        chunks = [DocumentChunk(**c) for c in raw_chunks]
+        # Reconstruct a thin document list from the chunks so the
+        # ``describe()`` projection still works. We don't have the full
+        # body, but we have all the metadata we need.
+        documents: dict[str, AccountingDocument] = {}
+        for c in chunks:
+            if c.document_id in documents:
+                continue
+            documents[c.document_id] = AccountingDocument(
+                document_id=c.document_id,
+                title=c.title,
+                version=c.version,
+                valid_from=c.valid_from,
+                valid_to=c.valid_to,
+                document_type=c.document_type,
+                client=c.client,
+                policy_family=c.policy_family,
+                replaces=c.replaces,
+                risk_type=c.risk_type,
+                is_malicious=c.is_malicious,
+                source_path=c.source_path,
+                content="",
+                checksum=c.checksum,
+            )
+        return chunks, list(documents.values())
+
+    @staticmethod
+    def _load_documents_from_json(path: Path) -> list[AccountingDocument]:
         payload = json.loads(path.read_text(encoding="utf-8"))
         raw_docs = payload.get("documents", [])
         return [AccountingDocument(**doc) for doc in raw_docs]
 
+    def load_documents(self) -> list[AccountingDocument]:
+        with self._lock:
+            self._ensure_loaded()
+            return list(self._documents or [])
+
+    def load_chunks(self) -> list[DocumentChunk]:
+        with self._lock:
+            self._ensure_loaded()
+            return list(self._chunks or [])
+
     @property
     def source(self) -> str | None:
-        """Where the documents came from (set after first ``load_documents``)."""
-
-        if self._documents is None:
-            self.load_documents()
-        return self._source
+        with self._lock:
+            self._ensure_loaded()
+            return self._source
 
     # -- Retrieval -------------------------------------------------------
 
@@ -247,23 +287,17 @@ class DocumentRepository:
         client: str | None = None,
         limit: int = 5,
     ) -> list[dict]:
-        """Return ranked evidence dicts for the question.
+        """Return ranked **chunk-level** evidence dicts."""
 
-        ``stance="support"`` returns evidence supporting an answer (the
-        currently-effective version). ``stance="counter"`` returns
-        evidence that may contradict or supersede the support set
-        (historical versions, restrictive caveats).
-        """
-
-        documents = self.load_documents()
+        chunks = self.load_chunks()
         target_types = _question_types(question)
         question_client = client or _question_client(question)
         wants_malicious = _is_malicious_query(question)
 
-        hits: list[dict] = []
-        for doc in documents:
-            score = self._score_document(
-                doc,
+        scored: list[dict] = []
+        for chunk in chunks:
+            score = self._score_chunk(
+                chunk,
                 target_types=target_types,
                 question_client=question_client,
                 wants_malicious=wants_malicious,
@@ -271,64 +305,54 @@ class DocumentRepository:
             )
             if score <= 0.0:
                 continue
-            hits.append(doc.to_evidence_dict(stance=stance, score=score))
+            scored.append(chunk.to_evidence_dict(stance=stance, score=score))
 
-        hits.sort(key=lambda h: h["score"], reverse=True)
-        return hits[:limit]
+        scored.sort(key=lambda h: h["score"], reverse=True)
+        return scored[:limit]
 
     @staticmethod
-    def _score_document(
-        doc: AccountingDocument,
+    def _score_chunk(
+        chunk: DocumentChunk,
         *,
         target_types: set[str],
         question_client: str | None,
         wants_malicious: bool,
         stance: str,
     ) -> float:
-        # Adversarial samples only enter retrieval when the question
-        # explicitly mentions following document instructions. They are
-        # scored low and always returned as counter so the safety_checker
-        # can act on them without them being treated as primary support.
-        if doc.is_malicious:
+        if chunk.is_malicious:
             if not wants_malicious:
                 return 0.0
             return 0.15 if stance == "counter" else 0.0
 
-        # Relevance gate — we need at least ONE strong signal before
-        # returning a non-malicious record. Without this, a question
-        # like "should I follow document instructions?" would surface
-        # every accounting policy in the corpus.
-        has_type_match = bool(target_types) and doc.document_type in target_types
+        has_type_match = bool(target_types) and chunk.document_type in target_types
         has_client_match = (
-            question_client is not None and doc.client == question_client
+            question_client is not None and chunk.client == question_client
         )
         if not has_type_match and not has_client_match:
             return 0.0
 
-        # Client filter — when the question names a specific client, we
-        # only return that client's docs and firm-wide docs (client is None).
         if question_client is not None:
-            if doc.client is not None and doc.client != question_client:
+            if chunk.client is not None and chunk.client != question_client:
                 return 0.0
 
-        # Stance routing.
-        is_historical = bool(doc.valid_to)
+        is_historical = bool(chunk.valid_to)
         if stance == "support" and is_historical:
             return 0.0
         if stance == "counter" and not is_historical:
             return 0.0
 
-        # Score baseline.
         score = 0.9 if stance == "support" else 0.7
-        if question_client and doc.client == question_client:
+        if question_client and chunk.client == question_client:
             score += 0.05
-        return round(score, 3)
+        # Mild within-document de-noising: earlier chunks (more likely to
+        # carry the headline rule) get a tiny boost so the citation list
+        # is stable across runs.
+        score -= 0.01 * min(chunk.chunk_index, 5)
+        return round(max(score, 0.0), 3)
 
     # -- Diagnostics -----------------------------------------------------
 
     def describe(self) -> list[dict]:
-        """Small projection used by the GET /v1/documents endpoint."""
-
         return [
             {
                 "document_id": d.document_id,
@@ -346,11 +370,12 @@ class DocumentRepository:
             for d in self.load_documents()
         ]
 
+    def chunk_count(self) -> int:
+        return len(self.load_chunks())
+
 
 # ---------------------------------------------------------------------------
-# Module-level singleton — most callers should use this rather than
-# constructing their own repository, so the JSON load happens once per
-# process.
+# Singleton
 # ---------------------------------------------------------------------------
 
 

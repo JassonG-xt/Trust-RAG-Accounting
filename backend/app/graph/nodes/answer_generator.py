@@ -55,19 +55,42 @@ _RISK_NOTE = (
 
 
 def _pick_active_evidence(state: TrustRAGState) -> dict | None:
+    """Pick the best chunk to quote as the primary citation.
+
+    Priority:
+    1. The active_doc_id chosen by ``temporal_checker``.
+    2. Among that doc's chunks, prefer the one with the most content
+       (highest token_estimate) so we cite the *rule body*, not the
+       preamble / heading-only chunk.
+    3. Fallback to the overall top-scored clean support chunk.
+    """
+
     temporal = state.get("temporal_analysis") or {}
     active_doc_id = temporal.get("active_doc_id")
-    if active_doc_id:
-        for record in state.get("support_evidence") or []:
-            if record.get("doc_id") == active_doc_id:
-                return record
-    # Fallback: highest-scored non-malicious support record.
-    clean = [
+    support = [
         e for e in (state.get("support_evidence") or []) if not e.get("is_malicious")
     ]
-    if not clean:
+
+    if active_doc_id:
+        same_doc = [e for e in support if e.get("doc_id") == active_doc_id]
+        if same_doc:
+            # Prefer the chunk with the most content (token_estimate when
+            # present, fall back to len(content)). Stable on ties via
+            # chunk_index.
+            def _content_size(rec: dict) -> tuple[int, int]:
+                size = rec.get("token_estimate")
+                if size is None:
+                    size = len(rec.get("content") or "")
+                # Negate chunk_index so earlier chunks win ties (stable
+                # citation IDs across runs).
+                return (size, -1 * (rec.get("chunk_index") or 0))
+
+            same_doc.sort(key=_content_size, reverse=True)
+            return same_doc[0]
+
+    if not support:
         return None
-    return max(clean, key=lambda e: e.get("score") or 0.0)
+    return max(support, key=lambda e: e.get("score") or 0.0)
 
 
 def _build_citations(state: TrustRAGState, primary: dict | None) -> list[dict]:
@@ -76,11 +99,16 @@ def _build_citations(state: TrustRAGState, primary: dict | None) -> list[dict]:
         citations.append(
             {
                 "doc_id": primary.get("doc_id"),
+                "document_id": primary.get("document_id") or primary.get("doc_id"),
+                "chunk_id": primary.get("chunk_id"),
                 "title": primary.get("title"),
                 "version": primary.get("version"),
                 "snippet": primary.get("content"),
                 "valid_from": primary.get("valid_from"),
                 "client": primary.get("client"),
+                "source": primary.get("source_path"),
+                "section_title": primary.get("section_title"),
+                "page_number": primary.get("page_number"),
             }
         )
     counter = [
@@ -91,11 +119,16 @@ def _build_citations(state: TrustRAGState, primary: dict | None) -> list[dict]:
         citations.append(
             {
                 "doc_id": c.get("doc_id"),
+                "document_id": c.get("document_id") or c.get("doc_id"),
+                "chunk_id": c.get("chunk_id"),
                 "title": c.get("title"),
                 "version": c.get("version"),
                 "snippet": c.get("content"),
                 "valid_from": c.get("valid_from"),
                 "client": c.get("client"),
+                "source": c.get("source_path"),
+                "section_title": c.get("section_title"),
+                "page_number": c.get("page_number"),
             }
         )
     return citations

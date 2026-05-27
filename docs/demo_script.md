@@ -11,10 +11,11 @@ is running locally (`bash scripts/run_dev.sh`).
 # Terminal A — server
 pip install -e ".[dev]"
 
-# Phase 2A: ingest the Markdown corpus into a local JSON store.
+# Phase 2B: ingest the multi-format corpus into documents + chunks stores.
 python -m backend.app.ingestion.ingest_sample_docs \
     --source sample_docs \
-    --out data/trustrag_documents.json
+    --documents-out data/trustrag_documents.json \
+    --chunks-out data/trustrag_chunks.json
 
 bash scripts/run_dev.sh
 
@@ -22,8 +23,8 @@ bash scripts/run_dev.sh
 curl -s http://localhost:8000/healthz
 # → {"status":"ok","service":"trust-rag-backend"}
 
-# Inspect the loaded corpus.
-curl -s http://localhost:8000/v1/documents | jq '.count, .source'
+# Inspect the loaded corpus (now exposes chunk_count).
+curl -s http://localhost:8000/v1/documents | jq '.count, .chunk_count, .source'
 ```
 
 > **Disclaimer for the demo.** All clients in this corpus
