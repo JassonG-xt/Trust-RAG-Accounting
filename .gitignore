@@ -1,0 +1,62 @@
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.python-version
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Env files (never commit secrets)
+.env
+.env.local
+.env.*.local
+
+# Logs / runtime
+*.log
+logs/
+tmp/
+
+# Local vector store / cached embeddings (future use)
+.chroma/
+.qdrant/
+storage/
+
+# Ingested JSON document store — regenerate via the ingest CLI
+data/
+
+# Notebooks scratch
+.ipynb_checkpoints/
+
+# OS
+Thumbs.db
+
+# Local-only project meta (never commit to GitHub)
+CLAUDE.md
+skills-lock.json
+.agents/

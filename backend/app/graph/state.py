@@ -1,0 +1,81 @@
+"""Graph state for the TrustRAG accounting LangGraph workflow.
+
+The state is intentionally a ``TypedDict`` (not a Pydantic model) because:
+
+* LangGraph merges per-node return dicts into the state — a strict schema
+  would force us to repeat unrelated fields in every node.
+* Nodes evolve quickly in early phases. A loose contract lets us iterate
+  without breaking the workflow build.
+* The public API layer (see :mod:`backend.app.schemas.rag`) is where strict
+  validation lives — we cross that boundary exactly once, in
+  :mod:`backend.app.main`.
+"""
+
+from __future__ import annotations
+
+from typing import TypedDict
+
+
+class TrustRAGState(TypedDict, total=False):
+    """Mutable workflow state passed between LangGraph nodes."""
+
+    # Input
+    question: str
+
+    # query_analyzer
+    question_type: str | None
+    domain: str
+    needs_temporal_check: bool
+    needs_safety_check: bool
+
+    # claim_decomposer
+    claims: list[dict]
+
+    # support_retriever / counter_retriever
+    support_evidence: list[dict]
+    counter_evidence: list[dict]
+
+    # temporal_checker
+    temporal_analysis: dict | None
+
+    # conflict_detector
+    conflict_analysis: dict | None
+
+    # safety_checker
+    safety_analysis: dict | None
+
+    # judge_agent
+    judge_verdict: dict | None
+    confidence: float | None
+
+    # answer_generator
+    answer: str | None
+    citations: list[dict]
+    needs_human_review: bool
+
+    # Cross-cutting
+    errors: list[str]
+
+
+def initial_state(question: str) -> TrustRAGState:
+    """Build the starting state for a new query."""
+
+    return TrustRAGState(
+        question=question,
+        question_type=None,
+        domain="accounting",
+        needs_temporal_check=False,
+        needs_safety_check=True,
+        claims=[],
+        support_evidence=[],
+        counter_evidence=[],
+        temporal_analysis=None,
+        conflict_analysis=None,
+        safety_analysis=None,
+        judge_verdict=None,
+        confidence=None,
+        answer=None,
+        citations=[],
+        needs_human_review=False,
+        errors=[],
+    )
