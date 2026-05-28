@@ -31,7 +31,7 @@ Exit codes:
 * ``0`` — suite ran; either all active cases passed or
   ``--fail-on-regression`` was not set.
 * ``1`` — ``--fail-on-regression`` was set and at least one active
-  case failed.
+  case failed, or an eval score threshold was missed.
 * ``2`` — invocation error (missing cases file, ingestion failure).
 """
 
@@ -291,6 +291,57 @@ def _build_summary(
 
 
 # ---------------------------------------------------------------------------
+# Thresholds
+# ---------------------------------------------------------------------------
+
+
+def parse_category_thresholds(raw: list[str] | None) -> dict[str, float]:
+    """Parse repeatable ``CATEGORY=FLOAT`` threshold CLI values."""
+
+    thresholds: dict[str, float] = {}
+    for item in raw or []:
+        category, sep, value = item.partition("=")
+        category = category.strip()
+        value = value.strip()
+        if sep != "=" or not category or not value:
+            raise ValueError(f"malformed category threshold: {item}")
+        try:
+            thresholds[category] = float(value)
+        except ValueError as exc:
+            raise ValueError(f"malformed category threshold: {item}") from exc
+    return thresholds
+
+
+def validate_eval_thresholds(
+    summary: EvalRunSummary,
+    *,
+    min_score: float | None = None,
+    category_thresholds: dict[str, float] | None = None,
+) -> list[str]:
+    """Return threshold failure messages or raise for invalid thresholds."""
+
+    failures: list[str] = []
+    if min_score is not None and summary.score < min_score:
+        failures.append(
+            "[eval] threshold failed: "
+            f"overall score={summary.score:.3f} < required={min_score:.3f}"
+        )
+
+    for category, required in (category_thresholds or {}).items():
+        category_summary = summary.by_category.get(category)
+        if not category_summary or category_summary.get("active_total", 0) <= 0:
+            raise ValueError(f"category not found: {category}")
+        score = float(category_summary.get("score", 0.0))
+        if score < required:
+            failures.append(
+                "[eval] threshold failed: "
+                f"{category} score={score:.3f} < required={required:.3f}"
+            )
+
+    return failures
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -350,6 +401,25 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "Exit with code 1 when any active case fails. Use this in CI "
             "to gate releases on the eval suite."
+        ),
+    )
+    p.add_argument(
+        "--min-score",
+        type=float,
+        default=None,
+        help=(
+            "Minimum active-suite score required for a zero exit code. "
+            "Unset preserves the Phase 6A behavior."
+        ),
+    )
+    p.add_argument(
+        "--category-threshold",
+        action="append",
+        default=None,
+        metavar="CATEGORY=FLOAT",
+        help=(
+            "Minimum active-suite score for one category. Repeatable, "
+            "for example: --category-threshold unsafe_intent=1.0."
         ),
     )
     p.add_argument(
@@ -505,6 +575,12 @@ def _write_output(path: Path, payload: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = _build_arg_parser().parse_args(argv)
 
+    try:
+        category_thresholds = parse_category_thresholds(args.category_threshold)
+    except ValueError as exc:
+        print(f"[eval] invalid threshold: {exc}", file=sys.stderr)
+        return 2
+
     cases_path = args.cases
     if not cases_path.exists():
         print(f"[eval] cases file not found: {cases_path}", file=sys.stderr)
@@ -571,15 +647,32 @@ def main(argv: list[str] | None = None) -> int:
         f"skipped={summary.skipped} score={summary.score:.3f}"
     )
 
+    try:
+        threshold_failures = validate_eval_thresholds(
+            summary,
+            min_score=args.min_score,
+            category_thresholds=category_thresholds,
+        )
+    except ValueError as exc:
+        print(f"[eval] invalid threshold: {exc}", file=sys.stderr)
+        return 2
+
+    for failure in threshold_failures:
+        print(failure, file=sys.stderr)
+
     if args.fail_on_regression and summary.failed > 0:
+        return 1
+    if threshold_failures:
         return 1
     return 0
 
 
 __all__ = [
     "main",
+    "parse_category_thresholds",
     "run_case",
     "run_eval_suite",
+    "validate_eval_thresholds",
 ]
 
 

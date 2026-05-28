@@ -1,7 +1,8 @@
-# TrustRAG — Accounting RAG Eval Harness (Phase 6A)
+# TrustRAG - Accounting RAG Eval Harness (Phase 6A/6B)
 
 This document describes the deterministic, locally-runnable eval
-harness shipped in Phase 6A. The harness is the regression-gate for
+harness shipped in Phase 6A and wired into CI in Phase 6B. The
+harness is the regression-gate for
 TrustRAG's accounting-firm quality bar — every commit that changes
 retrieval, routing, safety, or human-review should pass the suite
 green before merging.
@@ -169,6 +170,8 @@ Useful flags:
 | `--category NAME` | Restrict to one category. Repeatable or comma-separated. |
 | `--limit N` | Cap the number of cases executed (smoke runs). |
 | `--fail-on-regression` | Exit code `1` when any active case fails. Use this in CI. |
+| `--min-score FLOAT` | Exit code `1` when the active-suite score is below the required score. |
+| `--category-threshold CATEGORY=FLOAT` | Exit code `1` when an active category score is below the required score. Repeatable; malformed values and missing active categories exit `2`. |
 | `--clear-review-queue` | Clear `data/review_queue.jsonl` before the run. |
 | `--no-isolated-review-store` | Disable the per-run temp review store. By default the runner writes review checkpoints to a temp file so the dev queue is never touched. |
 | `--quiet` | Suppress progress lines (still prints the final summary). |
@@ -183,6 +186,37 @@ cases = load_cases_file("backend/app/evals/cases/accounting_eval_cases.json")
 summary = run_eval_suite(cases, only_status="active", categories=["unsafe_intent"])
 print(summary.score, summary.passed, summary.failed)
 ```
+
+## CI Gate
+
+Phase 6B wires this deterministic harness into GitHub Actions. Every
+pull request to `main` and every push to `main` runs:
+
+1. Sample document ingestion.
+2. Accounting eval gate with regression and threshold checks.
+3. `python -m pytest backend/tests`.
+4. Markdown eval report append to the GitHub Step Summary.
+5. Eval JSON and Markdown upload as the `accounting-eval-report`
+   artifact.
+
+Threshold policy:
+
+- overall `min_score = 1.000`
+- `unsafe_intent = 1.000`
+- `prompt_injection = 1.000`
+- `current_policy >= 0.95`
+- `client_specific >= 0.95`
+- `citation_faithfulness >= 0.95`
+
+Local CI-equivalent command:
+
+```bash
+bash scripts/run_eval_gate.sh
+```
+
+The CI gate stays offline and deterministic: no secrets, no external
+eval service, no real LLM, no RAGAS / DeepEval, no Docker, no Qdrant,
+and no LangSmith dependency.
 
 ## 5. How to interpret the report
 
@@ -219,9 +253,8 @@ without leaking the corpus.
 - **LLM-as-judge.** Phase 6C will add an optional layer that asks an
   LLM "is this answer faithful to the cited evidence?". The
   deterministic suite stays as the floor.
-- **CI gate.** Phase 6B will wire `--fail-on-regression` into a
-  GitHub Action that runs on every PR and uploads the Markdown
-  report as a CI artifact.
+- **PR comment bot and regression delta.** Phase 6C can compare the
+  PR report against `main` and post a compact summary back to the PR.
 - **Real-provider eval.** The suite runs against mock embedding +
   mock reranker. Phase 6C will repeat the suite against Qdrant + a
   real reranker to detect provider-specific regressions.
