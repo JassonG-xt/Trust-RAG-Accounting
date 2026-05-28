@@ -37,6 +37,7 @@ from backend.app.review import (
     LocalReviewCheckpointStore,
     ReviewCheckpoint,
     get_review_checkpoint_store,
+    reset_review_action_store,
     reset_review_checkpoint_store,
     should_handoff_for_review,
 )
@@ -70,11 +71,19 @@ def review_store_path(tmp_path: Path) -> Path:
     return tmp_path / "review_queue.jsonl"
 
 
+@pytest.fixture
+def review_actions_path(tmp_path: Path) -> Path:
+    """Per-test JSONL path for the Phase 7B reviewer action log."""
+
+    return tmp_path / "review_actions.jsonl"
+
+
 @pytest.fixture(autouse=True)
 def _reset_singletons(
     monkeypatch: pytest.MonkeyPatch,
     repository_paths: tuple[Path, Path],
     review_store_path: Path,
+    review_actions_path: Path,
 ):
     docs_out, chunks_out = repository_paths
     monkeypatch.setattr(
@@ -85,19 +94,22 @@ def _reset_singletons(
         "backend.app.services.document_repository._DEFAULT_DOCUMENT_STORE",
         docs_out,
     )
-    # Force the review store to the per-test tmp path.
+    # Force both review stores to the per-test tmp paths.
     monkeypatch.setenv("TRUSTRAG_REVIEW_STORE_PATH", str(review_store_path))
+    monkeypatch.setenv("TRUSTRAG_REVIEW_ACTIONS_PATH", str(review_actions_path))
     # Reset env-driven toggles to a known default.
     monkeypatch.delenv("TRUSTRAG_HUMAN_REVIEW_ENABLED", raising=False)
     monkeypatch.delenv("TRUSTRAG_REVIEW_INCLUDE_CONTENT", raising=False)
     monkeypatch.delenv("TRUSTRAG_TRACE_ENABLED", raising=False)
     reset_repository()
     reset_review_checkpoint_store()
+    reset_review_action_store()
     reset_local_trace_collector()
     get_workflow.cache_clear()
     yield
     reset_repository()
     reset_review_checkpoint_store()
+    reset_review_action_store()
     reset_local_trace_collector()
     get_workflow.cache_clear()
 

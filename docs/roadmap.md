@@ -543,12 +543,68 @@ docs. **Completed.**
       eval report viewer, and local trace viewer.
 - [x] Read-only `GET /v1/evals/latest` diagnostic endpoint.
 
-### Phase 7B — Reviewer actions and durable UI (deferred)
+### Phase 7B — Reviewer actions and local state transitions (current) ✅
 
-- [ ] Reviewer approve / reject / rewrite actions.
-- [ ] Persistent dashboard state.
+- [x] ``backend/app/review/models.py`` — added
+      :class:`ReviewActionType`, :class:`ReviewActionRequest`,
+      :class:`ReviewAction`, :class:`ReviewActionResponse`,
+      :class:`ReviewActionHistoryResponse`,
+      :class:`ReviewQueueEntry` (checkpoint + computed status +
+      action_count).
+- [x] ``backend/app/review/state_machine.py`` — declarative transition
+      table for ``approve`` / ``reject`` / ``request_changes`` /
+      ``rewrite_note`` / ``resolve`` / ``reopen``;
+      :class:`InvalidReviewTransitionError` carries the offending
+      pair for clear 400 bodies. ``rewrite_note`` is a self-transition
+      for every status so the FSM stays uniform.
+- [x] ``backend/app/review/checkpoint_store.py`` — added
+      :class:`LocalReviewActionStore`, an append-only JSONL log with
+      the same shape as :class:`LocalReviewCheckpointStore`
+      (thread-safe, malformed-line tolerant, ``max_entries``
+      truncation). Module-level singleton +
+      :func:`reset_review_action_store` test seam.
+- [x] ``backend/app/review/service.py`` — new :class:`ReviewService`
+      orchestrates checkpoint + action stores. Computes current
+      status by trusting the latest action's recorded ``new_status``,
+      so replaying old log lines stays safe across future FSM
+      changes.
+- [x] ``backend/app/core/config.py`` + ``.env.example`` — added
+      ``TRUSTRAG_REVIEW_ACTIONS_PATH`` (default
+      ``data/review_actions.jsonl``) and
+      ``TRUSTRAG_REVIEW_ACTIONS_MAX_ENTRIES`` (default 2000).
+- [x] ``backend/app/main.py`` — added
+      ``POST /v1/review/queue/{id}/actions`` and
+      ``GET /v1/review/queue/{id}/actions``; updated existing
+      ``GET /v1/review/queue``, ``GET /v1/review/queue/{id}``, and
+      ``DELETE /v1/review/queue`` to return computed status,
+      action_count, and ``cleared_actions``. 404 for missing id,
+      400 for invalid transition or disabled feature.
+- [x] ``frontend/index.html`` / ``app.js`` / ``styles.css`` — review
+      queue panel now renders six action buttons per checkpoint,
+      reviewer note textarea, optional rewritten-answer textarea, and
+      a per-checkpoint action history view. Event-delegated click
+      handler posts to the new API and refreshes both the queue and
+      the history.
+- [x] 54 new tests in ``test_review_actions.py`` across the state
+      machine, action store, ``ReviewService``, FastAPI endpoints,
+      and dashboard wiring. Existing ``test_human_review.py``
+      extended to isolate the new action store under tmp_path. Total
+      pytest count: **363 passed** (was 309).
+- [x] Eval gate behavior preserved: no eval thresholds change, no
+      LLM call, no real provider call, no new heavy dependency.
+- [x] Unsafe refusal still bypasses the review queue, so no reviewer
+      action can be applied to an unsafe request.
+
+### Phase 7C — Durable review persistence + dashboard polish (deferred)
+
+- [ ] Postgres backend behind the
+      :class:`LocalReviewCheckpointStore` and
+      :class:`LocalReviewActionStore` interfaces.
+- [ ] Real authentication / authorization for reviewer actions.
+- [ ] Dashboard filtering (by status / category / reviewer).
+- [ ] Historical eval trend dashboard.
+- [ ] Real LLM rewrite + answer replay from a reviewed checkpoint.
 - [ ] Deployable UI.
-- [ ] Historical eval dashboard.
 
 ## Phase 8 — GitHub Page Showcase
 

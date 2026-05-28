@@ -160,6 +160,20 @@ class Settings:
         )
     )
 
+    # Phase 7B — Reviewer action log. Append-only JSONL store of
+    # approve / reject / request_changes / rewrite_note / resolve /
+    # reopen events. Default path is gitignored under ``data/``.
+    trustrag_review_actions_path: str = field(
+        default_factory=lambda: os.getenv(
+            "TRUSTRAG_REVIEW_ACTIONS_PATH", "data/review_actions.jsonl"
+        )
+    )
+    trustrag_review_actions_max_entries: int = field(
+        default_factory=lambda: _int_env(
+            "TRUSTRAG_REVIEW_ACTIONS_MAX_ENTRIES", 2000
+        )
+    )
+
     # Phase 7A dashboard diagnostics. These are read-only inputs used by
     # ``GET /v1/evals/latest``; the API never runs evals or writes files.
     trustrag_eval_results_path: str = field(

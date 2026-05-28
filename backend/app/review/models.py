@@ -1,4 +1,11 @@
-"""Pydantic models for the Phase 5B human-review queue.
+"""Pydantic models for the Phase 5B / 7B human-review queue.
+
+Phase 5B introduced :class:`ReviewCheckpoint` and the read-only review
+queue. Phase 7B adds an *action log* layer on top: the checkpoint is
+still the immutable snapshot of what the workflow handed off, and
+reviewer decisions land in an append-only :class:`ReviewAction` log.
+Current status is the projection of (initial pending status) + (action
+history) — the store never mutates the checkpoint itself.
 
 Why a separate :class:`ReviewEvidenceSummary` instead of reusing the
 workflow evidence dict directly:
@@ -20,9 +27,19 @@ configured with ``include_content=True`` (off by default).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+
+ReviewActionType = Literal[
+    "approve",
+    "reject",
+    "request_changes",
+    "rewrite_note",
+    "resolve",
+    "reopen",
+]
 
 
 class ReviewEvidenceSummary(BaseModel):
@@ -66,19 +83,105 @@ class ReviewCheckpoint(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ReviewQueueEntry(BaseModel):
+    """Checkpoint + computed status + action count for dashboard reads.
+
+    Additive: clients that only know about :class:`ReviewCheckpoint`
+    still get every field they expect — :class:`ReviewQueueEntry`
+    inlines them via composition rather than inheritance so the JSON
+    shape stays flat for the dashboard.
+    """
+
+    review_queue_id: str
+    status: str
+    initial_status: str = "pending"
+    question: str
+    question_type: str | None = None
+    judge_conclusion: str | None = None
+    confidence: float | None = None
+    needs_human_review: bool = True
+    human_review_reasons: list[str] = Field(default_factory=list)
+    routing_decision: str | None = None
+    visited_nodes: list[str] = Field(default_factory=list)
+    support_evidence: list[ReviewEvidenceSummary] = Field(default_factory=list)
+    counter_evidence: list[ReviewEvidenceSummary] = Field(default_factory=list)
+    temporal_analysis: dict[str, Any] | None = None
+    conflict_analysis: dict[str, Any] | None = None
+    safety_analysis: dict[str, Any] | None = None
+    created_at: str
+    action_count: int = 0
+    last_action_at: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class ReviewQueueResponse(BaseModel):
     """Response shape for ``GET /v1/review/queue``."""
 
     enabled: bool
     count: int = 0
-    entries: list[ReviewCheckpoint] = Field(default_factory=list)
+    entries: list[ReviewQueueEntry] = Field(default_factory=list)
 
 
 class ReviewClearResponse(BaseModel):
-    """Response shape for ``DELETE /v1/review/queue``."""
+    """Response shape for ``DELETE /v1/review/queue``.
+
+    ``cleared_actions`` is Phase 7B additive — older clients that only
+    inspect ``cleared`` keep working.
+    """
 
     enabled: bool
     cleared: int = 0
+    cleared_actions: int = 0
+
+
+class ReviewActionRequest(BaseModel):
+    """Body for ``POST /v1/review/queue/{id}/actions``.
+
+    ``rewritten_answer`` is *only* a reviewer-authored note — the
+    system never generates one. The dashboard does not require it for
+    any action; it is offered as a free-text human override.
+    """
+
+    action_type: ReviewActionType
+    reviewer: str | None = None
+    note: str | None = None
+    rewritten_answer: str | None = None
+
+
+class ReviewAction(BaseModel):
+    """One entry in the append-only review action log.
+
+    ``previous_status`` / ``new_status`` are recorded at write time so
+    the audit log is fully self-contained — replaying the JSONL never
+    needs the live transition table to render history.
+    """
+
+    action_id: str
+    review_queue_id: str
+    action_type: ReviewActionType
+    reviewer: str | None = None
+    note: str | None = None
+    rewritten_answer: str | None = None
+    previous_status: str
+    new_status: str
+    created_at: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReviewActionResponse(BaseModel):
+    """Response shape for ``POST /v1/review/queue/{id}/actions``."""
+
+    review_queue_id: str
+    status: str
+    action: ReviewAction
+
+
+class ReviewActionHistoryResponse(BaseModel):
+    """Response shape for ``GET /v1/review/queue/{id}/actions``."""
+
+    review_queue_id: str
+    status: str
+    actions: list[ReviewAction] = Field(default_factory=list)
 
 
 def summarize_evidence_for_review(
@@ -125,9 +228,15 @@ def summarize_evidence_for_review(
 
 
 __all__ = [
+    "ReviewAction",
+    "ReviewActionHistoryResponse",
+    "ReviewActionRequest",
+    "ReviewActionResponse",
+    "ReviewActionType",
     "ReviewCheckpoint",
     "ReviewClearResponse",
     "ReviewEvidenceSummary",
+    "ReviewQueueEntry",
     "ReviewQueueResponse",
     "summarize_evidence_for_review",
 ]

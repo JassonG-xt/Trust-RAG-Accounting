@@ -421,6 +421,121 @@ pre {
   font-style: italic;
 }
 
+.review-disclaimer {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--amber);
+  background: var(--amber-soft);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.review-disclaimer code {
+  background: rgba(23, 35, 38, 0.08);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.review-item {
+  display: grid;
+  gap: 10px;
+}
+
+.review-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.review-action {
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.review-action:hover {
+  border-color: var(--teal);
+  background: var(--teal-soft);
+}
+
+.review-history-toggle {
+  margin-left: auto;
+}
+
+.review-note-label {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.review-note,
+.review-rewrite {
+  width: 100%;
+  min-height: 48px;
+  resize: vertical;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.review-rewrite-block {
+  margin-top: 0;
+}
+
+.review-action-status {
+  margin: 0;
+}
+
+.history-list {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.history-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.history-row time {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+}
+
+.history-row .muted {
+  color: var(--muted);
+}
+
+.history-row .history-note {
+  grid-column: 1 / -1;
+  margin: 4px 0 0;
+  color: var(--ink);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 1180px) {
   .dashboard-shell {
     grid-template-columns: 1fr 1.5fr;

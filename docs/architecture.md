@@ -214,6 +214,43 @@ API surface added:
 - ``RAGQueryResponse.human_review`` — additive embedded object with
   ``required`` / ``status`` / ``review_queue_id`` / ``reasons``.
 
+**Phase 7B reviewer actions (additive on top of Phase 5B):**
+
+```
+ReviewCheckpoint  ← immutable snapshot (Phase 5B)
+       │
+       ▼
+ReviewAction log  ← append-only JSONL (Phase 7B)
+       │           one line per approve / reject / request_changes /
+       │           rewrite_note / resolve / reopen
+       ▼
+ReviewService.get_current_status(checkpoint, actions)
+       │
+       ▼
+ReviewQueueEntry  ← checkpoint + computed status + action_count
+       │
+       ▼
+GET /v1/review/queue
+GET /v1/review/queue/{id}/actions
+POST /v1/review/queue/{id}/actions   (FSM-gated)
+DELETE /v1/review/queue              (clears checkpoints + actions)
+```
+
+The state machine in
+``backend/app/review/state_machine.py`` is a declarative
+``(status, action) → new_status`` table. Invalid pairs raise
+``InvalidReviewTransitionError`` which the FastAPI handler maps to
+400. Missing review ids map to 404. The action log is the system of
+record: ``get_current_status`` reads the latest action's recorded
+``new_status``, which keeps the log replay-safe across future FSM
+changes.
+
+The reviewer dashboard (``frontend/index.html`` + ``app.js`` +
+``styles.css``) consumes the same endpoints — vanilla JavaScript,
+event-delegated click handler, no framework, no build step.
+``rewritten_answer`` is a free-text reviewer field, never auto-
+generated — the system does not call any LLM to rewrite the answer.
+
 **Phase 5A graph topology (conditional routing):**
 
 ```

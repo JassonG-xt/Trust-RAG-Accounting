@@ -20,6 +20,40 @@ def test_dashboard_returns_html() -> None:
     assert "TrustRAG Accounting Dashboard" in response.text
 
 
+def test_dashboard_carries_review_action_disclaimer() -> None:
+    client = TestClient(app)
+
+    response = client.get("/dashboard")
+
+    assert response.status_code == 200
+    body = response.text
+    assert "review_actions.jsonl" in body
+    assert "Local demo workflow" in body
+
+
+def test_dashboard_app_js_contains_review_action_wiring() -> None:
+    client = TestClient(app)
+
+    response = client.get("/dashboard/static/app.js")
+
+    assert response.status_code == 200
+    body = response.text
+    assert "REVIEW_ACTIONS" in body
+    assert "handleReviewClick" in body
+    assert "rewrite_note" in body
+
+
+def test_dashboard_styles_contains_review_action_styles() -> None:
+    client = TestClient(app)
+
+    response = client.get("/dashboard/static/styles.css")
+
+    assert response.status_code == 200
+    body = response.text
+    assert ".review-action" in body
+    assert ".history-list" in body
+
+
 def test_dashboard_app_js_static_route_returns_js() -> None:
     client = TestClient(app)
 

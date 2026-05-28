@@ -593,6 +593,53 @@ inspection, document/chunk overview, human review queue viewer, latest
 eval report viewer, and local trace viewer. If tracing is disabled or
 eval artifacts are missing, the relevant panel renders a placeholder.
 
+## Running reviewer actions (Phase 7B)
+
+1. From the dashboard, ask a question that lands in the review queue,
+   for example `小规模纳税人现在增值税应该怎么处理？`.
+2. Scroll to the **Human Review** panel. The new entry appears with
+   computed status `pending`.
+3. Click one of the six reviewer action buttons:
+   - `Approve` → status moves to `approved`.
+   - `Reject` → status moves to `rejected`.
+   - `Request changes` → status moves to `changes_requested`.
+   - `Add note` (rewrite_note) → status unchanged, note appended.
+   - `Resolve` → status moves to `resolved`.
+   - `Reopen` → terminal-ish statuses move back to `pending`.
+4. Add an optional reviewer note before clicking. Expand the
+   **Rewritten answer** disclosure to add a human-authored
+   replacement — the system does NOT generate it.
+5. Click **History** to fetch
+   `GET /v1/review/queue/{id}/actions` and inspect the append-only
+   audit log.
+
+Equivalent direct curl flow:
+
+```bash
+# 1. Trigger a review handoff.
+curl -s -X POST http://localhost:8000/v1/rag/query \
+    -H 'content-type: application/json' \
+    -d '{"question": "小规模纳税人现在增值税应该怎么处理？"}' \
+    | jq '.human_review'
+
+# 2. Approve the first queued entry.
+QUEUE_ID=$(curl -s http://localhost:8000/v1/review/queue \
+    | jq -r '.entries[0].review_queue_id')
+
+curl -s -X POST "http://localhost:8000/v1/review/queue/${QUEUE_ID}/actions" \
+    -H 'content-type: application/json' \
+    -d '{"action_type": "approve", "reviewer": "demo", "note": "evidence checks out"}' \
+    | jq
+
+# 3. Inspect the action history.
+curl -s "http://localhost:8000/v1/review/queue/${QUEUE_ID}/actions" | jq
+```
+
+Actions land in `data/review_actions.jsonl` as one JSONL line each;
+the file is gitignored. `DELETE /v1/review/queue` clears both
+checkpoints and actions in one shot and reports `cleared` +
+`cleared_actions` counts.
+
 ### Single-category run
 
 ```bash
