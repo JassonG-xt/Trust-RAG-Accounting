@@ -44,6 +44,13 @@ class TrustRAGState(TypedDict, total=False):
     citations: list[dict]
     needs_human_review: bool
 
+    # Phase 5B — human review handoff (written by human_review_handoff).
+    human_review_required: bool
+    human_review_reasons: list[str]
+    review_queue_id: str | None
+    review_status: str | None
+    review_checkpoint_path: str | None     # internal-only, not surfaced via FastAPI
+
     # Cross-cutting
     errors: list[str]
 ```
@@ -192,6 +199,53 @@ The collector is a thread-safe ring buffer capped at
 overflow — this is a *local debugging aid*, not a durable audit
 log. For production audit, future phases would wire an exporter
 (LangSmith, Phoenix, OpenTelemetry) behind the same seam.
+
+### Phase 5B — Human review handoff after `judge_agent`
+
+Phase 5B adds a second conditional edge after ``judge_agent``. The
+edge function ``route_after_judge`` reads the handoff policy
+(``backend.app.review.handoff_policy.should_handoff_for_review``)
+and returns ``"human_review_handoff"`` when the case requires
+review, otherwise ``"answer_directly"``. Both branches converge
+on ``answer_generator``.
+
+```mermaid
+flowchart TD
+    JA[judge_agent] -->|human_review_required| HR[human_review_handoff]
+    JA -->|answer_directly| AG[answer_generator]
+    HR --> AG
+```
+
+The ``human_review_handoff`` node generates a queue id
+(``review_<ms_timestamp>_<8_hex>``), builds a
+``ReviewCheckpoint`` carrying the question type, judge conclusion,
+visited nodes, evidence *summaries* (chunk_id / score /
+retrieval_strategy — never full content by default), and appends
+to ``data/review_queue.jsonl`` (gitignored). The queue id is
+written back into state and surfaces in the
+``human_review.review_queue_id`` field of the FastAPI response.
+
+### Handoff policy
+
+| Trigger | Reason emitted |
+|---|---|
+| `question_type == "tax_policy"` | `tax_policy_always_review` |
+| `question_type == "invoice_compliance"` | `invoice_compliance_always_review` |
+| `conflict_analysis.has_conflict` | `evidence_conflict` |
+| `temporal_analysis.temporal_conflict` | `temporal_conflict` |
+| `judge_verdict.conclusion == "insufficient_evidence"` | `insufficient_evidence` |
+| `confidence < TRUSTRAG_REVIEW_CONFIDENCE_THRESHOLD` (default 0.6) | `confidence_below_threshold` |
+| `needs_human_review == true` with no other specific reason | `judge_requested_review` |
+
+**Hard exclusions** (never queue):
+
+- `judge_verdict.conclusion == "refuse_unsafe"` — already refused.
+- `question_type == "unsafe_request"` — Phase 5A fast path output.
+
+This keeps the unsafe path's `visited_nodes` exactly at four
+entries (``query_analyzer → safety_checker → judge_agent →
+answer_generator``) and avoids putting refusal cases into the
+review queue.
 
 ## 4. Future Conditional Routing (Phase 5)
 

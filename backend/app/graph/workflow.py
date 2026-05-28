@@ -1,27 +1,7 @@
 """TrustRAG LangGraph workflow builder.
 
-Phase 0–4 shipped a fully linear pipeline:
-
-    START
-      -> query_analyzer
-      -> claim_decomposer
-      -> support_retriever
-      -> counter_retriever
-      -> temporal_checker
-      -> conflict_detector
-      -> safety_checker
-      -> judge_agent
-      -> answer_generator
-      -> END
-
-Phase 5A adds a conditional edge after ``query_analyzer``. When the
-analyzer classifies the question as ``unsafe_request`` (tax evasion,
-invoice fabrication, voucher destruction, regulator bypass, …), the
-workflow takes a *fast path*: it skips claim decomposition, both
-retrieval nodes, temporal checking, and conflict detection, going
-straight to ``safety_checker -> judge_agent -> answer_generator``.
-
-Everything else takes the standard evidence-aware path verbatim.
+Phase 0–4 shipped a fully linear pipeline. Phase 5A added a
+conditional edge after ``query_analyzer`` for the unsafe fast-path:
 
 ```
             ┌─> safety_checker -> judge_agent -> answer_generator
@@ -33,9 +13,26 @@ standard ──> claim_decomposer -> support_retriever -> counter_retriever
                      -> safety_checker -> judge_agent -> answer_generator
 ```
 
-The routing decision lives in ``state["routing_decision"]`` (set by
-``query_analyzer``) so the LangGraph conditional function only *reads*
-state, never mutates it.
+Phase 5B adds a *second* conditional edge after ``judge_agent``. When
+the policy in ``backend.app.review.handoff_policy.should_handoff_for_review``
+says the case needs human review (tax policy / invoice compliance /
+evidence conflict / temporal conflict / insufficient evidence /
+low confidence), the graph routes through a new
+``human_review_handoff`` node that writes a content-safe checkpoint to
+a local JSONL queue. The case then continues to ``answer_generator``
+as normal — the queue id is appended to the answer text so the
+client sees the audit pointer.
+
+```
+judge_agent
+   ├── human_review_required ─> human_review_handoff ─> answer_generator
+   └── answer_directly        ──────────────────────────> answer_generator
+```
+
+Crucially, ``unsafe_request`` / ``refuse_unsafe`` outcomes do NOT
+enter the review queue — the handoff policy excludes them. The
+unsafe path remains: ``query_analyzer -> safety_checker -> judge_agent
+-> answer_generator`` (four nodes, no queue).
 """
 
 from __future__ import annotations
@@ -44,11 +41,14 @@ from functools import lru_cache
 
 from langgraph.graph import END, START, StateGraph
 
+from ..core.config import get_settings
+from ..review import should_handoff_for_review
 from .nodes import (
     answer_generator,
     claim_decomposer,
     conflict_detector,
     counter_retriever,
+    human_review_handoff,
     judge_agent,
     query_analyzer,
     safety_checker,
@@ -59,12 +59,14 @@ from .state import TrustRAGState, initial_state
 
 
 # ---------------------------------------------------------------------------
-# Conditional routing
+# Conditional routing (Phase 5A + 5B)
 # ---------------------------------------------------------------------------
 
 
 _UNSAFE_BRANCH = "unsafe_fast_path"
 _STANDARD_BRANCH = "standard_rag"
+_REVIEW_BRANCH = "human_review_handoff"
+_DIRECT_BRANCH = "answer_directly"
 
 
 def route_after_query_analysis(state: TrustRAGState) -> str:
@@ -85,6 +87,24 @@ def route_after_query_analysis(state: TrustRAGState) -> str:
     return _STANDARD_BRANCH
 
 
+def route_after_judge(state: TrustRAGState) -> str:
+    """Phase 5B conditional edge.
+
+    Pure reader of the handoff policy. Returns ``"human_review_handoff"``
+    when the policy says the case requires review, otherwise
+    ``"answer_directly"``. The policy *itself* excludes unsafe refusal
+    cases, so this function does not need to check ``refuse_unsafe`` /
+    ``unsafe_request`` again — the policy already returned ``(False, [])``
+    for those.
+    """
+
+    settings = get_settings()
+    if not settings.trustrag_human_review_enabled:
+        return _DIRECT_BRANCH
+    should, _ = should_handoff_for_review(state)
+    return _REVIEW_BRANCH if should else _DIRECT_BRANCH
+
+
 # ---------------------------------------------------------------------------
 # Graph wiring
 # ---------------------------------------------------------------------------
@@ -99,7 +119,7 @@ def build_workflow():
 
     graph = StateGraph(TrustRAGState)
 
-    # Register every node — both branches share most of them.
+    # Register every node — branches share most of them.
     graph.add_node("query_analyzer", query_analyzer)
     graph.add_node("claim_decomposer", claim_decomposer)
     graph.add_node("support_retriever", support_retriever)
@@ -108,6 +128,7 @@ def build_workflow():
     graph.add_node("conflict_detector", conflict_detector)
     graph.add_node("safety_checker", safety_checker)
     graph.add_node("judge_agent", judge_agent)
+    graph.add_node("human_review_handoff", human_review_handoff)
     graph.add_node("answer_generator", answer_generator)
 
     # Entry into query_analyzer.
@@ -123,16 +144,27 @@ def build_workflow():
         },
     )
 
-    # Standard-path linear edges (unchanged from Phase 4B).
+    # Standard-path linear edges (unchanged from Phase 4B/5A).
     graph.add_edge("claim_decomposer", "support_retriever")
     graph.add_edge("support_retriever", "counter_retriever")
     graph.add_edge("counter_retriever", "temporal_checker")
     graph.add_edge("temporal_checker", "conflict_detector")
     graph.add_edge("conflict_detector", "safety_checker")
 
-    # Tail shared by both branches.
+    # Tail entry — both branches funnel into safety_checker -> judge_agent.
     graph.add_edge("safety_checker", "judge_agent")
-    graph.add_edge("judge_agent", "answer_generator")
+
+    # Phase 5B — conditional edge after judge: maybe human review handoff.
+    graph.add_conditional_edges(
+        "judge_agent",
+        route_after_judge,
+        {
+            _REVIEW_BRANCH: "human_review_handoff",
+            _DIRECT_BRANCH: "answer_generator",
+        },
+    )
+    # Both review and direct branches converge on answer_generator.
+    graph.add_edge("human_review_handoff", "answer_generator")
     graph.add_edge("answer_generator", END)
 
     return graph.compile()
@@ -156,6 +188,7 @@ def run_query(question: str) -> dict:
 __all__ = [
     "build_workflow",
     "get_workflow",
+    "route_after_judge",
     "route_after_query_analysis",
     "run_query",
 ]

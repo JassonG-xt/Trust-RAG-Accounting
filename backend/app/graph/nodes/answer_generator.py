@@ -273,5 +273,17 @@ def answer_generator(state: TrustRAGState) -> dict:
     else:
         result = _answer_from_evidence(state)
 
+    # Phase 5B — if the case entered the review queue, append a short
+    # audit pointer so the API client sees the queue id without
+    # parsing a separate field. The unsafe refusal path never enters
+    # the queue (review_queue_id stays None) so it remains untouched.
+    queue_id = state.get("review_queue_id")
+    if queue_id:
+        review_note = (
+            f" This answer has been queued for human review. "
+            f"Review queue id: {queue_id}."
+        )
+        result["answer"] = (result.get("answer") or "") + review_note
+
     result["visited_nodes"] = ["answer_generator"]
     return result

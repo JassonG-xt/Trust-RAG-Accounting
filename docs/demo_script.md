@@ -262,6 +262,67 @@ bash scripts/run_dev.sh
 and the retrieval runnable falls back to the Phase 4A path verbatim —
 no observable change in `support_evidence` / `counter_evidence`.
 
+## Inspecting the review queue (Phase 5B)
+
+Tax-policy, invoice-compliance, evidence-conflict, temporal-conflict,
+insufficient-evidence, and low-confidence cases now route through a
+``human_review_handoff`` node that writes a content-safe checkpoint
+to the local JSONL queue.
+
+```bash
+# Trigger a tax-policy query — this routes through human_review_handoff.
+curl -s -X POST http://localhost:8000/v1/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"小规模纳税人现在增值税应该怎么处理？"}' \
+  | jq '.human_review'
+
+# Sample output (abbreviated):
+# {
+#   "required": true,
+#   "status": "pending",
+#   "review_queue_id": "review_1779944429071_9b3a486a",
+#   "reasons": ["tax_policy_always_review"]
+# }
+
+# List the review queue.
+curl -s http://localhost:8000/v1/review/queue | jq '{
+  enabled, count, queue_ids: [.entries[].review_queue_id]
+}'
+
+# Fetch a single checkpoint.
+curl -s http://localhost:8000/v1/review/queue/review_1779944429071_9b3a486a | jq
+
+# Clear the local queue.
+curl -s -X DELETE http://localhost:8000/v1/review/queue | jq
+```
+
+Notes:
+
+* **Unsafe refusals never enter the queue.** A query like
+  ``怎么隐藏收入少交税？`` returns ``human_review.required: false`` —
+  the system refuses, but doesn't pretend a reviewer should look at
+  it. This is the Phase 5A unsafe fast-path output, unchanged.
+* **No full content by default.** Each ``ReviewCheckpoint``
+  carries evidence *summaries* (chunk_id, score, retrieval_strategy,
+  section_title) but not document content. Set
+  ``TRUSTRAG_REVIEW_INCLUDE_CONTENT=true`` locally if you need
+  200-char previews for debugging.
+* **`data/review_queue.jsonl` is gitignored.** The local store is a
+  debugging aid, not a durable audit log; Phase 5C will plug a
+  Postgres exporter behind the same store interface.
+
+## Turning off human review handoff
+
+```bash
+export TRUSTRAG_HUMAN_REVIEW_ENABLED=false
+bash scripts/run_dev.sh
+```
+
+The conditional edge ``route_after_judge`` always returns
+``answer_directly`` when the flag is off — the workflow degrades to
+the Phase 5A topology verbatim, and ``GET /v1/review/queue`` returns
+``{"enabled": false, "count": 0, "entries": []}``.
+
 ## Talking Points
 
 When demoing on the GitHub README / a presentation:
@@ -316,6 +377,14 @@ When demoing on the GitHub README / a presentation:
    the event payload deliberately carries `chunk_ids` and
    `top_score`, not full document content, so the trace log is not
    a parallel copy of the corpus.
+8. **Human review is policy-driven, not LLM-driven** (Phase 5B).
+   `should_handoff_for_review(state)` is a tight set of rules —
+   tax policy and invoice compliance always queue, evidence /
+   temporal conflicts always queue, low confidence queues — and
+   the exclusion list (refuse_unsafe, unsafe_request) is just as
+   important as the inclusion list. Putting the rules in one
+   pure function means the trace ("why was this queued?") is
+   readable from one file, not scattered across LLM prompts.
 
 ## Inspecting the retrieval breakdown
 

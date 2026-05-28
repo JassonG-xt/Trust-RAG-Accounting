@@ -397,13 +397,73 @@ docs. **Completed.**
 - ✅ No FastAPI API change, no new dependency, no real LLM, no
       Postgres checkpoint, no human-review handoff.
 
-### Phase 5B — Human Review Handoff & Low-confidence Routing (deferred)
+### Phase 5B — Human Review Handoff + Local Checkpoint ✅
 
-- [ ] ``judge_agent`` → ``human_review_handoff`` conditional edge on
-      ``tax_policy`` / ``invoice_compliance`` / ``conflict`` /
-      ``low_confidence`` outcomes.
-- [ ] Postgres state checkpointing at the handoff boundary.
-- [ ] Reviewer queue (approve / rewrite / reject) API surface.
+- ✅ ``backend/app/review/`` — new package with:
+  - ``models.py`` — ``ReviewCheckpoint`` /
+    ``ReviewEvidenceSummary`` / ``ReviewQueueResponse`` /
+    ``ReviewClearResponse`` Pydantic models plus
+    ``summarize_evidence_for_review`` (content-safe by default).
+  - ``handoff_policy.py`` — ``should_handoff_for_review(state)``
+    pure function. Exclusion rules (refuse_unsafe /
+    unsafe_request) fire first; inclusion rules then accumulate
+    with reasons sorted + deduped. Catch-all
+    ``judge_requested_review`` fires only when ``needs_human_review``
+    is true with no specific reason.
+  - ``checkpoint_store.py`` — ``LocalReviewCheckpointStore``
+    JSONL append-only ring buffer, thread-safe, tolerant of
+    malformed lines, ``max_entries`` enforced, module-level
+    singleton with ``reset_review_checkpoint_store`` for tests.
+- ✅ ``backend/app/graph/nodes/human_review_handoff.py`` — new
+      LangGraph node. Generates ``review_<ms_timestamp>_<8_hex>``
+      queue ids, persists ``ReviewCheckpoint`` to the store, writes
+      ``human_review_required`` / ``review_queue_id`` /
+      ``review_status`` back into state. Handles store failure
+      with a clear ``state["errors"]`` entry rather than crashing
+      the workflow.
+- ✅ ``backend/app/graph/workflow.py`` — added
+      ``route_after_judge`` conditional function +
+      ``add_conditional_edges`` after ``judge_agent``. Both
+      branches converge on ``answer_generator``.
+- ✅ ``answer_generator`` — when ``review_queue_id`` is set,
+      appends a short audit pointer to the answer text. Unsafe
+      refusals never have a queue id, so the refusal answer
+      stays clean.
+- ✅ ``backend/app/schemas/rag.py`` — added ``HumanReviewSummary``
+      Pydantic model + ``RAGQueryResponse.human_review`` (always
+      present, never None). Internal
+      ``review_checkpoint_path`` deliberately not exposed.
+- ✅ ``backend/app/main.py`` — added ``GET /v1/review/queue``,
+      ``GET /v1/review/queue/{id}``, ``DELETE /v1/review/queue``.
+      Disabled-flag returns ``{"enabled": false, ...}`` for the
+      list endpoint and 404 for the per-id GET.
+- ✅ ``core/config.py`` + ``.env.example`` — added
+      ``TRUSTRAG_HUMAN_REVIEW_ENABLED`` (default true),
+      ``TRUSTRAG_REVIEW_STORE_PATH`` (default
+      ``data/review_queue.jsonl``),
+      ``TRUSTRAG_REVIEW_INCLUDE_CONTENT`` (default false),
+      ``TRUSTRAG_REVIEW_MAX_ENTRIES`` (default 1000),
+      ``TRUSTRAG_REVIEW_CONFIDENCE_THRESHOLD`` (default 0.6).
+- ✅ Hard exclusions defended by tests: ``refuse_unsafe`` and
+      ``unsafe_request`` *cannot* enter the review queue, even
+      when ``needs_human_review`` is true.
+- ✅ 36 new tests in ``test_human_review.py`` across 5 groups:
+      handoff policy unit tests, store behavior (append / list /
+      get / clear / malformed-line / max_entries), workflow
+      integration (tax / invoice / unsafe / standard / reimbursement
+      conflict / checkpoint actually persisted to disk), FastAPI
+      integration (response shape, ``/v1/review/queue`` GET/DELETE/
+      per-id), and ``route_after_judge`` unit tests. Total pytest
+      count: **231 passed**.
+- ✅ No Postgres / no real LLM / no frontend / no remote
+      LangSmith / no new dependency.
+
+### Phase 5C — Durable review persistence + reviewer actions (deferred)
+
+- [ ] Postgres backend behind the ``LocalReviewCheckpointStore``
+      interface.
+- [ ] Approve / reject / rewrite reviewer actions.
+- [ ] Answer replay from a reviewed checkpoint.
 
 ## Phase 6 — Accounting RAG Eval Harness
 

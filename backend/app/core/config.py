@@ -130,6 +130,36 @@ class Settings:
         default_factory=lambda: _bool_env("TRUSTRAG_TRACE_INCLUDE_CONTENT", False)
     )
 
+    # Phase 5B — human review handoff. Default ON, but unsafe refusal
+    # cases are still excluded by the policy in
+    # ``backend.app.review.handoff_policy.should_handoff_for_review`` —
+    # the toggle only governs whether the *node* runs at all.
+    #
+    # ``trustrag_review_store_path`` is the local JSONL file the
+    # handoff node appends to. The default lives under ``data/`` which
+    # is gitignored.
+    trustrag_human_review_enabled: bool = field(
+        default_factory=lambda: _bool_env("TRUSTRAG_HUMAN_REVIEW_ENABLED", True)
+    )
+    trustrag_review_store_path: str = field(
+        default_factory=lambda: os.getenv(
+            "TRUSTRAG_REVIEW_STORE_PATH", "data/review_queue.jsonl"
+        )
+    )
+    trustrag_review_include_content: bool = field(
+        default_factory=lambda: _bool_env(
+            "TRUSTRAG_REVIEW_INCLUDE_CONTENT", False
+        )
+    )
+    trustrag_review_max_entries: int = field(
+        default_factory=lambda: _int_env("TRUSTRAG_REVIEW_MAX_ENTRIES", 1000)
+    )
+    trustrag_review_confidence_threshold: float = field(
+        default_factory=lambda: _float_env(
+            "TRUSTRAG_REVIEW_CONFIDENCE_THRESHOLD", 0.6
+        )
+    )
+
 
 def get_settings() -> Settings:
     """Return application settings.
