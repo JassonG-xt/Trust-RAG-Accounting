@@ -20,8 +20,15 @@ from .core.config import get_settings
 from .evals.models import EvalRunSummary
 from .graph.workflow import run_query
 from .review import (
+    InvalidReviewTransitionError,
+    ReviewActionHistoryResponse,
+    ReviewActionRequest,
+    ReviewActionResponse,
+    ReviewCheckpointNotFoundError,
     ReviewClearResponse,
     ReviewQueueResponse,
+    ReviewService,
+    get_review_action_store,
     get_review_checkpoint_store,
 )
 from .schemas.rag import (
@@ -208,19 +215,19 @@ def create_app() -> FastAPI:
         "/v1/review/queue", response_model=ReviewQueueResponse, tags=["review"]
     )
     def list_review_queue() -> ReviewQueueResponse:
-        """Phase 5B local review queue (read-only).
+        """Phase 5B local review queue + Phase 7B computed status.
 
         Returns ``enabled=false`` and an empty list when
-        ``TRUSTRAG_HUMAN_REVIEW_ENABLED`` is false — the endpoint is
-        always present so a client can detect review state without
-        relying on a 404.
+        ``TRUSTRAG_HUMAN_REVIEW_ENABLED`` is false. Each entry carries
+        a computed ``status`` (initial pending status folded with any
+        :class:`ReviewAction` records) plus the ``action_count``.
         """
 
         current_settings = get_settings()
         if not current_settings.trustrag_human_review_enabled:
             return ReviewQueueResponse(enabled=False, count=0, entries=[])
-        store = get_review_checkpoint_store()
-        entries = store.list_entries()
+        service = _build_review_service()
+        entries = service.list_queue()
         return ReviewQueueResponse(
             enabled=True,
             count=len(entries),
@@ -232,7 +239,7 @@ def create_app() -> FastAPI:
         tags=["review"],
     )
     def get_review_queue_entry(review_queue_id: str):
-        """Fetch a single review checkpoint by queue id."""
+        """Fetch a single review checkpoint by queue id, with current status."""
 
         current_settings = get_settings()
         if not current_settings.trustrag_human_review_enabled:
@@ -240,7 +247,8 @@ def create_app() -> FastAPI:
                 status_code=404,
                 detail="human review disabled",
             )
-        entry = get_review_checkpoint_store().get(review_queue_id)
+        service = _build_review_service()
+        entry = service.get_entry(review_queue_id)
         if entry is None:
             raise HTTPException(
                 status_code=404,
@@ -254,15 +262,98 @@ def create_app() -> FastAPI:
         tags=["review"],
     )
     def clear_review_queue() -> ReviewClearResponse:
-        """Clear the local review queue. No-op when disabled."""
+        """Clear the local review queue *and* the Phase 7B action log."""
 
         current_settings = get_settings()
         if not current_settings.trustrag_human_review_enabled:
-            return ReviewClearResponse(enabled=False, cleared=0)
-        cleared = get_review_checkpoint_store().clear()
-        return ReviewClearResponse(enabled=True, cleared=cleared)
+            return ReviewClearResponse(
+                enabled=False, cleared=0, cleared_actions=0
+            )
+        cleared_checkpoints, cleared_actions = _build_review_service().clear()
+        return ReviewClearResponse(
+            enabled=True,
+            cleared=cleared_checkpoints,
+            cleared_actions=cleared_actions,
+        )
+
+    @app.post(
+        "/v1/review/queue/{review_queue_id}/actions",
+        response_model=ReviewActionResponse,
+        tags=["review"],
+    )
+    def apply_review_action_endpoint(
+        review_queue_id: str,
+        request: ReviewActionRequest,
+    ) -> ReviewActionResponse:
+        """Phase 7B reviewer action endpoint.
+
+        ``400`` is returned when the feature is disabled or when the
+        transition is rejected by the FSM. ``404`` is returned when the
+        queue id does not exist. No authentication is enforced — this
+        is a local demo workflow.
+        """
+
+        current_settings = get_settings()
+        if not current_settings.trustrag_human_review_enabled:
+            raise HTTPException(
+                status_code=400,
+                detail="human review disabled",
+            )
+        service = _build_review_service()
+        try:
+            return service.apply_action(review_queue_id, request)
+        except ReviewCheckpointNotFoundError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail=str(exc),
+            ) from exc
+        except InvalidReviewTransitionError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=str(exc),
+            ) from exc
+
+    @app.get(
+        "/v1/review/queue/{review_queue_id}/actions",
+        response_model=ReviewActionHistoryResponse,
+        tags=["review"],
+    )
+    def list_review_actions(review_queue_id: str) -> ReviewActionHistoryResponse:
+        """Return the append-only action history for one checkpoint."""
+
+        current_settings = get_settings()
+        if not current_settings.trustrag_human_review_enabled:
+            raise HTTPException(
+                status_code=404,
+                detail="human review disabled",
+            )
+        service = _build_review_service()
+        if service.get_checkpoint(review_queue_id) is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"review queue id {review_queue_id!r} not found",
+            )
+        return ReviewActionHistoryResponse(
+            review_queue_id=review_queue_id,
+            status=service.get_current_status(review_queue_id),
+            actions=service.list_actions(review_queue_id),
+        )
 
     return app
+
+
+def _build_review_service() -> ReviewService:
+    """Build a :class:`ReviewService` from the process-wide singletons.
+
+    Kept as a function rather than a module-level instance so tests
+    that swap the singletons via ``monkeypatch`` see fresh stores on
+    every request.
+    """
+
+    return ReviewService(
+        checkpoint_store=get_review_checkpoint_store(),
+        action_store=get_review_action_store(),
+    )
 
 
 def _state_to_response(state: dict[str, Any]) -> RAGQueryResponse:

@@ -40,7 +40,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from .models import ReviewCheckpoint
+from .models import ReviewAction, ReviewCheckpoint
 
 logger = logging.getLogger(__name__)
 
@@ -188,3 +188,154 @@ def reset_review_checkpoint_store() -> None:
     global _store_singleton
     with _store_lock:
         _store_singleton = None
+
+
+# ---------------------------------------------------------------------------
+# Phase 7B — Local review action log
+# ---------------------------------------------------------------------------
+
+
+class LocalReviewActionStore:
+    """Append-only JSONL store of :class:`ReviewAction` records.
+
+    Mirrors :class:`LocalReviewCheckpointStore` so the dashboard +
+    service layer can reason about both stores uniformly:
+
+    * One JSONL line per action, append-only.
+    * Single :class:`threading.Lock` for cross-thread safety. Multi-
+      process concurrency is *not* a goal — this is a local demo log.
+    * Bad JSONL lines are skipped with a warning instead of crashing.
+    * ``max_entries`` enforced after each append by rewriting the file
+      with the trailing slice. Default 2000 — actions are higher-volume
+      than checkpoints (one checkpoint can accumulate many actions).
+    """
+
+    def __init__(
+        self,
+        path: Path | str,
+        *,
+        max_entries: int = 2000,
+    ) -> None:
+        if max_entries < 1:
+            raise ValueError("max_entries must be >= 1")
+        self._path = Path(path)
+        self._max_entries = int(max_entries)
+        self._lock = Lock()
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    @property
+    def max_entries(self) -> int:
+        return self._max_entries
+
+    # -- writers -------------------------------------------------------------
+
+    def append(self, action: ReviewAction) -> ReviewAction:
+        """Append one action as a JSONL line. Returns the same object.
+
+        Holds ``self._lock`` for the whole operation including the
+        max-entries enforcement so concurrent appends can't observe a
+        half-truncated file.
+        """
+
+        with self._lock:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            with self._path.open("a", encoding="utf-8") as f:
+                f.write(action.model_dump_json())
+                f.write("\n")
+            self._enforce_max_entries_locked()
+        return action
+
+    def clear(self) -> int:
+        """Delete the JSONL file. Returns the number of actions removed."""
+
+        with self._lock:
+            entries = self._read_all_locked()
+            if self._path.exists():
+                self._path.unlink()
+            return len(entries)
+
+    # -- readers -------------------------------------------------------------
+
+    def list_actions(
+        self,
+        review_queue_id: str | None = None,
+    ) -> list[ReviewAction]:
+        """Return actions in append order. Latest action is last.
+
+        ``review_queue_id`` filter is applied in-memory after the
+        JSONL read because the file is bounded and one queue id maps
+        to a small number of actions (a single checkpoint accumulates
+        rarely more than a few approve/reopen cycles in the demo).
+        """
+
+        with self._lock:
+            entries = self._read_all_locked()
+        if review_queue_id is None:
+            return entries
+        return [a for a in entries if a.review_queue_id == review_queue_id]
+
+    def __len__(self) -> int:
+        return len(self.list_actions())
+
+    # -- internals (lock-held) ----------------------------------------------
+
+    def _read_all_locked(self) -> list[ReviewAction]:
+        if not self._path.exists():
+            return []
+        entries: list[ReviewAction] = []
+        for idx, raw_line in enumerate(
+            self._path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(ReviewAction.model_validate_json(line))
+            except Exception:
+                logger.warning(
+                    "skipping malformed review action line %d in %s",
+                    idx,
+                    self._path,
+                )
+        return entries
+
+    def _enforce_max_entries_locked(self) -> None:
+        entries = self._read_all_locked()
+        if len(entries) <= self._max_entries:
+            return
+        kept = entries[-self._max_entries:]
+        with self._path.open("w", encoding="utf-8") as f:
+            for e in kept:
+                f.write(e.model_dump_json())
+                f.write("\n")
+
+
+_action_store_singleton: LocalReviewActionStore | None = None
+_action_store_lock = Lock()
+
+
+def get_review_action_store() -> LocalReviewActionStore:
+    """Return the process-wide action store, built from current settings."""
+
+    global _action_store_singleton
+    with _action_store_lock:
+        if _action_store_singleton is None:
+            from ..core.config import get_settings
+
+            settings = get_settings()
+            _action_store_singleton = LocalReviewActionStore(
+                path=Path(settings.trustrag_review_actions_path),
+                max_entries=int(settings.trustrag_review_actions_max_entries),
+            )
+        return _action_store_singleton
+
+
+def reset_review_action_store() -> None:
+    """Drop the action store singleton — used by tests."""
+
+    global _action_store_singleton
+    with _action_store_lock:
+        _action_store_singleton = None

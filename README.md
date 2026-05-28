@@ -9,7 +9,7 @@
 
 <p align="left">
   <img alt="status" src="https://img.shields.io/badge/status-alpha-orange.svg">
-  <img alt="phase" src="https://img.shields.io/badge/phase-7A%20minimal%20dashboard-blue.svg">
+  <img alt="phase" src="https://img.shields.io/badge/phase-7B%20reviewer%20actions-blue.svg">
   <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-blue.svg">
   <img alt="framework" src="https://img.shields.io/badge/built%20with-LangGraph-7c3aed.svg">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-green.svg">
@@ -459,6 +459,17 @@ What the workflow can do today, end-to-end:
     local APIs for the query console, evidence and citation
     inspection, document/chunk overview, human review queue, latest
     eval report, and local traces when tracing is enabled.
+48. **Local reviewer actions (Phase 7B)** - the dashboard's review
+    queue panel exposes six reviewer actions per checkpoint: approve,
+    reject, request changes, rewrite note, resolve, reopen. A small
+    state machine governs transitions (pending → approved / rejected
+    / changes_requested / resolved, with reopen returning any
+    terminal-ish state to pending). Reviewer notes and optional
+    human-authored rewritten answers append to
+    `data/review_actions.jsonl` as one JSONL line per action. New
+    endpoints: `POST /v1/review/queue/{id}/actions` and
+    `GET /v1/review/queue/{id}/actions`. No authentication, no LLM
+    rewrite, no production authorization — local demo workflow only.
 
 ## Planned Features
 
@@ -527,8 +538,11 @@ python -m backend.app.evals.compare \
     --category-threshold client_specific=0.95 \
     --category-threshold citation_faithfulness=0.95
 
-# 7. Open the local reviewer dashboard (Phase 7A)
+# 7. Open the local reviewer dashboard (Phase 7A/7B)
 # http://localhost:8000/dashboard
+# - run a query that triggers human review (e.g. tax_policy)
+# - click approve / reject / request_changes / rewrite_note / resolve / reopen
+# - inspect the append-only action history per checkpoint
 ```
 
 No API keys are required — all LLM and retrieval calls are
