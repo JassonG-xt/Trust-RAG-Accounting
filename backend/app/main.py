@@ -8,26 +8,36 @@ graph.
 
 from __future__ import annotations
 
+import csv
+import io
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .core.config import get_settings
 from .evals.models import EvalRunSummary
 from .graph.workflow import run_query
 from .review import (
+    DEFAULT_LIMIT,
     InvalidReviewTransitionError,
+    MAX_LIMIT,
+    ReviewActionFilter,
     ReviewActionHistoryResponse,
     ReviewActionRequest,
     ReviewActionResponse,
     ReviewCheckpointNotFoundError,
     ReviewClearResponse,
+    ReviewQueueExportResponse,
+    ReviewQueueFilter,
     ReviewQueueResponse,
+    ReviewQueueSummaryResponse,
     ReviewService,
+    VALID_SORTS,
     get_review_action_store,
     get_review_checkpoint_store,
 )
@@ -214,24 +224,173 @@ def create_app() -> FastAPI:
     @app.get(
         "/v1/review/queue", response_model=ReviewQueueResponse, tags=["review"]
     )
-    def list_review_queue() -> ReviewQueueResponse:
-        """Phase 5B local review queue + Phase 7B computed status.
+    def list_review_queue(
+        status: str | None = Query(default=None),
+        question_type: str | None = Query(default=None),
+        reason: str | None = Query(default=None),
+        reviewer: str | None = Query(default=None),
+        has_actions: bool | None = Query(default=None),
+        sort: str = Query(default="created_at_desc"),
+        limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+        offset: int = Query(default=0, ge=0),
+    ) -> ReviewQueueResponse:
+        """Phase 5B local review queue + Phase 7B computed status +
+        Phase 7C filtering/pagination/sorting.
 
         Returns ``enabled=false`` and an empty list when
-        ``TRUSTRAG_HUMAN_REVIEW_ENABLED`` is false. Each entry carries
-        a computed ``status`` (initial pending status folded with any
-        :class:`ReviewAction` records) plus the ``action_count``.
+        ``TRUSTRAG_HUMAN_REVIEW_ENABLED`` is false. ``count`` is the
+        size of the current page, ``total`` is the size of the
+        filtered set BEFORE limit/offset is applied — dashboards use
+        ``total`` to render pagination controls.
         """
 
         current_settings = get_settings()
         if not current_settings.trustrag_human_review_enabled:
-            return ReviewQueueResponse(enabled=False, count=0, entries=[])
+            return ReviewQueueResponse(
+                enabled=False,
+                count=0,
+                total=0,
+                limit=limit,
+                offset=offset,
+                filters={},
+                sort=sort,
+                entries=[],
+            )
+        filter_spec = _build_queue_filter(
+            status=status,
+            question_type=question_type,
+            reason=reason,
+            reviewer=reviewer,
+            has_actions=has_actions,
+            sort=sort,
+        )
         service = _build_review_service()
-        entries = service.list_queue()
+        page, total = service.list_queue(
+            filter_spec, limit=limit, offset=offset
+        )
         return ReviewQueueResponse(
             enabled=True,
+            count=len(page),
+            total=total,
+            limit=limit,
+            offset=offset,
+            filters=filter_spec.as_dict(),
+            sort=filter_spec.sort,
+            entries=page,
+        )
+
+    @app.get(
+        "/v1/review/queue/summary",
+        response_model=ReviewQueueSummaryResponse,
+        tags=["review"],
+    )
+    def review_queue_summary(
+        status: str | None = Query(default=None),
+        question_type: str | None = Query(default=None),
+        reason: str | None = Query(default=None),
+        reviewer: str | None = Query(default=None),
+        has_actions: bool | None = Query(default=None),
+    ) -> ReviewQueueSummaryResponse:
+        """Aggregate counts for the dashboard summary cards.
+
+        ``by_status`` / ``by_question_type`` / ``by_reason`` are
+        keyed by the *filtered* queue so the cards can reflect a
+        narrowed view. With no filters set, the result is global.
+        """
+
+        current_settings = get_settings()
+        if not current_settings.trustrag_human_review_enabled:
+            return ReviewQueueSummaryResponse(
+                enabled=False, total=0, by_status={}, by_question_type={}, by_reason={}
+            )
+        filter_spec = _build_queue_filter(
+            status=status,
+            question_type=question_type,
+            reason=reason,
+            reviewer=reviewer,
+            has_actions=has_actions,
+            # ``sort`` is irrelevant for an aggregate.
+            sort="created_at_desc",
+        )
+        return _build_review_service().summary(filter_spec)
+
+    @app.get(
+        "/v1/review/queue/export.json",
+        response_model=ReviewQueueExportResponse,
+        tags=["review"],
+    )
+    def export_review_queue_json(
+        status: str | None = Query(default=None),
+        question_type: str | None = Query(default=None),
+        reason: str | None = Query(default=None),
+        reviewer: str | None = Query(default=None),
+        has_actions: bool | None = Query(default=None),
+        sort: str = Query(default="created_at_desc"),
+    ) -> ReviewQueueExportResponse:
+        """JSON export of the (filtered, sorted) review queue.
+
+        No pagination — exports return every filtered row. The
+        response shape is a thin wrapper around
+        :class:`ReviewQueueEntry` so clients only need to learn the
+        list endpoint's row shape once.
+        """
+
+        current_settings = get_settings()
+        if not current_settings.trustrag_human_review_enabled:
+            raise HTTPException(status_code=404, detail="human review disabled")
+        filter_spec = _build_queue_filter(
+            status=status,
+            question_type=question_type,
+            reason=reason,
+            reviewer=reviewer,
+            has_actions=has_actions,
+            sort=sort,
+        )
+        entries, _ = _build_review_service().list_queue(filter_spec)
+        return ReviewQueueExportResponse(
+            exported_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             count=len(entries),
+            filters=filter_spec.as_dict(),
+            sort=filter_spec.sort,
             entries=entries,
+        )
+
+    @app.get("/v1/review/queue/export.csv", tags=["review"])
+    def export_review_queue_csv(
+        status: str | None = Query(default=None),
+        question_type: str | None = Query(default=None),
+        reason: str | None = Query(default=None),
+        reviewer: str | None = Query(default=None),
+        has_actions: bool | None = Query(default=None),
+        sort: str = Query(default="created_at_desc"),
+    ) -> Response:
+        """CSV export of the (filtered, sorted) review queue.
+
+        Built with stdlib ``csv.DictWriter`` so there is no extra
+        dependency. Full document content and rewritten answers are
+        deliberately omitted — the export carries the same trace-safe
+        projection as :class:`ReviewQueueEntry`.
+        """
+
+        current_settings = get_settings()
+        if not current_settings.trustrag_human_review_enabled:
+            raise HTTPException(status_code=404, detail="human review disabled")
+        filter_spec = _build_queue_filter(
+            status=status,
+            question_type=question_type,
+            reason=reason,
+            reviewer=reviewer,
+            has_actions=has_actions,
+            sort=sort,
+        )
+        entries, _ = _build_review_service().list_queue(filter_spec)
+        csv_text = _render_queue_csv(entries)
+        return Response(
+            content=csv_text,
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": 'attachment; filename="review_queue_export.csv"'
+            },
         )
 
     @app.get(
@@ -318,8 +477,19 @@ def create_app() -> FastAPI:
         response_model=ReviewActionHistoryResponse,
         tags=["review"],
     )
-    def list_review_actions(review_queue_id: str) -> ReviewActionHistoryResponse:
-        """Return the append-only action history for one checkpoint."""
+    def list_review_actions(
+        review_queue_id: str,
+        action_type: str | None = Query(default=None),
+        reviewer: str | None = Query(default=None),
+        limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+        offset: int = Query(default=0, ge=0),
+    ) -> ReviewActionHistoryResponse:
+        """Return the append-only action history for one checkpoint.
+
+        Phase 7C added filter + pagination — ``count`` is the size of
+        the current page, ``total`` is the size of the filtered set
+        before paging.
+        """
 
         current_settings = get_settings()
         if not current_settings.trustrag_human_review_enabled:
@@ -333,13 +503,107 @@ def create_app() -> FastAPI:
                 status_code=404,
                 detail=f"review queue id {review_queue_id!r} not found",
             )
+        filter_spec = ReviewActionFilter(action_type=action_type, reviewer=reviewer)
+        page, total = service.list_actions_paginated(
+            review_queue_id,
+            filter_spec,
+            limit=limit,
+            offset=offset,
+        )
         return ReviewActionHistoryResponse(
             review_queue_id=review_queue_id,
             status=service.get_current_status(review_queue_id),
-            actions=service.list_actions(review_queue_id),
+            count=len(page),
+            total=total,
+            limit=limit,
+            offset=offset,
+            filters=filter_spec.as_dict(),
+            actions=page,
         )
 
     return app
+
+
+def _build_queue_filter(
+    *,
+    status: str | None,
+    question_type: str | None,
+    reason: str | None,
+    reviewer: str | None,
+    has_actions: bool | None,
+    sort: str,
+) -> ReviewQueueFilter:
+    """Convert raw query params into a validated filter spec.
+
+    The dataclass ``__post_init__`` raises ``ValueError`` for unknown
+    sort modes; we translate that into HTTP 422 so the FastAPI
+    client gets a clean validation error rather than a 500.
+    """
+
+    if sort not in VALID_SORTS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"invalid sort: {sort!r}; valid options: {sorted(VALID_SORTS)}",
+        )
+    return ReviewQueueFilter(
+        status=status,
+        question_type=question_type,
+        reason=reason,
+        reviewer=reviewer,
+        has_actions=has_actions,
+        sort=sort,
+    )
+
+
+_CSV_COLUMNS = [
+    "review_queue_id",
+    "status",
+    "initial_status",
+    "question_type",
+    "confidence",
+    "needs_human_review",
+    "human_review_reasons",
+    "created_at",
+    "action_count",
+    "last_action_at",
+    "question",
+]
+
+
+def _render_queue_csv(entries) -> str:
+    """Build a deterministic CSV body from :class:`ReviewQueueEntry` rows.
+
+    Uses ``csv.DictWriter`` with QUOTE_MINIMAL so embedded commas /
+    newlines in question text don't break a downstream importer.
+    Full evidence content is omitted on purpose.
+    """
+
+    buffer = io.StringIO()
+    writer = csv.DictWriter(
+        buffer, fieldnames=_CSV_COLUMNS, quoting=csv.QUOTE_MINIMAL
+    )
+    writer.writeheader()
+    for entry in entries:
+        writer.writerow(
+            {
+                "review_queue_id": entry.review_queue_id,
+                "status": entry.status,
+                "initial_status": entry.initial_status,
+                "question_type": entry.question_type or "",
+                "confidence": (
+                    f"{entry.confidence:.3f}"
+                    if entry.confidence is not None
+                    else ""
+                ),
+                "needs_human_review": "true" if entry.needs_human_review else "false",
+                "human_review_reasons": "|".join(entry.human_review_reasons or []),
+                "created_at": entry.created_at,
+                "action_count": entry.action_count,
+                "last_action_at": entry.last_action_at or "",
+                "question": entry.question or "",
+            }
+        )
+    return buffer.getvalue()
 
 
 def _build_review_service() -> ReviewService:

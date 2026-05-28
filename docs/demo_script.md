@@ -640,6 +640,46 @@ the file is gitignored. `DELETE /v1/review/queue` clears both
 checkpoints and actions in one shot and reports `cleared` +
 `cleared_actions` counts.
 
+## Filtering, summary cards, and export (Phase 7C)
+
+After populating the queue with a couple of tax / invoice queries,
+demo the new dashboard controls:
+
+1. **Filter by status**: pick `pending` from the status dropdown.
+   The list, summary cards, and pager all narrow to pending entries.
+2. **Filter by reviewer**: apply an `approve` action with reviewer
+   `alice`, then type `alice` into the Reviewer filter. Only
+   alice-touched checkpoints remain.
+3. **Pagination**: select page size `10`. The Prev / Next pager
+   appears when more than 10 entries match. Pager state shows
+   `page X of Y`.
+4. **Export JSON**: click `Export JSON` to open
+   `/v1/review/queue/export.json?...` with the current filters.
+5. **Export CSV**: click `Export CSV` to download
+   `review_queue_export.csv` for inspection in any spreadsheet
+   tool.
+
+Equivalent direct curl flow:
+
+```bash
+# Filtered list:
+curl -s 'http://localhost:8000/v1/review/queue?status=pending&question_type=tax_policy&limit=5' | jq
+
+# Summary aggregate for current filters:
+curl -s 'http://localhost:8000/v1/review/queue/summary?question_type=tax_policy' | jq
+
+# JSON export — full filtered result, no pagination:
+curl -s 'http://localhost:8000/v1/review/queue/export.json?status=approved' | jq
+
+# CSV export — pipes into spreadsheet tools directly:
+curl -s 'http://localhost:8000/v1/review/queue/export.csv?status=approved' \
+    -o review_queue_export.csv
+```
+
+The export endpoints never include full document content — they
+carry the same trace-safe `ReviewQueueEntry` projection as the
+list endpoint.
+
 ### Single-category run
 
 ```bash

@@ -1,4 +1,4 @@
-"""Phase 7B review service layer.
+"""Phase 7B review service layer + Phase 7C filtering / export.
 
 Sits between the FastAPI handlers and the two persistence stores
 (:class:`LocalReviewCheckpointStore`, :class:`LocalReviewActionStore`).
@@ -15,14 +15,19 @@ Why a service layer at all, given how thin the stores already are:
 * All three failure modes (missing checkpoint, invalid transition,
   feature disabled) need to map to distinct HTTP codes. Centralizing
   them here keeps the handler trivial.
+* Phase 7C: filter / sort / paginate / summarize / export all share
+  the same in-memory pipeline. Co-locating them here means the JSON
+  list endpoint, the JSON export endpoint, the CSV export endpoint,
+  and the summary endpoint all read from one source of truth.
 """
 
 from __future__ import annotations
 
 import logging
 import secrets
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Iterable
+from typing import Any, Iterable
 
 from .checkpoint_store import LocalReviewActionStore, LocalReviewCheckpointStore
 from .models import (
@@ -31,6 +36,7 @@ from .models import (
     ReviewActionResponse,
     ReviewCheckpoint,
     ReviewQueueEntry,
+    ReviewQueueSummaryResponse,
 )
 from .state_machine import (
     InvalidReviewTransitionError,
@@ -40,12 +46,94 @@ from .state_machine import (
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Filter / sort dataclasses
+# ---------------------------------------------------------------------------
+
+
+VALID_SORTS = frozenset(
+    {"created_at_desc", "created_at_asc", "status_asc"}
+)
+DEFAULT_SORT = "created_at_desc"
+
+MAX_LIMIT = 200
+DEFAULT_LIMIT = 50
+
+
+@dataclass(frozen=True)
+class ReviewQueueFilter:
+    """Filter spec for :meth:`ReviewService.list_queue` and friends.
+
+    ``status`` matches the *computed* status (post-action), not the
+    raw checkpoint status. ``reviewer`` matches any reviewer that
+    appears in the checkpoint's action history; ``has_actions=True``
+    keeps only checkpoints with at least one action.
+    """
+
+    status: str | None = None
+    question_type: str | None = None
+    reason: str | None = None
+    reviewer: str | None = None
+    has_actions: bool | None = None
+    sort: str = DEFAULT_SORT
+
+    def __post_init__(self) -> None:
+        if self.sort not in VALID_SORTS:
+            raise ValueError(
+                f"invalid sort: {self.sort!r}; "
+                f"valid options: {sorted(VALID_SORTS)}"
+            )
+
+    def as_dict(self) -> dict[str, Any]:
+        """Trace-safe projection used by API responses."""
+
+        return {
+            "status": self.status,
+            "question_type": self.question_type,
+            "reason": self.reason,
+            "reviewer": self.reviewer,
+            "has_actions": self.has_actions,
+        }
+
+
+@dataclass(frozen=True)
+class ReviewActionFilter:
+    """Filter spec for :meth:`ReviewService.list_actions_paginated`."""
+
+    action_type: str | None = None
+    reviewer: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "action_type": self.action_type,
+            "reviewer": self.reviewer,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Errors
+# ---------------------------------------------------------------------------
+
+
 class ReviewCheckpointNotFoundError(LookupError):
     """Raised when a ``review_queue_id`` does not exist in the queue."""
 
     def __init__(self, review_queue_id: str) -> None:
         super().__init__(f"review_queue_id {review_queue_id!r} not found")
         self.review_queue_id = review_queue_id
+
+
+# ---------------------------------------------------------------------------
+# Service
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _ReviewQueueIndex:
+    """Pre-built index used to evaluate filters in O(N) across the queue."""
+
+    entries: list[ReviewQueueEntry]
+    actions_by_id: dict[str, list[ReviewAction]] = field(default_factory=dict)
 
 
 class ReviewService:
@@ -61,11 +149,57 @@ class ReviewService:
 
     # -- queue reads ---------------------------------------------------------
 
-    def list_queue(self, limit: int | None = None) -> list[ReviewQueueEntry]:
-        """Return every checkpoint enriched with computed status."""
+    def list_queue(
+        self,
+        filter_spec: ReviewQueueFilter | None = None,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[ReviewQueueEntry], int]:
+        """Return ``(page, total)`` after filtering, sorting, and paging.
 
-        checkpoints = self._checkpoints.list_entries(limit=limit)
-        return [self._project_entry(cp) for cp in checkpoints]
+        ``total`` is the size of the filtered set BEFORE limit/offset
+        is applied — clients use it to render pagination controls.
+        ``limit=None`` means "no pagination cap"; the export endpoints
+        rely on this to fetch every filtered row.
+        """
+
+        index = self._build_index()
+        filtered = self._apply_filter(index.entries, filter_spec or ReviewQueueFilter(), index)
+        sorted_entries = _sort_entries(filtered, (filter_spec or ReviewQueueFilter()).sort)
+        total = len(sorted_entries)
+        page = _paginate(sorted_entries, limit=limit, offset=offset)
+        return page, total
+
+    def summary(
+        self,
+        filter_spec: ReviewQueueFilter | None = None,
+    ) -> ReviewQueueSummaryResponse:
+        """Aggregate counts over the *filtered* queue.
+
+        Filtering is supported so the dashboard can ask "summary for
+        tax_policy entries only" without a separate API. With no
+        filter (the default), the summary is the global one.
+        """
+
+        index = self._build_index()
+        filtered = self._apply_filter(index.entries, filter_spec or ReviewQueueFilter(), index)
+        by_status: dict[str, int] = {}
+        by_question_type: dict[str, int] = {}
+        by_reason: dict[str, int] = {}
+        for entry in filtered:
+            by_status[entry.status] = by_status.get(entry.status, 0) + 1
+            qt = entry.question_type or "unknown"
+            by_question_type[qt] = by_question_type.get(qt, 0) + 1
+            for reason in entry.human_review_reasons or []:
+                by_reason[reason] = by_reason.get(reason, 0) + 1
+        return ReviewQueueSummaryResponse(
+            enabled=True,
+            total=len(filtered),
+            by_status=by_status,
+            by_question_type=by_question_type,
+            by_reason=by_reason,
+        )
 
     def get_checkpoint(self, review_queue_id: str) -> ReviewCheckpoint | None:
         return self._checkpoints.get(review_queue_id)
@@ -86,6 +220,28 @@ class ReviewService:
 
     def list_actions(self, review_queue_id: str) -> list[ReviewAction]:
         return self._actions.list_actions(review_queue_id)
+
+    def list_actions_paginated(
+        self,
+        review_queue_id: str,
+        filter_spec: ReviewActionFilter | None = None,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[ReviewAction], int]:
+        """Return ``(page, total)`` of filtered + paginated actions."""
+
+        actions = self._actions.list_actions(review_queue_id)
+        if filter_spec is not None:
+            actions = [
+                a
+                for a in actions
+                if (filter_spec.action_type is None or a.action_type == filter_spec.action_type)
+                and (filter_spec.reviewer is None or a.reviewer == filter_spec.reviewer)
+            ]
+        total = len(actions)
+        page = _paginate(actions, limit=limit, offset=offset)
+        return page, total
 
     # -- mutations -----------------------------------------------------------
 
@@ -133,8 +289,66 @@ class ReviewService:
 
     # -- internals -----------------------------------------------------------
 
+    def _build_index(self) -> _ReviewQueueIndex:
+        """Build one in-memory snapshot of the queue and action log.
+
+        Called once per public read path so a single request never
+        re-reads JSONL files mid-loop. Cheap — both files are bounded
+        by ``max_entries`` (1000 / 2000).
+        """
+
+        all_actions = self._actions.list_actions()
+        by_id: dict[str, list[ReviewAction]] = {}
+        for action in all_actions:
+            by_id.setdefault(action.review_queue_id, []).append(action)
+        entries = [
+            self._project_entry_with_actions(cp, by_id.get(cp.review_queue_id, []))
+            for cp in self._checkpoints.list_entries()
+        ]
+        return _ReviewQueueIndex(entries=entries, actions_by_id=by_id)
+
+    def _apply_filter(
+        self,
+        entries: list[ReviewQueueEntry],
+        filter_spec: ReviewQueueFilter,
+        index: _ReviewQueueIndex,
+    ) -> list[ReviewQueueEntry]:
+        result: list[ReviewQueueEntry] = []
+        for entry in entries:
+            if filter_spec.status is not None and entry.status != filter_spec.status:
+                continue
+            if (
+                filter_spec.question_type is not None
+                and (entry.question_type or "") != filter_spec.question_type
+            ):
+                continue
+            if (
+                filter_spec.reason is not None
+                and filter_spec.reason not in (entry.human_review_reasons or [])
+            ):
+                continue
+            entry_actions = index.actions_by_id.get(entry.review_queue_id, [])
+            if filter_spec.reviewer is not None:
+                if not any(
+                    (a.reviewer or "") == filter_spec.reviewer for a in entry_actions
+                ):
+                    continue
+            if filter_spec.has_actions is not None:
+                has = bool(entry_actions)
+                if has != filter_spec.has_actions:
+                    continue
+            result.append(entry)
+        return result
+
     def _project_entry(self, checkpoint: ReviewCheckpoint) -> ReviewQueueEntry:
         actions = self._actions.list_actions(checkpoint.review_queue_id)
+        return self._project_entry_with_actions(checkpoint, actions)
+
+    def _project_entry_with_actions(
+        self,
+        checkpoint: ReviewCheckpoint,
+        actions: list[ReviewAction],
+    ) -> ReviewQueueEntry:
         computed_status = self._compute_status(checkpoint, actions)
         last_action_at = actions[-1].created_at if actions else None
         return ReviewQueueEntry(
@@ -186,11 +400,67 @@ class ReviewService:
         return f"action_{ms_ts}_{secrets.token_hex(4)}"
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _sort_entries(
+    entries: list[ReviewQueueEntry], sort: str
+) -> list[ReviewQueueEntry]:
+    """ISO-8601 timestamps lexicographically sort as chronologically.
+
+    Using ``str`` compare keeps this dependency-free; we don't need
+    to parse to ``datetime`` to get correct ordering for the
+    ``created_at_*`` modes. ``status_asc`` is alphabetical on the
+    computed status; review_queue_id is the tiebreaker so the order
+    stays stable.
+    """
+
+    if sort == "created_at_desc":
+        return sorted(
+            entries,
+            key=lambda e: (e.created_at or "", e.review_queue_id),
+            reverse=True,
+        )
+    if sort == "created_at_asc":
+        return sorted(
+            entries, key=lambda e: (e.created_at or "", e.review_queue_id)
+        )
+    if sort == "status_asc":
+        return sorted(
+            entries,
+            key=lambda e: (e.status or "", e.created_at or "", e.review_queue_id),
+        )
+    # Defensive: unknown sort should have been rejected at the filter
+    # boundary, but fall back to the default rather than crashing.
+    return sorted(
+        entries,
+        key=lambda e: (e.created_at or "", e.review_queue_id),
+        reverse=True,
+    )
+
+
+def _paginate(items: list, *, limit: int | None, offset: int) -> list:
+    if offset < 0:
+        offset = 0
+    if limit is None:
+        return items[offset:]
+    if limit < 0:
+        limit = 0
+    return items[offset : offset + limit]
+
+
 __all__ = [
+    "DEFAULT_LIMIT",
+    "MAX_LIMIT",
+    "VALID_SORTS",
+    "ReviewActionFilter",
     "ReviewCheckpointNotFoundError",
+    "ReviewQueueFilter",
     "ReviewService",
 ]

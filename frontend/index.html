@@ -121,14 +121,71 @@
               <p class="eyebrow">Queue</p>
               <h2 id="review-title">Human Review</h2>
             </div>
-            <button class="secondary-button" data-refresh="review" type="button">Refresh</button>
+            <div class="panel-actions">
+              <button class="secondary-button" data-refresh="review" type="button">Refresh</button>
+              <button class="secondary-button" id="review-export-json" type="button">Export JSON</button>
+              <button class="secondary-button" id="review-export-csv" type="button">Export CSV</button>
+            </div>
           </div>
           <p class="review-disclaimer">
             Local demo workflow. Actions land in <code>data/review_actions.jsonl</code> only —
             no authentication, no production authorization, no LLM rewrite.
           </p>
+
+          <div class="summary-cards" id="review-summary-cards" aria-label="Review summary cards"></div>
+
+          <form class="review-filters" id="review-filters" aria-label="Review queue filters">
+            <label>
+              <span>Status</span>
+              <select name="status" id="review-filter-status">
+                <option value="">all</option>
+                <option value="pending">pending</option>
+                <option value="approved">approved</option>
+                <option value="rejected">rejected</option>
+                <option value="changes_requested">changes_requested</option>
+                <option value="resolved">resolved</option>
+                <option value="handoff_failed">handoff_failed</option>
+              </select>
+            </label>
+            <label>
+              <span>Question type</span>
+              <input type="text" name="question_type" id="review-filter-question-type" placeholder="tax_policy" />
+            </label>
+            <label>
+              <span>Reason</span>
+              <input type="text" name="reason" id="review-filter-reason" placeholder="tax_policy_always_review" />
+            </label>
+            <label>
+              <span>Reviewer</span>
+              <input type="text" name="reviewer" id="review-filter-reviewer" placeholder="local_reviewer" />
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="review-filter-has-actions" />
+              <span>Only with actions</span>
+            </label>
+            <label>
+              <span>Sort</span>
+              <select name="sort" id="review-filter-sort">
+                <option value="created_at_desc">newest first</option>
+                <option value="created_at_asc">oldest first</option>
+                <option value="status_asc">status A→Z</option>
+              </select>
+            </label>
+            <label>
+              <span>Page size</span>
+              <select name="limit" id="review-filter-limit">
+                <option value="10">10</option>
+                <option value="20" selected>20</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+            </label>
+            <button type="button" class="secondary-button" id="review-filter-reset">Reset</button>
+          </form>
+
           <div class="summary-line" id="review-summary">No queue data loaded.</div>
           <div class="list-stack compact" id="review-list"></div>
+          <div class="review-pager" id="review-pager"></div>
         </section>
 
         <section class="panel" aria-labelledby="eval-title">

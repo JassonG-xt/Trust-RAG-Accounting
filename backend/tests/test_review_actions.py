@@ -399,7 +399,9 @@ def test_service_list_queue_returns_computed_status(
         "rq_a", ReviewActionRequest(action_type="approve", reviewer="me")
     )
 
-    queue = {entry.review_queue_id: entry for entry in service.list_queue()}
+    entries, total = service.list_queue()
+    queue = {entry.review_queue_id: entry for entry in entries}
+    assert total == 2
     assert queue["rq_a"].status == "approved"
     assert queue["rq_a"].action_count == 1
     assert queue["rq_b"].status == "pending"

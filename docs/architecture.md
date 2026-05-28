@@ -251,6 +251,47 @@ event-delegated click handler, no framework, no build step.
 ``rewritten_answer`` is a free-text reviewer field, never auto-
 generated — the system does not call any LLM to rewrite the answer.
 
+**Phase 7C filtering / pagination / export (additive on top of 7B):**
+
+```
+GET /v1/review/queue?status=...&question_type=...&reason=...
+                       &reviewer=...&has_actions=true
+                       &sort=created_at_desc|asc|status_asc
+                       &limit=20&offset=0
+
+→ ReviewService.list_queue(filter_spec, limit, offset)
+   → (page, total)  ──→ entries + count + total + limit + offset
+
+GET /v1/review/queue/summary?<same filters>
+→ ReviewService.summary(filter_spec)
+   → total / by_status / by_question_type / by_reason
+
+GET /v1/review/queue/export.json?<same filters>
+GET /v1/review/queue/export.csv?<same filters>
+→ ReviewService.list_queue(filter_spec)         # no pagination
+   → full filtered set rendered as JSON or stdlib CSV
+```
+
+Filter / sort / paginate is a single in-memory pipeline in
+``backend/app/review/service.py``. The list, summary, and export
+endpoints share it so a feature like "filter by reviewer" lands in
+one place and all three responses observe it consistently. ISO-8601
+timestamps in ``created_at`` are sorted lexicographically — that is
+correct because the format is designed for chronological string
+comparison.
+
+Static-path routes (``summary``, ``export.json``, ``export.csv``)
+are declared BEFORE the parameterized ``{review_queue_id}`` route
+in :mod:`backend.app.main` so FastAPI's first-match routing picks
+the literal handler instead of treating ``export.json`` as a queue
+id.
+
+CSV export uses stdlib ``csv.DictWriter`` with ``QUOTE_MINIMAL`` so
+embedded commas / newlines in question text don't break a
+downstream importer. Full document content is excluded — the
+export columns mirror the trace-safe :class:`ReviewQueueEntry`
+projection.
+
 **Phase 5A graph topology (conditional routing):**
 
 ```
