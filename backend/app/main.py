@@ -20,8 +20,11 @@ from .schemas.rag import (
     HealthResponse,
     RAGQueryRequest,
     RAGQueryResponse,
+    TracesResponse,
+    TracesClearResponse,
 )
 from .services.document_repository import get_repository
+from .tracing import get_local_trace_collector
 
 logger = logging.getLogger("trust_rag.main")
 
@@ -70,6 +73,39 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
         return _state_to_response(state)
+
+    @app.get("/v1/debug/traces", response_model=TracesResponse, tags=["debug"])
+    def list_traces() -> TracesResponse:
+        """Phase 4B local trace ring buffer (read-only).
+
+        Returns ``enabled=false`` and an empty list when
+        ``TRUSTRAG_TRACE_ENABLED`` is unset / false — the endpoint is
+        always present so a client can detect tracing state without
+        depending on a 404.
+        """
+
+        current_settings = get_settings()
+        if not current_settings.trustrag_trace_enabled:
+            return TracesResponse(enabled=False, events=[])
+        collector = get_local_trace_collector()
+        return TracesResponse(
+            enabled=True,
+            events=[event.model_dump() for event in collector.get_events()],
+        )
+
+    @app.delete(
+        "/v1/debug/traces", response_model=TracesClearResponse, tags=["debug"]
+    )
+    def clear_traces() -> TracesClearResponse:
+        """Clear the trace ring buffer. No-op when tracing is disabled."""
+
+        current_settings = get_settings()
+        if not current_settings.trustrag_trace_enabled:
+            return TracesClearResponse(enabled=False, cleared=0)
+        collector = get_local_trace_collector()
+        cleared = len(collector.get_events())
+        collector.clear()
+        return TracesClearResponse(enabled=True, cleared=cleared)
 
     return app
 

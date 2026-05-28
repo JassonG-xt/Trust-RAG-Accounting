@@ -283,12 +283,64 @@ docs. **Completed.**
       nodes).
 - ✅ No new dependency: `langchain-core` was already declared.
 
-### Phase 4B — Conditional Routing & LangSmith Tracing Hooks (deferred)
+### Phase 4B — Local Tracing Hooks + Runnable Metadata ✅
 
-- [ ] Tag nodes with run-name / run-tag metadata so traces are
-      readable in LangSmith without enabling remote tracing.
-- [ ] Wire LangChain callbacks into a local console tracer for
-      development.
+- ✅ New `backend/app/tracing/` package:
+      `models.py` (`TraceEvent` Pydantic model + content-safe
+      `summarize_evidence_payload` helper), `local_collector.py`
+      (`LocalTraceCollector` thread-safe ring buffer +
+      `maybe_get_trace_collector` settings-aware factory),
+      `callbacks.py` (`LocalTraceCallbackHandler` subclass of
+      `langchain_core.callbacks.BaseCallbackHandler`).
+- ✅ `build_retrieval_runnable(...)` now accepts optional
+      `run_name`, `tags`, `metadata`, and `trace_collector`
+      parameters. `.with_config(run_name=..., tags=..., metadata=...)`
+      is applied unconditionally so a LangChain callback can attribute
+      events even when the explicit recording path is off. When a
+      collector is passed, the invoke is wrapped in a span-recording
+      shim that emits start / end / error events.
+- ✅ `support_retriever` and `counter_retriever` graph nodes now
+      annotate the runnable with `trustrag.support_retriever` /
+      `trustrag.counter_retriever` run names, a stable tag set
+      (`trustrag`, `accounting`, `retrieval`, `support|counter`,
+      `question_type:<type>`), and per-call metadata (`stance`,
+      `question_type`, `top_k`, `include_malicious`, `adapter`).
+- ✅ Trace events use content-safe summaries by default:
+      `evidence_count`, `chunk_ids`, `top_score`, `retrieval_strategy`,
+      `has_malicious`. `TRUSTRAG_TRACE_INCLUDE_CONTENT=true` opts in
+      to 200-char content previews per chunk.
+- ✅ Optional `GET /v1/debug/traces` + `DELETE /v1/debug/traces`
+      endpoints on FastAPI. Both return `{"enabled": false, ...}`
+      when the feature flag is off, so a client can probe state
+      without depending on a 404.
+- ✅ Settings: `TRUSTRAG_TRACE_ENABLED`, `TRUSTRAG_TRACE_MODE`,
+      `TRUSTRAG_TRACE_MAX_EVENTS`, `TRUSTRAG_TRACE_INCLUDE_CONTENT`.
+      `TRUSTRAG_TRACE_MODE=local` is the only supported value;
+      anything else logs a warning and falls back to disabled.
+- ✅ `.env.example` documents `LANGCHAIN_TRACING_V2=false`,
+      `LANGCHAIN_API_KEY=` (empty), `LANGCHAIN_PROJECT=` (empty)
+      as **deliberately unset defaults** so a misconfigured machine
+      cannot accidentally upload trace data to a remote service.
+- ✅ 28 new tests in `test_tracing.py`: collector behavior
+      (ring buffer / clear / errors), summarizer behavior
+      (content gating), settings + mode-fallback helper, runnable
+      tracing (disabled-vs-enabled output identity, start/end/error
+      events, no full content), workflow integration (4 events per
+      query, Alpha/Beta isolation + malicious quarantine preserved),
+      `/v1/debug/traces` endpoint, callback-handler smoke test.
+      Total pytest count: **182 passed**.
+- ✅ Tracing is **observe-only**: regression test
+      `test_runnable_traced_output_matches_untraced_output` verifies
+      `chunk_id` + `score` identity between traced and untraced
+      invocations.
+- ✅ No new dependency added.
+
+### Phase 4C — Remote tracing exporter (deferred)
+
+- [ ] LangSmith exporter behind a feature flag.
+- [ ] Phoenix / OpenTelemetry exporter.
+- [ ] Per-pair score caching for the reranker so rerank latency
+      doesn't compound under hybrid + rerank.
 - [ ] Push client-aware metadata routing down into the retriever (no
       more post-filtering in Python).
 

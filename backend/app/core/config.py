@@ -108,6 +108,28 @@ class Settings:
         default_factory=lambda: _float_env("RERANKER_WEIGHT", 0.15)
     )
 
+    # Phase 4B — local tracing. Disabled by default. When enabled,
+    # ``build_retrieval_runnable`` wraps the configured runnable in a
+    # span-recording invoker that writes into the process-wide
+    # :class:`LocalTraceCollector`. The optional ``/v1/debug/traces``
+    # endpoint exposes the ring buffer for local debugging.
+    #
+    # ``trustrag_trace_mode`` is a forward-looking knob: only ``local``
+    # is wired in. Any other value falls back to disabled with a log
+    # warning rather than crashing the boot.
+    trustrag_trace_enabled: bool = field(
+        default_factory=lambda: _bool_env("TRUSTRAG_TRACE_ENABLED", False)
+    )
+    trustrag_trace_mode: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_TRACE_MODE", "local")
+    )
+    trustrag_trace_max_events: int = field(
+        default_factory=lambda: _int_env("TRUSTRAG_TRACE_MAX_EVENTS", 100)
+    )
+    trustrag_trace_include_content: bool = field(
+        default_factory=lambda: _bool_env("TRUSTRAG_TRACE_INCLUDE_CONTENT", False)
+    )
+
 
 def get_settings() -> Settings:
     """Return application settings.

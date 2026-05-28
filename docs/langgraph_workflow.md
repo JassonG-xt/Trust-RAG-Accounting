@@ -117,6 +117,44 @@ LangChain-native consumers (multi-query retrievers, contextual
 compression, LangSmith tracing) get a real `BaseRetriever` to
 compose against.
 
+## 3.2 Local Tracing Hooks (Phase 4B)
+
+The runnable built by `build_retrieval_runnable` is always
+configured with `run_name` + `tags` + `metadata` via
+`Runnable.with_config(...)`, regardless of whether tracing is
+enabled. That makes the retrieval call self-describing to any
+LangChain-native callback (LangSmith, an internal eval harness,
+…), but it doesn't *record* anything by itself.
+
+When `TRUSTRAG_TRACE_ENABLED=true`, the factory additionally wraps
+the configured runnable in an explicit recording shim that writes
+start / end / error events into the process-wide
+`LocalTraceCollector`. The graph nodes pass that collector in via
+`maybe_get_trace_collector(settings)`; with the flag off, the
+helper returns `None` and the Phase 4A path is preserved verbatim.
+
+Per-node trace surface:
+
+| Node | `run_name` | base `tags` |
+|------|-----------|-------------|
+| `support_retriever` | `trustrag.support_retriever` | `trustrag`, `accounting`, `retrieval`, `support`, `question_type:<type>` |
+| `counter_retriever` | `trustrag.counter_retriever` | `trustrag`, `accounting`, `retrieval`, `counter`, `question_type:<type>` |
+
+Per-event payload:
+
+* `input_summary`: `question_length`, `stance`, `question_type`,
+  `top_k`, `include_malicious`. **Never the raw question.**
+* `output_summary`: `evidence_count`, `chunk_ids`, `top_score`,
+  `retrieval_strategy`, `has_malicious`. **Never full content** —
+  set `TRUSTRAG_TRACE_INCLUDE_CONTENT=true` to opt in to 200-char
+  previews.
+
+The collector is a thread-safe ring buffer capped at
+`TRUSTRAG_TRACE_MAX_EVENTS` (default 100). Older events evict on
+overflow — this is a *local debugging aid*, not a durable audit
+log. For production audit, future phases would wire an exporter
+(LangSmith, Phoenix, OpenTelemetry) behind the same seam.
+
 ## 4. Future Conditional Routing (Phase 5)
 
 ```mermaid
