@@ -468,6 +468,50 @@ Every response is annotated with:
   invoice-compliance questions force this to `true`** — the system
   never silently bypasses human review on regulated surfaces.
 
+## 7.1 Eval Harness (Phase 6A)
+
+The eval harness in `backend/app/evals/` is the regression-gate layer
+that sits *above* the workflow:
+
+```
+                ┌────────────────────────────────────────────────┐
+                │  accounting_eval_cases.json (18 active cases)  │
+                └───────────────────────┬────────────────────────┘
+                                        │
+                              EvalCase (Pydantic)
+                                        │
+                                        ▼
+┌──────────────┐    run_query()    ┌──────────────────┐    apply 10
+│ EvalRunner   │ ────────────────▶ │  LangGraph       │     metrics
+│  (CLI)       │                   │  workflow        │ ────────────▶ EvalCaseResult
+└──────┬───────┘  ◀── state dict ──└──────────────────┘
+       │
+       ├──▶ data/eval_results.json
+       └──▶ data/eval_report.md (content-safe, paste-able)
+```
+
+Properties:
+
+- **Deterministic.** All metrics are pure Python comparisons over
+  the workflow state dict. No LLM, no network, no GPU. Two
+  consecutive runs against the same corpus produce byte-identical
+  `EvalRunSummary` objects.
+- **Independent of the FastAPI layer.** The runner calls
+  `backend.app.graph.workflow.run_query` in-process. The harness
+  works whether or not the API is running.
+- **Isolated from the dev review queue.** The runner writes review
+  checkpoints to a per-run temp file by default so eval runs don't
+  pollute `data/review_queue.jsonl`.
+- **Extensible.** Adding a metric is a function + an `EvalExpectation`
+  field; adding a case is a JSON object. The skipped semantics (every
+  metric is opt-in per case) keep this safe — adding a new metric
+  never retroactively fails old cases.
+- **CI-ready.** `--fail-on-regression` returns exit code 1 when any
+  active case fails. Phase 6B wires this into a GitHub Action.
+
+See [`eval_harness.md`](eval_harness.md) for the case schema, metric
+catalogue, and "how to add a case" guide.
+
 ## 8. Future Production Architecture
 
 ```

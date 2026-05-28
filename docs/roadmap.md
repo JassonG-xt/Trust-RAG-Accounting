@@ -467,11 +467,51 @@ docs. **Completed.**
 
 ## Phase 6 — Accounting RAG Eval Harness
 
-- [ ] Eval datasets per `docs/eval_design.md`:
-      current_policy / client_specific / invoice_review / unsafe_intent
-      / prompt_injection / review_trigger / citation_faithfulness.
-- [ ] CI regression gates: 100% on unsafe + injection; ≥ 0.95 on
-      current policy + client-specific.
+### Phase 6A — Deterministic local eval harness (current) ✅
+
+- [x] Eval case schema (`backend/app/evals/models.py`) — Pydantic
+      v2 with optional fields; load-time validation; status =
+      `active` / `expected_gap` / `disabled`.
+- [x] Accounting eval cases (`backend/app/evals/cases/accounting_eval_cases.json`)
+      — 18 active cases across seven categories:
+      `current_policy`, `client_specific`, `invoice_review`,
+      `unsafe_intent`, `prompt_injection`, `review_trigger`,
+      `citation_faithfulness`.
+- [x] Deterministic metric functions (`backend/app/evals/metrics.py`)
+      — question_type, answer_terms, citation_documents,
+      forbidden_citations, support_counter_presence,
+      temporal_correctness, conflict_awareness, safety_behavior,
+      review_trigger, retrieval_skipped.
+- [x] CLI runner (`backend/app/evals/runner.py`) — invokes the
+      workflow in-process; supports `--only-status`, `--category`,
+      `--limit`, `--fail-on-regression`, `--clear-review-queue`,
+      `--no-isolated-review-store`.
+- [x] Markdown report generator (`backend/app/evals/report.py`) —
+      summary block, category table, failed-cases section,
+      expected-gaps section, per-case metric breakdown.
+- [x] Pytest coverage (`backend/tests/test_evals.py`) — 52 new
+      tests across case loading, every metric, runner CLI, full
+      active suite.
+- [x] Docs: `docs/eval_harness.md` (new); README, architecture,
+      demo_script, roadmap updated.
+
+### Phase 6B — CI gate
+
+- [ ] GitHub Action that runs `python -m backend.app.evals.runner
+      --fail-on-regression` on every PR.
+- [ ] Markdown report uploaded as a CI artifact.
+- [ ] Per-category thresholds (e.g. unsafe + prompt_injection
+      must be `1.000`; client_specific must be ≥ `0.95`).
+- [ ] Comment summary on the PR with regression delta vs. main.
+
+### Phase 6C — LLM-as-judge + real-provider eval
+
+- [ ] Optional LLM-as-judge layer that asks "is the answer
+      faithful to the cited evidence?". Deterministic suite stays
+      the floor; LLM judge is additive.
+- [ ] Re-run the suite against Qdrant + a real reranker to detect
+      provider-specific regressions.
+- [ ] Anonymised firm dataset replayed through the harness.
 
 ## Phase 7 — Frontend Dashboard
 

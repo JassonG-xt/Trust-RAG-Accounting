@@ -414,6 +414,28 @@ What the workflow can do today, end-to-end:
     *no document content* unless
     `TRUSTRAG_REVIEW_INCLUDE_CONTENT=true` is set explicitly. The
     JSONL log never becomes a parallel copy of client SOPs.
+42. **Accounting RAG eval harness (Phase 6A)** — deterministic
+    local eval suite at
+    `backend/app/evals/cases/accounting_eval_cases.json` (18
+    active cases across 7 categories). Runner CLI
+    `python -m backend.app.evals.runner` invokes the workflow
+    in-process, applies 10 deterministic metrics, and writes a
+    JSON + Markdown report. See
+    [`docs/eval_harness.md`](docs/eval_harness.md) for category
+    coverage, schema, and how to interpret the report.
+43. **Category-level regression gate** — the runner's
+    `--fail-on-regression` exit code is 1 when any active case
+    fails. Covered categories: `current_policy`,
+    `client_specific`, `invoice_review`, `unsafe_intent`,
+    `prompt_injection`, `review_trigger`,
+    `citation_faithfulness`. No external eval service, no
+    LLM-as-judge, no RAGAS / DeepEval — pure Python metrics
+    against the response shape.
+44. **Isolated review queue during eval** — the runner writes
+    review checkpoints to a per-run temp file by default so eval
+    runs never pollute `data/review_queue.jsonl`. Disable with
+    `--no-isolated-review-store`; clear the dev queue with
+    `--clear-review-queue`.
 
 ## Planned Features
 
@@ -455,6 +477,13 @@ bash scripts/run_dev.sh
 
 # 5. Run the tests
 python -m pytest backend/tests
+
+# 6. Run the accounting RAG eval suite (Phase 6A)
+python -m backend.app.evals.runner \
+    --cases backend/app/evals/cases/accounting_eval_cases.json \
+    --out data/eval_results.json \
+    --markdown-out data/eval_report.md \
+    --fail-on-regression
 ```
 
 No API keys are required — all LLM and retrieval calls are
@@ -581,6 +610,7 @@ trust-rag/
 │   ├── architecture.md
 │   ├── langgraph_workflow.md
 │   ├── eval_design.md
+│   ├── eval_harness.md
 │   ├── roadmap.md
 │   └── demo_script.md
 ├── backend/
@@ -591,12 +621,24 @@ trust-rag/
 │   │   ├── graph/
 │   │   │   ├── state.py
 │   │   │   ├── workflow.py
-│   │   │   └── nodes/        # 9 LangGraph nodes
+│   │   │   └── nodes/        # 10 LangGraph nodes (incl. human_review_handoff)
+│   │   ├── ingestion/        # Markdown / PDF / DOCX → chunks
+│   │   ├── retrieval/        # hybrid keyword + BM25 + vector
+│   │   ├── embeddings/       # mock + provider seam
+│   │   ├── rerankers/        # mock + provider seam
+│   │   ├── vectorstore/      # in-memory + Qdrant seam
+│   │   ├── langchain_adapters/ # BaseRetriever bridge
+│   │   ├── tracing/          # local ring-buffer trace collector
+│   │   ├── review/           # human review handoff + JSONL store
+│   │   ├── evals/            # Phase 6A: cases, metrics, runner, report
+│   │   │   └── cases/
+│   │   │       └── accounting_eval_cases.json
 │   │   └── services/
 │   │       └── mock_knowledge_base.py
 │   └── tests/
 │       ├── test_health.py
-│       └── test_rag_workflow.py
+│       ├── test_rag_workflow.py
+│       └── test_evals.py     # Phase 6A eval harness tests
 ├── sample_docs/                # 7 fictional accounting markdowns
 └── scripts/
     └── run_dev.sh
