@@ -495,7 +495,7 @@ docs. **Completed.**
 - [x] Docs: `docs/eval_harness.md` (new); README, architecture,
       demo_script, roadmap updated.
 
-### Phase 6B — GitHub Actions CI eval gate (current) ✅
+### Phase 6B — GitHub Actions CI eval gate ✅
 
 - [x] GitHub Action runs ingestion, the accounting eval gate, and
       `python -m pytest backend/tests` on every PR to `main` and push
@@ -510,12 +510,24 @@ docs. **Completed.**
 - [x] Local helper `bash scripts/run_eval_gate.sh` runs the same
       ingestion + threshold policy.
 
-### Phase 6C — Eval reporting extensions
+### Phase 6C — PR eval comment bot + regression delta (current) ✅
 
-- [ ] PR comment bot.
-- [ ] Regression delta versus `main`.
+- [x] PR comment renderer with stable
+      `<!-- trustrag-accounting-eval-comment -->` marker.
+- [x] Eval comparison utility for score/count/category deltas versus
+      `main` when a base summary is available.
+- [x] Stdlib GitHub API script creates or updates one GitHub Actions
+      bot comment instead of creating duplicates.
+- [x] CI posts PR eval comments only for same-repository PRs; fork
+      PRs skip the write path safely.
+- [x] CI artifact includes the eval JSON, Markdown report, PR comment,
+      and base summary when available.
+
+### Future eval reporting
+
 - [ ] Real provider eval.
-- [ ] Optional LLM-as-judge analysis.
+- [ ] LLM-as-judge optional analysis.
+- [ ] Historical eval trend dashboard.
 
 ## Phase 7 — Frontend Dashboard
 

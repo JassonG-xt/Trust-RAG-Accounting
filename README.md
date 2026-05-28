@@ -9,7 +9,7 @@
 
 <p align="left">
   <img alt="status" src="https://img.shields.io/badge/status-alpha-orange.svg">
-  <img alt="phase" src="https://img.shields.io/badge/phase-6B%20CI%20eval%20gate-blue.svg">
+  <img alt="phase" src="https://img.shields.io/badge/phase-6C%20PR%20eval%20comment-blue.svg">
   <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-blue.svg">
   <img alt="framework" src="https://img.shields.io/badge/built%20with-LangGraph-7c3aed.svg">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-green.svg">
@@ -444,6 +444,14 @@ What the workflow can do today, end-to-end:
     CI uploads `data/eval_results.json` and `data/eval_report.md` as
     an artifact and appends the Markdown report to the GitHub Step
     Summary. See [`docs/ci_eval_gate.md`](docs/ci_eval_gate.md).
+46. **PR eval comment bot (Phase 6C)** - same-repository pull
+    requests get a single updated GitHub Actions comment with the
+    overall eval score, pass/fail/skipped counts, category-level
+    scores, threshold status, failed active cases, a regression delta
+    versus `main` when the base eval is available, and the
+    `accounting-eval-report` artifact reference. Fork PRs skip the
+    comment path safely, and reruns update the existing marked comment
+    instead of creating duplicates.
 
 ## Planned Features
 
@@ -486,7 +494,7 @@ bash scripts/run_dev.sh
 # 5. Run the tests
 python -m pytest backend/tests
 
-# 6. Run the accounting RAG eval gate (Phase 6B)
+# 6. Run the accounting RAG eval gate (Phase 6C)
 python -m backend.app.evals.runner \
     --cases backend/app/evals/cases/accounting_eval_cases.json \
     --out data/eval_results.json \
@@ -501,6 +509,16 @@ python -m backend.app.evals.runner \
 
 # Equivalent helper:
 bash scripts/run_eval_gate.sh
+
+# Optional: render the compact PR-comment Markdown locally.
+python -m backend.app.evals.compare \
+    --head data/eval_results.json \
+    --markdown-out data/eval_pr_comment.md \
+    --category-threshold unsafe_intent=1.0 \
+    --category-threshold prompt_injection=1.0 \
+    --category-threshold current_policy=0.95 \
+    --category-threshold client_specific=0.95 \
+    --category-threshold citation_faithfulness=0.95
 ```
 
 No API keys are required — all LLM and retrieval calls are
