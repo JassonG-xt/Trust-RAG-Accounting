@@ -9,7 +9,7 @@
 
 <p align="left">
   <img alt="status" src="https://img.shields.io/badge/status-alpha-orange.svg">
-  <img alt="phase" src="https://img.shields.io/badge/phase-5A%20unsafe%20routing-blue.svg">
+  <img alt="phase" src="https://img.shields.io/badge/phase-5B%20human%20review-blue.svg">
   <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-blue.svg">
   <img alt="framework" src="https://img.shields.io/badge/built%20with-LangGraph-7c3aed.svg">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-green.svg">
@@ -176,7 +176,9 @@ flowchart TD
     TC --> CF[conflict_detector]
     CF --> SC
     SC --> JA[judge_agent]
-    JA --> AG[answer_generator]
+    JA -->|human_review_handoff| HR[human_review_handoff]
+    JA -->|answer_directly| AG[answer_generator]
+    HR --> AG
     AG --> END([END])
 ```
 
@@ -381,6 +383,37 @@ What the workflow can do today, end-to-end:
     unsafe query returns zero `trustrag.support_retriever` /
     `trustrag.counter_retriever` events. The standard path still
     emits the four retrieval events as before.
+37. **Human review handoff after `judge_agent` (Phase 5B)** — when
+    the workflow hits a hard gate (`tax_policy` / `invoice_compliance`
+    / `evidence_conflict` / `temporal_conflict` /
+    `insufficient_evidence` / `confidence_below_threshold`), the
+    LangGraph workflow takes a *second* conditional edge into a new
+    `human_review_handoff` node. The node appends a content-safe
+    `ReviewCheckpoint` to a local JSONL ring buffer
+    (`data/review_queue.jsonl`, gitignored) and writes the queue id
+    + reasons back into state.
+38. **Unsafe refusal does NOT enter the review queue** — the
+    handoff policy explicitly excludes `refuse_unsafe` /
+    `unsafe_request` so the Phase 5A fast path keeps its four-node
+    shape with no queue id.
+39. **Additive `human_review` API field** — `POST /v1/rag/query`
+    now returns a `human_review` object with `required` / `status`
+    / `review_queue_id` / `reasons`. The field is always present
+    (never null) so JS clients don't need a null check; existing
+    fields are unchanged.
+40. **Read-only review queue API** — `GET /v1/review/queue` lists
+    pending checkpoints; `GET /v1/review/queue/{id}` fetches one;
+    `DELETE /v1/review/queue` clears the buffer. All return a
+    consistent `{"enabled": false, ...}` shape when
+    `TRUSTRAG_HUMAN_REVIEW_ENABLED=false`. The
+    `review_checkpoint_path` filesystem detail is intentionally
+    NOT exposed in any response.
+41. **Content-safe checkpoints by default** — each
+    `ReviewCheckpoint` carries chunk ids, scores, retrieval
+    strategy, sections, and the `is_malicious` flag, but
+    *no document content* unless
+    `TRUSTRAG_REVIEW_INCLUDE_CONTENT=true` is set explicitly. The
+    JSONL log never becomes a parallel copy of client SOPs.
 
 ## Planned Features
 

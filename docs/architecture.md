@@ -134,6 +134,10 @@ backend/app/
 │   ├── document_mapping.py  # ScoredChunk ↔ langchain Document
 │   ├── trust_rag_retriever.py # BaseRetriever wrapping RetrievalService
 │   └── runnable_retrieval.py  # build_retrieval_runnable factory
+├── review/            # Phase 5B: human-review handoff + local JSONL store
+│   ├── models.py            # ReviewCheckpoint + ReviewEvidenceSummary + summarize_evidence_for_review
+│   ├── handoff_policy.py    # should_handoff_for_review (policy gate)
+│   └── checkpoint_store.py  # LocalReviewCheckpointStore + module singleton
 ├── tracing/           # Phase 4B: Local trace ring buffer + callbacks
 │   ├── models.py            # TraceEvent + summarize_evidence_payload
 │   ├── local_collector.py   # LocalTraceCollector + maybe_get_trace_collector
@@ -147,6 +151,47 @@ backend/app/
     │                           # dispatches to retrieval/RetrievalService
     └── mock_knowledge_base.py  # legacy compat layer (kept for old imports)
 ```
+
+**Phase 5B human-review handoff (additive on top of Phase 5A):**
+
+```
+... safety_checker → judge_agent
+                         │
+                         ├─ should_handoff_for_review(state) == (True, reasons)
+                         │       ▼
+                         │     human_review_handoff
+                         │       │  - generates review_<ms>_<hex> queue id
+                         │       │  - writes ReviewCheckpoint to data/review_queue.jsonl
+                         │       │  - sets state.review_queue_id + .review_status
+                         │       ▼
+                         │     answer_generator
+                         │       │  - appends "queued for human review: <id>" to answer
+                         │       ▼
+                         │     END
+                         │
+                         └─ should_handoff_for_review(state) == (False, [])
+                                 ▼
+                               answer_generator → END
+                               (no queue write, no review note appended)
+```
+
+Hard exclusions in the policy (refuse_unsafe / unsafe_request) mean
+the Phase 5A unsafe fast-path's ``visited_nodes`` stays at four
+entries — the handoff node is never inserted.
+
+The store layer is a single JSONL file (default
+``data/review_queue.jsonl``, gitignored) with a thread-safe append
++ in-memory dedup + opt-in ``include_content`` content preview.
+Phase 5C will plug a durable exporter (Postgres) behind the same
+``LocalReviewCheckpointStore`` interface.
+
+API surface added:
+
+- ``GET /v1/review/queue`` — list checkpoints.
+- ``GET /v1/review/queue/{review_queue_id}`` — fetch one.
+- ``DELETE /v1/review/queue`` — clear the buffer.
+- ``RAGQueryResponse.human_review`` — additive embedded object with
+  ``required`` / ``status`` / ``review_queue_id`` / ``reasons``.
 
 **Phase 5A graph topology (conditional routing):**
 

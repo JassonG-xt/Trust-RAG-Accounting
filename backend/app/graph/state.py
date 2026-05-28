@@ -76,6 +76,20 @@ class TrustRAGState(TypedDict, total=False):
     citations: list[dict]
     needs_human_review: bool
 
+    # Phase 5B — human review handoff.
+    # ``human_review_required`` mirrors ``needs_human_review`` semantically
+    # but is written ONLY by ``human_review_handoff``, so a test reader
+    # can distinguish "judge wants review" (``needs_human_review``) from
+    # "we actually queued this for review" (``human_review_required``).
+    # ``review_queue_id`` is None when the case did not enter the queue
+    # (e.g. unsafe refusal, high-confidence standard query, or human
+    # review disabled by config).
+    human_review_required: bool
+    human_review_reasons: list[str]
+    review_queue_id: str | None
+    review_status: str | None
+    review_checkpoint_path: str | None
+
     # Cross-cutting
     errors: list[str]
 
@@ -103,5 +117,10 @@ def initial_state(question: str) -> TrustRAGState:
         answer=None,
         citations=[],
         needs_human_review=False,
+        human_review_required=False,
+        human_review_reasons=[],
+        review_queue_id=None,
+        review_status=None,
+        review_checkpoint_path=None,
         errors=[],
     )

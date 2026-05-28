@@ -15,9 +15,15 @@ from fastapi import FastAPI, HTTPException
 
 from .core.config import get_settings
 from .graph.workflow import run_query
+from .review import (
+    ReviewClearResponse,
+    ReviewQueueResponse,
+    get_review_checkpoint_store,
+)
 from .schemas.rag import (
     DocumentsResponse,
     HealthResponse,
+    HumanReviewSummary,
     RAGQueryRequest,
     RAGQueryResponse,
     TracesResponse,
@@ -107,6 +113,64 @@ def create_app() -> FastAPI:
         collector.clear()
         return TracesClearResponse(enabled=True, cleared=cleared)
 
+    @app.get(
+        "/v1/review/queue", response_model=ReviewQueueResponse, tags=["review"]
+    )
+    def list_review_queue() -> ReviewQueueResponse:
+        """Phase 5B local review queue (read-only).
+
+        Returns ``enabled=false`` and an empty list when
+        ``TRUSTRAG_HUMAN_REVIEW_ENABLED`` is false — the endpoint is
+        always present so a client can detect review state without
+        relying on a 404.
+        """
+
+        current_settings = get_settings()
+        if not current_settings.trustrag_human_review_enabled:
+            return ReviewQueueResponse(enabled=False, count=0, entries=[])
+        store = get_review_checkpoint_store()
+        entries = store.list_entries()
+        return ReviewQueueResponse(
+            enabled=True,
+            count=len(entries),
+            entries=entries,
+        )
+
+    @app.get(
+        "/v1/review/queue/{review_queue_id}",
+        tags=["review"],
+    )
+    def get_review_queue_entry(review_queue_id: str):
+        """Fetch a single review checkpoint by queue id."""
+
+        current_settings = get_settings()
+        if not current_settings.trustrag_human_review_enabled:
+            raise HTTPException(
+                status_code=404,
+                detail="human review disabled",
+            )
+        entry = get_review_checkpoint_store().get(review_queue_id)
+        if entry is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"review queue id {review_queue_id!r} not found",
+            )
+        return entry
+
+    @app.delete(
+        "/v1/review/queue",
+        response_model=ReviewClearResponse,
+        tags=["review"],
+    )
+    def clear_review_queue() -> ReviewClearResponse:
+        """Clear the local review queue. No-op when disabled."""
+
+        current_settings = get_settings()
+        if not current_settings.trustrag_human_review_enabled:
+            return ReviewClearResponse(enabled=False, cleared=0)
+        cleared = get_review_checkpoint_store().clear()
+        return ReviewClearResponse(enabled=True, cleared=cleared)
+
     return app
 
 
@@ -127,6 +191,12 @@ def _state_to_response(state: dict[str, Any]) -> RAGQueryResponse:
         confidence=float(state.get("confidence") or 0.0),
         citations=state.get("citations") or [],
         needs_human_review=bool(state.get("needs_human_review")),
+        human_review=HumanReviewSummary(
+            required=bool(state.get("human_review_required")),
+            status=state.get("review_status"),
+            review_queue_id=state.get("review_queue_id"),
+            reasons=list(state.get("human_review_reasons") or []),
+        ),
         errors=state.get("errors") or [],
     )
 

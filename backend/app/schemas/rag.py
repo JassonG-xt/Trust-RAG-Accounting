@@ -215,6 +215,31 @@ class Citation(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Phase 5B — Human review handoff summary (additive on the RAG response)
+# ---------------------------------------------------------------------------
+
+
+class HumanReviewSummary(BaseModel):
+    """Surface for the local review queue from the RAG response.
+
+    Returned as an embedded object (not None) so a JS client can read
+    ``response.human_review.required`` without a null check. The
+    ``review_queue_id`` is opaque — clients should treat it as a
+    lookup key for ``GET /v1/review/queue/{id}``.
+
+    ``review_checkpoint_path`` is **intentionally not** in this
+    schema. The local JSONL path is an implementation detail of the
+    Phase 5B store; exposing it would tie the API to the current
+    persistence layer and leak a server-side filesystem path.
+    """
+
+    required: bool = False
+    status: str | None = None
+    review_queue_id: str | None = None
+    reasons: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # Request / response
 # ---------------------------------------------------------------------------
 
@@ -237,6 +262,10 @@ class RAGQueryResponse(BaseModel):
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     citations: list[Citation] = Field(default_factory=list)
     needs_human_review: bool = False
+    # Phase 5B — additive optional summary of the local review queue.
+    # Always present (never None) so clients don't need a null check,
+    # but ``required=False`` when the case did not enter the queue.
+    human_review: HumanReviewSummary = Field(default_factory=HumanReviewSummary)
     errors: list[str] = Field(default_factory=list)
 
 
