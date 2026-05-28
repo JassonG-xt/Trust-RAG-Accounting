@@ -1,18 +1,25 @@
 """DocumentRepository — single seam between graph retrievers and the
 ingested document/chunk store.
 
-Phase 2B: the canonical evidence unit is the **chunk**. The repository
-loads with this preference order:
+Phase 3A: scoring + filtering have been lifted into
+``backend.app.retrieval``. This file now owns three responsibilities:
 
-1. ``data/trustrag_chunks.json``        (chunk store written by the ingest CLI)
-2. ``data/trustrag_documents.json``     (Phase 2A document store, chunked on the fly)
-3. ``sample_docs/`` (Markdown / PDF / DOCX)  loaded + chunked at runtime
-4. Hardcoded fallback                   (last resort so the workflow boots)
+1. **Loading** chunks (chunk store → document store → sample_docs →
+   hardcoded fallback). Unchanged from Phase 2B.
+2. **Dispatching** to :class:`backend.app.retrieval.RetrievalService`
+   for actual retrieval — no more inline keyword / type / stance
+   scoring code.
+3. **Flattening** the layer's :class:`ScoredChunk` results into the
+   legacy evidence dict shape that LangGraph nodes consume, with two
+   new fields (``score_breakdown``, ``retrieval_strategy``) added
+   non-disruptively.
 
-``DocumentRepository.search`` always returns chunk-level evidence
-dicts, so the LangGraph nodes never see a "whole document" — every hit
-already carries ``chunk_id`` + ``section_title`` + the parent
-document's metadata.
+The repository also keeps one piece of *workflow-aware* policy: if
+the user's query literally contains an injection trigger (e.g. "ignore
+previous instructions"), we set ``include_malicious=True`` so the
+malicious sample chunk reaches the safety_checker via counter_evidence.
+This stays here — not in the retrieval layer — because it's an
+accounting-workflow safety policy, not a retrieval concern.
 """
 
 from __future__ import annotations
@@ -21,10 +28,12 @@ import json
 import logging
 from pathlib import Path
 from threading import Lock
+from typing import Any
 
 from ..ingestion.chunker import chunk_documents
 from ..ingestion.models import AccountingDocument, DocumentChunk
 from ..ingestion.unified_loader import load_documents_from_directory
+from ..retrieval import RetrievalService, ScoredChunk
 
 logger = logging.getLogger(__name__)
 
@@ -40,52 +49,8 @@ _DEFAULT_SAMPLE_DIR = _PROJECT_ROOT / "sample_docs"
 
 
 # ---------------------------------------------------------------------------
-# Client + keyword mappings
+# Injection trigger detection (workflow-level safety policy)
 # ---------------------------------------------------------------------------
-
-
-_CLIENT_ALIASES: tuple[tuple[str, str], ...] = (
-    ("alpha trading", "Alpha Trading Co."),
-    ("alpha", "Alpha Trading Co."),
-    ("beta catering", "Beta Catering Ltd."),
-    ("beta", "Beta Catering Ltd."),
-    ("gamma tech", "Gamma Tech Studio"),
-    ("gamma", "Gamma Tech Studio"),
-)
-
-
-_TYPE_HINTS: tuple[tuple[str, str], ...] = (
-    ("入账", "bookkeeping_sop"),
-    ("做账", "bookkeeping_sop"),
-    ("记账", "bookkeeping_sop"),
-    ("科目", "bookkeeping_sop"),
-    ("bookkeeping", "bookkeeping_sop"),
-    ("ledger", "bookkeeping_sop"),
-    ("发票", "invoice_compliance"),
-    ("invoice", "invoice_compliance"),
-    ("备注", "invoice_compliance"),
-    ("服务描述", "invoice_compliance"),
-    ("专票", "invoice_compliance"),
-    ("普票", "invoice_compliance"),
-    ("报销", "reimbursement_policy"),
-    ("reimbursement", "reimbursement_policy"),
-    ("差旅", "reimbursement_policy"),
-    ("打车", "reimbursement_policy"),
-    ("住宿", "reimbursement_policy"),
-    ("hotel", "reimbursement_policy"),
-    ("taxi", "reimbursement_policy"),
-    ("增值税", "tax_policy_note"),
-    ("vat", "tax_policy_note"),
-    ("小规模纳税人", "tax_policy_note"),
-    ("纳税人", "tax_policy_note"),
-    ("tax", "tax_policy_note"),
-    ("税", "tax_policy_note"),
-    ("资料", "document_checklist"),
-    ("清单", "document_checklist"),
-    ("checklist", "document_checklist"),
-    ("bank statement", "document_checklist"),
-)
-
 
 _MALICIOUS_TRIGGERS = (
     "ignore",
@@ -96,24 +61,16 @@ _MALICIOUS_TRIGGERS = (
 )
 
 
-def _question_client(question: str) -> str | None:
-    q = (question or "").lower()
-    for alias, canonical in _CLIENT_ALIASES:
-        if alias in q:
-            return canonical
-    return None
-
-
-def _question_types(question: str) -> set[str]:
-    q = (question or "").lower()
-    hits: set[str] = set()
-    for sub, doc_type in _TYPE_HINTS:
-        if sub in q or sub.lower() in q:
-            hits.add(doc_type)
-    return hits
-
-
 def _is_malicious_query(question: str) -> bool:
+    """True if the query literally names a prompt-injection pattern.
+
+    Triggers the workflow's "let the malicious chunk through so
+    safety_checker can flag it" path. Deliberately conservative — a
+    benign question that mentions the word "instructions" should not
+    trigger this. (We rely on the multi-pattern AND semantics of
+    safety_checker downstream to avoid false positives.)
+    """
+
     q = (question or "").lower()
     return any(t.lower() in q for t in _MALICIOUS_TRIGGERS)
 
@@ -162,12 +119,66 @@ def _hardcoded_fallback_documents() -> list[AccountingDocument]:
 
 
 # ---------------------------------------------------------------------------
+# ScoredChunk → evidence dict
+# ---------------------------------------------------------------------------
+
+
+def _scored_chunk_to_evidence_dict(
+    scored: ScoredChunk,
+    *,
+    stance: str,
+) -> dict[str, Any]:
+    """Flatten a :class:`ScoredChunk` into the legacy evidence dict shape.
+
+    Adds two new fields on top of the Phase 2B shape:
+
+    * ``score_breakdown``: per-component scoring contributions.
+    * ``retrieval_strategy``: which retriever produced this hit
+      (today always ``"hybrid_keyword_bm25"``; Phase 3B will diversify).
+    """
+
+    return {
+        # Chunk-level identity
+        "chunk_id": scored.chunk_id,
+        "chunk_index": scored.chunk_index,
+        "section_title": scored.section_title,
+        "page_number": scored.page_number,
+        # Document-level identity
+        "doc_id": scored.document_id,
+        "document_id": scored.document_id,
+        "title": scored.title,
+        "version": scored.version,
+        "valid_from": scored.valid_from,
+        "valid_to": scored.valid_to,
+        "client": scored.client,
+        "document_type": scored.document_type,
+        "policy_family": scored.policy_family,
+        "replaces": scored.replaces,
+        "risk_type": scored.risk_type,
+        "is_malicious": scored.is_malicious,
+        "source_type": "external" if scored.is_malicious else "policy",
+        "source_path": scored.source_path,
+        # Body + scoring
+        "content": scored.content,
+        "score": scored.score,
+        "stance": stance,
+        # Phase 3A retrieval explainability
+        "score_breakdown": scored.score_breakdown.model_dump(),
+        "retrieval_strategy": scored.retrieval_strategy,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Repository
 # ---------------------------------------------------------------------------
 
 
 class DocumentRepository:
-    """Lazy-loaded read-only chunk repository."""
+    """Lazy-loaded read-only chunk repository.
+
+    Construction is cheap (just stores paths). Loading + retrieval-service
+    construction happen on the first call to ``load_*`` or ``search``.
+    """
 
     def __init__(
         self,
@@ -184,6 +195,7 @@ class DocumentRepository:
         self.sample_dir = Path(sample_dir) if sample_dir else _DEFAULT_SAMPLE_DIR
         self._documents: list[AccountingDocument] | None = None
         self._chunks: list[DocumentChunk] | None = None
+        self._retrieval_service: RetrievalService | None = None
         self._lock = Lock()
         self._source: str | None = None
 
@@ -222,6 +234,10 @@ class DocumentRepository:
 
         self._documents = documents
         self._chunks = chunks
+        # Build the retrieval service eagerly once the chunk list is
+        # known so the first /v1/rag/query doesn't pay tokenization
+        # cost on the request thread.
+        self._retrieval_service = RetrievalService(chunks)
 
     @staticmethod
     def _load_from_chunk_store(
@@ -230,9 +246,6 @@ class DocumentRepository:
         payload = json.loads(path.read_text(encoding="utf-8"))
         raw_chunks = payload.get("chunks", [])
         chunks = [DocumentChunk(**c) for c in raw_chunks]
-        # Reconstruct a thin document list from the chunks so the
-        # ``describe()`` projection still works. We don't have the full
-        # body, but we have all the metadata we need.
         documents: dict[str, AccountingDocument] = {}
         for c in chunks:
             if c.document_id in documents:
@@ -277,6 +290,15 @@ class DocumentRepository:
             self._ensure_loaded()
             return self._source
 
+    @property
+    def retrieval_service(self) -> RetrievalService:
+        """Expose the service for tests that want to probe specific layers."""
+
+        with self._lock:
+            self._ensure_loaded()
+            assert self._retrieval_service is not None
+            return self._retrieval_service
+
     # -- Retrieval -------------------------------------------------------
 
     def search(
@@ -286,69 +308,63 @@ class DocumentRepository:
         stance: str = "support",
         client: str | None = None,
         limit: int = 5,
-    ) -> list[dict]:
-        """Return ranked **chunk-level** evidence dicts."""
+        top_k: int | None = None,
+        question_type: str | None = None,
+        include_malicious: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Return ranked **chunk-level** evidence dicts via the retrieval layer.
 
-        chunks = self.load_chunks()
-        target_types = _question_types(question)
-        question_client = client or _question_client(question)
-        wants_malicious = _is_malicious_query(question)
+        Back-compat:
 
-        scored: list[dict] = []
-        for chunk in chunks:
-            score = self._score_chunk(
-                chunk,
-                target_types=target_types,
-                question_client=question_client,
-                wants_malicious=wants_malicious,
-                stance=stance,
-            )
-            if score <= 0.0:
-                continue
-            scored.append(chunk.to_evidence_dict(stance=stance, score=score))
+        * ``limit`` is honored when ``top_k`` is not provided.
+        * ``client`` (when set) overrides the auto-inferred client in
+          the metadata filter — useful for tests that want to pin the
+          client without restating it in the query.
 
-        scored.sort(key=lambda h: h["score"], reverse=True)
-        return scored[:limit]
+        Phase 3A additions:
 
-    @staticmethod
-    def _score_chunk(
-        chunk: DocumentChunk,
-        *,
-        target_types: set[str],
-        question_client: str | None,
-        wants_malicious: bool,
-        stance: str,
-    ) -> float:
-        if chunk.is_malicious:
-            if not wants_malicious:
-                return 0.0
-            return 0.15 if stance == "counter" else 0.0
+        * ``question_type`` — passed through to
+          :class:`MetadataFilter` for stronger document_type
+          inference.
+        * ``include_malicious`` — explicit override. Defaults to
+          ``False`` but is forced ``True`` when the query literally
+          names an injection trigger (so the workflow's
+          safety_checker can find the malicious chunk in
+          counter_evidence).
+        """
 
-        has_type_match = bool(target_types) and chunk.document_type in target_types
-        has_client_match = (
-            question_client is not None and chunk.client == question_client
+        with self._lock:
+            self._ensure_loaded()
+            service = self._retrieval_service
+            assert service is not None
+
+        # Workflow-level auto-detection of injection-trigger queries.
+        if not include_malicious and _is_malicious_query(question):
+            include_malicious = True
+
+        effective_top_k = top_k if top_k is not None else limit
+
+        scored = service.search(
+            question,
+            question_type=question_type,
+            top_k=effective_top_k,
+            stance=stance,
+            include_malicious=include_malicious,
         )
-        if not has_type_match and not has_client_match:
-            return 0.0
 
-        if question_client is not None:
-            if chunk.client is not None and chunk.client != question_client:
-                return 0.0
+        if client is not None:
+            # Legacy explicit-client override path. Honored *after*
+            # retrieval — drop anything whose chunk.client is set
+            # to a different client.
+            scored = [
+                s
+                for s in scored
+                if s.client is None or s.client == client
+            ]
 
-        is_historical = bool(chunk.valid_to)
-        if stance == "support" and is_historical:
-            return 0.0
-        if stance == "counter" and not is_historical:
-            return 0.0
-
-        score = 0.9 if stance == "support" else 0.7
-        if question_client and chunk.client == question_client:
-            score += 0.05
-        # Mild within-document de-noising: earlier chunks (more likely to
-        # carry the headline rule) get a tiny boost so the citation list
-        # is stable across runs.
-        score -= 0.01 * min(chunk.chunk_index, 5)
-        return round(max(score, 0.0), 3)
+        return [
+            _scored_chunk_to_evidence_dict(s, stance=stance) for s in scored
+        ]
 
     # -- Diagnostics -----------------------------------------------------
 

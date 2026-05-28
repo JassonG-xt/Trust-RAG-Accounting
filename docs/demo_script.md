@@ -173,3 +173,51 @@ When demoing on the GitHub README / a presentation:
 3. **Every node is replaceable.** The mock KB and template generator
    are swappable for real ingestion and an LLM in Phase 2 / Phase 3
    without changing the workflow topology.
+4. **Retrieval is now explainable.** Every entry in
+   `support_evidence` / `counter_evidence` carries a
+   `score_breakdown` (keyword / bm25 / metadata / client_match /
+   stance / malicious_penalty) and a `retrieval_strategy` field
+   (today: `hybrid_keyword_bm25`). A reviewer can read *why* a chunk
+   was retrieved — not just *what* its final score was. The invariant
+   `score == breakdown.total()` is enforced by a regression test, so
+   the breakdown is not decorative.
+
+## Inspecting the retrieval breakdown
+
+```bash
+curl -s -X POST http://localhost:8000/v1/rag/query \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "Alpha Trading Co. 的餐饮发票应该怎么入账？"}' \
+  | jq '.support_evidence[0] | {doc_id, score, retrieval_strategy, score_breakdown}'
+```
+
+Sample shape:
+
+```json
+{
+  "doc_id": "alpha_trading_bookkeeping_sop_2026",
+  "score": 0.7384,
+  "retrieval_strategy": "hybrid_keyword_bm25",
+  "score_breakdown": {
+    "keyword": 0.108,
+    "bm25": 0.2475,
+    "metadata": 0.20,
+    "client_match": 0.15,
+    "stance": 0.05,
+    "malicious_penalty": 0.0
+  }
+}
+```
+
+The breakdown attributes the score to:
+
+* `keyword` — token-overlap contribution from `KeywordRetriever`,
+  already scaled by `keyword_weight` (0.45).
+* `bm25` — normalized Okapi BM25 from `BM25Retriever`, already scaled
+  by `bm25_weight` (0.55).
+* `metadata` — document_type match against the inferred filter.
+* `client_match` — chunk's client matched the inferred client.
+* `stance` — small reward for being on the correct temporal side
+  (current → support, expired → counter).
+* `malicious_penalty` — negative contribution that drives malicious
+  chunks down. Always 0 for benign chunks.

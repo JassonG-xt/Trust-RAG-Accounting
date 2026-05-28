@@ -2,7 +2,11 @@
 
 Actively searches for evidence that *contradicts* or *predates* the
 support evidence — old policy versions, restrictive caveats, etc.
-Phase 2A routes through :class:`DocumentRepository`.
+
+Phase 2A routes through :class:`DocumentRepository`. Phase 3A passes
+``question_type`` through so the retrieval layer's document_type
+inference uses the query-analyzer's verdict rather than substring
+guessing.
 """
 
 from __future__ import annotations
@@ -18,6 +22,12 @@ def counter_retriever(state: TrustRAGState) -> dict:
         return {"counter_evidence": []}
 
     question = state.get("question") or ""
+    question_type = state.get("question_type")
     repository = get_repository()
-    evidence = repository.search(question, stance="counter", limit=5)
+    evidence = repository.search(
+        question,
+        stance="counter",
+        limit=5,
+        question_type=question_type,
+    )
     return {"counter_evidence": evidence}
