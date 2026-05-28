@@ -9,7 +9,7 @@
 
 <p align="left">
   <img alt="status" src="https://img.shields.io/badge/status-alpha-orange.svg">
-  <img alt="phase" src="https://img.shields.io/badge/phase-3C%20reranker-blue.svg">
+  <img alt="phase" src="https://img.shields.io/badge/phase-4A%20langchain%20adapter-blue.svg">
   <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-blue.svg">
   <img alt="framework" src="https://img.shields.io/badge/built%20with-LangGraph-7c3aed.svg">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-green.svg">
@@ -92,6 +92,9 @@ accountant cares about. Every answer ships with:
        a Phase 3E adapter seam; no `torch` / `transformers` in the
        default install.
 - ❌ A real LLM generator — answer templating is still deterministic
+- ❌ A LangSmith-traced workflow **by default** — Phase 4A ships the
+       LangChain adapter seam but does not enable remote tracing.
+       LangSmith env vars are not consumed yet.
 
 ## Architecture Overview
 
@@ -113,30 +116,34 @@ accountant cares about. Every answer ships with:
                               │
                               ▼
 ┌────────────────────────────────────────────────────────────┐
-│        Retrieval layer (Phase 3C — pluggable)              │
+│        Retrieval layer (Phase 4A — LangChain-wrapped)      │
 │                                                            │
-│   DocumentRepository  ─►  RetrievalService                 │
-│                              │                             │
-│                              ▼                             │
-│                         HybridRetriever                    │
-│                  ┌──────────┼──────────────┐               │
-│         KeywordRetriever  BM25Retriever  VectorRetriever   │
-│                                            │               │
-│                                  EmbeddingProvider (mock)  │
-│                                  VectorStore (memory /     │
-│                                  optional Qdrant)          │
-│                  └──────────────┬──────────┘               │
-│                                 ▼                          │
-│                       top-N candidates                     │
-│                                 │                          │
-│                                 ▼                          │
-│                      Reranker (default: MockReranker)      │
-│                       optional BGE / Cohere (Phase 3E)     │
-│                                 │                          │
-│                                 ▼                          │
-│                  ScoredChunk + ScoreBreakdown              │
-│         (keyword / bm25 / vector / reranker / metadata /   │
-│           client_match / stance / malicious_penalty)       │
+│   DocumentRepository                                       │
+│         │                                                  │
+│         ▼                                                  │
+│   RetrievalService  ──►  TrustRAGLangChainRetriever        │
+│         │                  (BaseRetriever)                 │
+│         │                       │                          │
+│         │                       ▼                          │
+│         │             build_retrieval_runnable             │
+│         │                       │                          │
+│         ▼                       ▼                          │
+│   HybridRetriever        LangChain Document(s)             │
+│         │                       │                          │
+│   ┌─────┼─────────┐             ▼                          │
+│   K   BM25      Vector   document_to_evidence_dict         │
+│         │                       │                          │
+│         ▼                       ▼                          │
+│   top-N candidates       LangGraph nodes                   │
+│         │           support_retriever / counter_retriever  │
+│         ▼                                                  │
+│   Reranker (default: MockReranker)                         │
+│    optional BGE / Cohere (Phase 3E)                        │
+│         │                                                  │
+│         ▼                                                  │
+│   ScoredChunk + ScoreBreakdown                             │
+│   (keyword / bm25 / vector / reranker / metadata /         │
+│    client_match / stance / malicious_penalty)              │
 └─────────────────────────────┬──────────────────────────────┘
                               │
                               ▼
@@ -298,6 +305,25 @@ What the workflow can do today, end-to-end:
     `score == breakdown.total()` is preserved through the rerank
     pass (and the malicious cap is re-applied so adversarial chunks
     cannot escape quarantine via a high rerank score).
+25. **LangChain `BaseRetriever` adapter (Phase 4A)** — the
+    `TrustRAGLangChainRetriever` wraps `RetrievalService` as a real
+    `langchain_core.retrievers.BaseRetriever`. Calling
+    `.invoke(query)` produces `list[Document]` with every breakdown
+    component, retrieval strategy label, and parent-document metadata
+    preserved on `Document.metadata`. No new dependency: the
+    `langchain-core` package already ships with the workflow.
+26. **Runnable retrieval composition** — `build_retrieval_runnable(...)`
+    composes the retriever with a `RunnableLambda` that maps
+    `Document` back to the workflow's evidence-dict shape. The
+    `support_retriever` and `counter_retriever` graph nodes now invoke
+    this runnable instead of calling `repository.search` directly. The
+    response schema is unchanged — `support_evidence` / `counter_evidence`
+    look identical to a Phase 3C client, plus a new `source` key that
+    aliases `source_path` for LangChain-style consumers.
+27. **`DocumentRepository.get_retrieval_service()` seam** — explicit
+    method for adapter construction. Backward-compatible
+    `DocumentRepository.search()` remains available for tests and
+    diagnostics; nothing breaks if a downstream tool keeps using it.
 
 ## Planned Features
 

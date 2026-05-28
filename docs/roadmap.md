@@ -238,9 +238,57 @@ docs. **Completed.**
 
 ## Phase 4 — Real LangChain Retriever Plumbing
 
-- [ ] Wrap `RetrievalService` in a real `LangChainRetriever` so the
-      retrieval layer participates in LangGraph runnable composition
-      (instead of being called directly from node functions).
+### Phase 4A — LangChain BaseRetriever Adapter + Runnable Retrieval Nodes ✅
+
+- ✅ New `backend/app/langchain_adapters/` package:
+      `retrieval_context.py` (`RetrievalContext` Pydantic value
+      object), `document_mapping.py` (`scored_chunk_to_document` +
+      `document_to_evidence_dict`),
+      `trust_rag_retriever.py` (`TrustRAGLangChainRetriever`
+      subclass of `langchain_core.retrievers.BaseRetriever`),
+      `runnable_retrieval.py` (`build_retrieval_runnable` factory).
+- ✅ `TrustRAGLangChainRetriever` delegates straight to
+      `RetrievalService.search` — no duplicated scoring / fusion /
+      reranking. Pydantic v2 `model_config = ConfigDict(
+      arbitrary_types_allowed=True)` lets the retriever hold a
+      non-Pydantic `RetrievalService` reference directly.
+- ✅ `build_retrieval_runnable(...)` composes the retriever with a
+      `RunnableLambda` that maps `Document → evidence dict`, so
+      graph nodes still consume `list[dict]` and the workflow
+      response schema stays unchanged.
+- ✅ `support_retriever` and `counter_retriever` now construct the
+      runnable per call and invoke it. The workflow-level
+      "auto-detect injection-trigger query" safety policy is
+      re-applied at the node call site so malicious chunks still
+      surface for `safety_checker` on injection-pattern queries.
+- ✅ `DocumentRepository.get_retrieval_service()` — explicit
+      method seam for adapter construction. The legacy
+      `DocumentRepository.search()` stays available for tests and
+      diagnostics (and for any future code that wants direct
+      access without the LangChain hop).
+- ✅ Document metadata carries `adapter` + `retrieval_context` for
+      tracing / auditing. The evidence dict does **not** surface
+      these — they live only on `Document.metadata` so the FastAPI
+      response shape is unchanged.
+- ✅ `score == round(breakdown.total(), 4)` invariant preserved
+      through the adapter (regression test in
+      `test_langchain_adapters.py`).
+- ✅ 27 new tests across document mapping, BaseRetriever behavior,
+      runnable composition, `RetrievalContext` validation, and graph
+      node integration via `run_query`. Total pytest count: **154
+      passed**.
+- ✅ Alpha / Beta client isolation preserved through the adapter.
+      Malicious quarantine preserved (default off, explicit-on cap
+      stays). LangGraph workflow topology unchanged (still 9 linear
+      nodes).
+- ✅ No new dependency: `langchain-core` was already declared.
+
+### Phase 4B — Conditional Routing & LangSmith Tracing Hooks (deferred)
+
+- [ ] Tag nodes with run-name / run-tag metadata so traces are
+      readable in LangSmith without enabling remote tracing.
+- [ ] Wire LangChain callbacks into a local console tracer for
+      development.
 - [ ] Push client-aware metadata routing down into the retriever (no
       more post-filtering in Python).
 

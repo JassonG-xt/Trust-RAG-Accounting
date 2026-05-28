@@ -173,6 +173,14 @@ When demoing on the GitHub README / a presentation:
 3. **Every node is replaceable.** The mock KB and template generator
    are swappable for real ingestion and an LLM in Phase 2 / Phase 3
    without changing the workflow topology.
+4. **The retrieval nodes now use a LangChain `BaseRetriever` adapter
+   (Phase 4A).** `support_retriever` / `counter_retriever` build a
+   `TrustRAGLangChainRetriever` (a real
+   `langchain_core.retrievers.BaseRetriever`) via
+   `build_retrieval_runnable(...)` and invoke it. The API response
+   shape is identical to Phase 3C — the change is invisible to
+   clients but unlocks LangChain-native composition (streaming,
+   tracing, tool-binding) for future phases.
 4. **Retrieval is now explainable.** Every entry in
    `support_evidence` / `counter_evidence` carries a
    `score_breakdown` (keyword / bm25 / vector / metadata / client_match /
@@ -187,6 +195,16 @@ When demoing on the GitHub README / a presentation:
    feature-hashing mock embedding + in-memory vector store. No
    network, no API key, no Docker. Qdrant is optional, behind the
    `[qdrant]` extras group.
+6. **The adapter doesn't change the math.** Phase 4A's
+   `TrustRAGLangChainRetriever` is a thin wrapper — every breakdown
+   component (`keyword` / `bm25` / `vector` / `reranker` /
+   `metadata` / `client_match` / `stance` / `malicious_penalty`)
+   still comes from the same Phase 3C pipeline. The adapter only
+   maps `ScoredChunk ↔ Document`. If `score_breakdown.reranker` is
+   non-zero, the rerank pass touched that candidate; if
+   `retrieval_strategy` is `hybrid_keyword_bm25_vector`, the vector
+   branch was on. Both signals survive the LangChain round-trip
+   intact.
 
 ## Inspecting the retrieval breakdown
 

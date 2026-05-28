@@ -129,6 +129,11 @@ backend/app/
 │   ├── providers.py         # Reranker Protocol + create_reranker factory
 │   ├── mock_reranker.py     # Deterministic content-overlap reranker
 │   └── external_adapters.py # BGEReranker stub (Phase 3E placeholder)
+├── langchain_adapters/ # Phase 4A: LangChain BaseRetriever + Runnable seam
+│   ├── retrieval_context.py # Typed Pydantic value object
+│   ├── document_mapping.py  # ScoredChunk ↔ langchain Document
+│   ├── trust_rag_retriever.py # BaseRetriever wrapping RetrievalService
+│   └── runnable_retrieval.py  # build_retrieval_runnable factory
 ├── graph/
 │   ├── state.py       # TrustRAGState (TypedDict) — accounting fields
 │   ├── workflow.py    # build_workflow() / get_workflow() / run_query()
@@ -139,7 +144,49 @@ backend/app/
     └── mock_knowledge_base.py  # legacy compat layer (kept for old imports)
 ```
 
-**Phase 3C retrieval flow:**
+**Phase 4A retrieval flow:**
+
+```
+LangGraph support_retriever / counter_retriever node
+       │  (Phase 4A: builds a LangChain Runnable per call)
+       ▼
+build_retrieval_runnable(retrieval_service, stance, top_k, …)
+       │   composes:
+       │     TrustRAGLangChainRetriever  ── BaseRetriever ──┐
+       │                                                    │
+       │     RunnableLambda(document → evidence dict)       │
+       │                                                    │
+       ▼                                                    ▼
+.invoke(question)                                  list[Document]
+       │                                                    │
+       │ TrustRAGLangChainRetriever._get_relevant_documents │
+       │   delegates straight to:                           │
+       ▼                                                    │
+DocumentRepository.get_retrieval_service()  ─────────────────┘
+       │  RetrievalService.search(question, stance, top_k, …)
+       ▼
+HybridRetriever → Reranker → ScoredChunk
+       │
+       ▼
+scored_chunk_to_document  ── Document(page_content, metadata)
+       │
+       ▼  RunnableLambda
+document_to_evidence_dict  ── evidence dict (same Phase 3C shape +
+                              ``source`` alias of ``source_path``)
+       │
+       ▼
+LangGraph state slot (support_evidence / counter_evidence)
+```
+
+The adapter layer is *additive*: scoring, fusion, reranking, and
+malicious quarantine all stay where they were in Phase 3C. Phase 4A
+is a plumbing change — the graph node's contract with the rest of
+the workflow is identical, but the call path now goes through
+LangChain's runnable composition machinery. That unlocks future
+streaming, LangSmith tracing, and tool-binding without another
+refactor.
+
+**Phase 3C retrieval flow (still authoritative inside the adapter):**
 
 ```
 DocumentRepository.search(query, stance, question_type, ...)
@@ -260,16 +307,24 @@ The loader refuses to guess accounting fields. If the sidecar is
 missing or required keys (`title`, `version`, `document_type`) are
 absent, ingestion fails with a clear error.
 
-**Boundary rules (Phase 3A):**
+**Boundary rules (Phase 4A):**
 
 - Routes import only `schemas/` and `graph/workflow.py`.
-- Nodes import services and state. They never import FastAPI.
+- Nodes import services and state, plus the
+  ``langchain_adapters`` package for the runnable retrieval helper.
+  They never import FastAPI.
 - Services know nothing about the graph or about HTTP.
 - The repository is the **single seam** for the Phase 3B vector-store
   migration. Inside the repository, ``RetrievalService`` is the
   single seam between "what got loaded" (chunks) and "what gets
   scored" (retrievers). Only that service needs to change when a
   vector retriever joins the fusion.
+- The ``langchain_adapters`` package is the **single seam** between
+  the TrustRAG retrieval pipeline and LangChain runnable composition.
+  It does nothing beyond mapping ``ScoredChunk ↔ Document`` and
+  forwarding ``.search`` to ``RetrievalService``. If this package
+  ever starts scoring, fusing, reranking, or filtering, that's a
+  layering violation.
 
 ## 7. Risk Review Flow
 

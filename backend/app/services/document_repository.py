@@ -299,6 +299,24 @@ class DocumentRepository:
             assert self._retrieval_service is not None
             return self._retrieval_service
 
+    def get_retrieval_service(self) -> RetrievalService:
+        """Explicit seam for the Phase 4A LangChain adapter layer.
+
+        Equivalent to the :attr:`retrieval_service` property but spelled
+        as a method so the call site reads like the conventional
+        LangChain "construct the runnable" pattern::
+
+            service = repository.get_retrieval_service()
+            runnable = build_retrieval_runnable(retrieval_service=service, ...)
+            evidence = runnable.invoke(question)
+
+        The repository remains the single load-and-cache point for the
+        chunk corpus; the adapter just takes the constructed service by
+        reference, so there's no duplicated loading cost.
+        """
+
+        return self.retrieval_service
+
     # -- Retrieval -------------------------------------------------------
 
     def search(
