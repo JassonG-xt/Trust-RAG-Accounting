@@ -175,12 +175,18 @@ When demoing on the GitHub README / a presentation:
    without changing the workflow topology.
 4. **Retrieval is now explainable.** Every entry in
    `support_evidence` / `counter_evidence` carries a
-   `score_breakdown` (keyword / bm25 / metadata / client_match /
+   `score_breakdown` (keyword / bm25 / vector / metadata / client_match /
    stance / malicious_penalty) and a `retrieval_strategy` field
-   (today: `hybrid_keyword_bm25`). A reviewer can read *why* a chunk
-   was retrieved — not just *what* its final score was. The invariant
+   (today: `hybrid_keyword_bm25_vector` with Phase 3B vector branch
+   enabled, or `hybrid_keyword_bm25` when the vector branch is
+   disabled in config). A reviewer can read *why* a chunk was
+   retrieved — not just *what* its final score was. The invariant
    `score == breakdown.total()` is enforced by a regression test, so
    the breakdown is not decorative.
+5. **Vector retrieval is local and deterministic.** Phase 3B uses a
+   feature-hashing mock embedding + in-memory vector store. No
+   network, no API key, no Docker. Qdrant is optional, behind the
+   `[qdrant]` extras group.
 
 ## Inspecting the retrieval breakdown
 
@@ -191,16 +197,17 @@ curl -s -X POST http://localhost:8000/v1/rag/query \
   | jq '.support_evidence[0] | {doc_id, score, retrieval_strategy, score_breakdown}'
 ```
 
-Sample shape:
+Sample shape (Phase 3B with vector branch enabled):
 
 ```json
 {
   "doc_id": "alpha_trading_bookkeeping_sop_2026",
   "score": 0.7384,
-  "retrieval_strategy": "hybrid_keyword_bm25",
+  "retrieval_strategy": "hybrid_keyword_bm25_vector",
   "score_breakdown": {
-    "keyword": 0.108,
-    "bm25": 0.2475,
+    "keyword": 0.0378,
+    "bm25": 0.099,
+    "vector": 0.1875,
     "metadata": 0.20,
     "client_match": 0.15,
     "stance": 0.05,
@@ -212,12 +219,47 @@ Sample shape:
 The breakdown attributes the score to:
 
 * `keyword` — token-overlap contribution from `KeywordRetriever`,
-  already scaled by `keyword_weight` (0.45).
+  already scaled by `keyword_weight` (0.35 in three-way mode, 0.45 in
+  the Phase 3A two-way fallback).
 * `bm25` — normalized Okapi BM25 from `BM25Retriever`, already scaled
-  by `bm25_weight` (0.55).
+  by `bm25_weight` (0.40 in three-way mode, 0.55 in two-way).
+* `vector` — normalized cosine-similarity contribution from
+  `VectorRetriever`, already scaled by `vector_weight` (0.25 in
+  three-way mode, 0.0 in two-way). The vector branch uses the
+  deterministic `MockEmbeddingProvider` + `InMemoryVectorStore` by
+  default — no API key, no Docker, no network.
 * `metadata` — document_type match against the inferred filter.
 * `client_match` — chunk's client matched the inferred client.
 * `stance` — small reward for being on the correct temporal side
   (current → support, expired → counter).
 * `malicious_penalty` — negative contribution that drives malicious
   chunks down. Always 0 for benign chunks.
+
+## Switching to Qdrant (optional)
+
+```bash
+pip install 'trust-rag[qdrant]'
+export VECTOR_STORE=qdrant
+export QDRANT_URL=http://localhost:6333
+# export QDRANT_API_KEY=...     # only if your cluster requires one
+export QDRANT_COLLECTION=trustrag_chunks
+
+bash scripts/run_dev.sh
+```
+
+The first query after switch will index every chunk into the
+configured Qdrant collection (the operator is responsible for
+creating the collection with `size=64` and `distance=Cosine`). The
+`retrieval_strategy` field will then read `vector_qdrant` instead of
+`vector_mock` when a hit comes through the vector branch.
+
+## Turning off the vector branch
+
+```bash
+export RETRIEVAL_ENABLE_VECTOR=false
+bash scripts/run_dev.sh
+```
+
+The retriever degrades to Phase 3A two-way fusion. `score_breakdown.vector`
+stays in the response shape (always 0.0) so downstream clients
+don't break.

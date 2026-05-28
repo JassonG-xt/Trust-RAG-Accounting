@@ -28,6 +28,24 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _optional_str_env(name: str) -> str | None:
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+    raw = raw.strip()
+    return raw or None
+
+
 @dataclass(frozen=True)
 class Settings:
     """Runtime configuration for the TrustRAG backend."""
@@ -53,6 +71,28 @@ class Settings:
     )
     enable_safety_check: bool = field(
         default_factory=lambda: _bool_env("TRUST_RAG_ENABLE_SAFETY_CHECK", True)
+    )
+
+    # Phase 3B — vector retrieval. Default ON with mock provider + in-memory
+    # store so tests and fresh clones work offline. Operators opt in to
+    # Qdrant via VECTOR_STORE=qdrant + QDRANT_URL.
+    retrieval_enable_vector: bool = field(
+        default_factory=lambda: _bool_env("RETRIEVAL_ENABLE_VECTOR", True)
+    )
+    embedding_dimension: int = field(
+        default_factory=lambda: _int_env("EMBEDDING_DIMENSION", 64)
+    )
+    vector_store: str = field(
+        default_factory=lambda: os.getenv("VECTOR_STORE", "memory")
+    )
+    qdrant_url: str | None = field(
+        default_factory=lambda: _optional_str_env("QDRANT_URL")
+    )
+    qdrant_api_key: str | None = field(
+        default_factory=lambda: _optional_str_env("QDRANT_API_KEY")
+    )
+    qdrant_collection: str = field(
+        default_factory=lambda: os.getenv("QDRANT_COLLECTION", "trustrag_chunks")
     )
 
 

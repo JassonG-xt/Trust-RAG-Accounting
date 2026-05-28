@@ -92,11 +92,23 @@ def test_bookkeeping_sop_query_routes_to_alpha_trading(client: TestClient) -> No
     )
 
     # Phase 3A: hybrid retrieval breakdown is surfaced on every hit.
+    # Phase 3B: strategy advertises the vector branch when enabled.
     first_support = support[0]
-    assert first_support.get("retrieval_strategy") == "hybrid_keyword_bm25"
+    assert first_support.get("retrieval_strategy") in {
+        "hybrid_keyword_bm25_vector",
+        "hybrid_keyword_bm25",
+    }
     breakdown = first_support.get("score_breakdown")
     assert isinstance(breakdown, dict)
-    for key in ("keyword", "bm25", "metadata", "client_match", "stance", "malicious_penalty"):
+    for key in (
+        "keyword",
+        "bm25",
+        "vector",
+        "metadata",
+        "client_match",
+        "stance",
+        "malicious_penalty",
+    ):
         assert key in breakdown
 
     answer = payload["answer"]

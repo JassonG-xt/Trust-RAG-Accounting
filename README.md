@@ -9,7 +9,7 @@
 
 <p align="left">
   <img alt="status" src="https://img.shields.io/badge/status-alpha-orange.svg">
-  <img alt="phase" src="https://img.shields.io/badge/phase-3A%20hybrid%20retrieval-blue.svg">
+  <img alt="phase" src="https://img.shields.io/badge/phase-3B%20vector%20retrieval-blue.svg">
   <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-blue.svg">
   <img alt="framework" src="https://img.shields.io/badge/built%20with-LangGraph-7c3aed.svg">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-green.svg">
@@ -80,9 +80,13 @@ accountant cares about. Every answer ships with:
 - ❌ A way to bypass internal review on regulated surfaces
 - ❌ A source of final tax conclusions — tax-policy questions
        *always* require human review
-- ❌ A vector-store retriever **yet** — Phase 3A is local lexical +
-       BM25 only. Embeddings, ANN search, and rerankers arrive in
-       Phase 3B / 3C.
+- ❌ A real-embedding-powered retriever **yet** — Phase 3B ships a
+       deterministic mock embedding + in-memory vector store. Real
+       providers (OpenAI / Bedrock) are deferred until a workload
+       justifies the dependency footprint.
+- ❌ A required Qdrant deployment — Qdrant is an **optional** adapter
+       behind the `[qdrant]` extras group; tests + local demos run
+       fully offline against the in-memory store.
 - ❌ A neural reranker — no cross-encoder, no Cohere / BGE
 - ❌ A real LLM generator — answer templating is still deterministic
 
@@ -106,17 +110,23 @@ accountant cares about. Every answer ships with:
                               │
                               ▼
 ┌────────────────────────────────────────────────────────────┐
-│        Retrieval layer (Phase 3A — pluggable)              │
+│        Retrieval layer (Phase 3B — pluggable)              │
 │                                                            │
 │   DocumentRepository  ─►  RetrievalService                 │
 │                              │                             │
 │                              ▼                             │
 │                         HybridRetriever                    │
-│                          ┌──────┴───────┐                  │
-│                  KeywordRetriever   BM25Retriever          │
-│                          └──────┬───────┘                  │
+│                  ┌──────────┼──────────────┐               │
+│         KeywordRetriever  BM25Retriever  VectorRetriever   │
+│                                            │               │
+│                                  EmbeddingProvider (mock)  │
+│                                  VectorStore (memory /     │
+│                                  optional Qdrant)          │
+│                  └──────────────┬──────────┘               │
 │                                 ▼                          │
 │                  ScoredChunk + ScoreBreakdown              │
+│         (keyword / bm25 / vector / metadata / client /     │
+│            stance / malicious_penalty)                     │
 └─────────────────────────────┬──────────────────────────────┘
                               │
                               ▼
@@ -244,6 +254,29 @@ What the workflow can do today, end-to-end:
     live on a structured `MetadataFilter`. Type / client inference
     happens once in `filters.py`; every retriever consumes the same
     filter so they cannot diverge on what "Alpha query" means.
+18. **Three-way hybrid retrieval (Phase 3B)** — keyword + BM25 +
+    vector fusion via `HybridRetriever`. Weights default to
+    `0.35 / 0.40 / 0.25`. When the vector branch is disabled
+    (config), the retriever falls back to Phase 3A two-way fusion
+    with `0.45 / 0.55` and emits `retrieval_strategy = "hybrid_keyword_bm25"`.
+19. **Deterministic mock embedding provider** — feature hashing over
+    `expand_query_terms` output, L2-normalized, 64 dimensions by
+    default. Same text → identical vector across runs (the property
+    every test invariant depends on).
+20. **In-memory vector store** — pure-Python cosine similarity with
+    a payload-filter DSL (`client_any_of`, `is_malicious`,
+    `document_type_any_of`). No network, no Docker, no Qdrant
+    required for the test suite or the local demo.
+21. **Optional Qdrant adapter** — `QdrantVectorStore` lives behind
+    the `[qdrant]` extras group. Operators opt in via
+    `VECTOR_STORE=qdrant` + `QDRANT_URL`. The adapter shares the
+    same interface as `InMemoryVectorStore` so swapping is a config
+    change, not a code change.
+22. **Bilingual cross-lingual vector matching** — because the mock
+    embedder runs `expand_query_terms` first, a Chinese query like
+    "餐饮发票" embeds into the same hash buckets as English chunks
+    containing "meal / invoice / entertainment". Vector retrieval
+    becomes a useful signal even without a real cross-lingual model.
 
 ## Planned Features
 
@@ -335,14 +368,15 @@ deterministic mocks.
       "content": "Meal invoices for client entertainment should be recorded under business entertainment expenses (业务招待费). A valid invoice and a signed client visit note are both required before the entry is booked.",
       "score": 0.7384,
       "score_breakdown": {
-        "keyword": 0.108,
-        "bm25": 0.2475,
+        "keyword": 0.0378,
+        "bm25": 0.099,
+        "vector": 0.1875,
         "metadata": 0.20,
         "client_match": 0.15,
         "stance": 0.05,
         "malicious_penalty": 0.0
       },
-      "retrieval_strategy": "hybrid_keyword_bm25",
+      "retrieval_strategy": "hybrid_keyword_bm25_vector",
       "stance": "support"
     }
   ],

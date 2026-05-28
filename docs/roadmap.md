@@ -123,22 +123,71 @@ docs. **Completed.**
 - ✅ Client-aware filtering still preserved at the chunk level
       (Alpha query cannot surface Beta chunks and vice versa).
 
-## Phase 3B — Embeddings + Qdrant Vector Store
+## Phase 3B — Embedding Provider + Vector Retrieval Seam (current) ✅
 
-- [ ] Embedding provider abstraction (`mock`, `openai`, `bedrock`,
-      on-prem).
-- [ ] Qdrant vector store with per-client / per-version metadata
-      filters mapped from `MetadataFilter`.
-- [ ] `VectorRetriever` joins the `HybridRetriever` fusion alongside
-      `KeywordRetriever` and `BM25Retriever`.
-- [ ] Retrieval metrics: Current Policy Accuracy, Client-Specific Rule
-      Accuracy.
+- ✅ `backend/app/embeddings/` package with `EmbeddingProvider`
+      Protocol + factory + `MockEmbeddingProvider`. Default provider
+      is the deterministic mock — local-only, no network, no API key,
+      no Docker, no real model.
+- ✅ `MockEmbeddingProvider` uses a feature-hashing trick over
+      `expand_query_terms` so a Chinese query like `餐饮发票` shares
+      vector mass with English chunks containing `meal/invoice`. L2
+      normalized, 64 dimensions by default. Same text → identical
+      vector (deterministic by construction).
+- ✅ `backend/app/vectorstore/` package with `VectorRecord`,
+      `VectorSearchResult`, `VectorStore` Protocol, the in-memory
+      cosine store, the optional Qdrant adapter, and the
+      `MetadataFilter → payload_filter` mapping.
+- ✅ `InMemoryVectorStore` — pure-Python cosine similarity with a
+      payload-filter DSL (`client_any_of`, `is_malicious`,
+      `document_type_any_of`, `policy_family_any_of`). Used by every
+      test and the local demo.
+- ✅ Optional `QdrantVectorStore` adapter behind the
+      `trust-rag[qdrant]` extras group. Operators opt in via
+      `VECTOR_STORE=qdrant` + `QDRANT_URL`. Tests never touch the
+      live network.
+- ✅ `VectorRetriever` — indexes chunks via the embedding provider,
+      searches with metadata-filter translation, applies the same
+      stance and malicious-quarantine rules as Keyword + BM25.
+      Strategy label is `vector_mock` or `vector_qdrant`.
+- ✅ `ScoreBreakdown.vector` field added. Invariant
+      `score == breakdown.total()` extended to seven components.
+- ✅ `HybridRetriever` upgraded to three-way fusion. When the vector
+      branch is wired, default weights are `0.35 / 0.40 / 0.25` and
+      the strategy is `hybrid_keyword_bm25_vector`. When disabled
+      via config, two-way fusion (`0.45 / 0.55`) is preserved
+      verbatim and the strategy stays `hybrid_keyword_bm25`.
+- ✅ `RetrievalService` owns embedder + vector store construction
+      and degrades gracefully (logs and falls back to Phase 3A
+      two-way fusion) if vector init fails.
+- ✅ `core/config.py` gains `retrieval_enable_vector`,
+      `embedding_dimension`, `vector_store`, `qdrant_url`,
+      `qdrant_api_key`, `qdrant_collection`.
+- ✅ `pyproject.toml` gains a `[project.optional-dependencies.qdrant]`
+      group containing `qdrant-client`. Default install footprint
+      unchanged.
+- ✅ `.env.example` documents the new vector-related env vars
+      without checking in real values.
+- ✅ 34 new tests across `test_embeddings.py`, `test_vectorstore.py`,
+      `test_vector_retrieval.py`. Existing `test_retrieval.py` and
+      `test_rag_workflow.py` updated for the new strategy label and
+      breakdown shape. Total pytest count: **103 passed**.
+- ✅ Alpha / Beta client isolation preserved end-to-end, including
+      through the vector branch.
 
 ## Phase 3C — Reranker
 
 - [ ] Cross-encoder reranker (BGE / Cohere / open-source) wired into
       `RetrievalService` as a post-hybrid pass.
 - [ ] Reranker score added as another column in `ScoreBreakdown`.
+
+## Phase 3D — Real Embedding Provider
+
+- [ ] OpenAI / Bedrock embedding providers behind the same
+      `EmbeddingProvider` protocol.
+- [ ] Provider-level rate-limiting + retry budget.
+- [ ] Retrieval metrics: Current Policy Accuracy, Client-Specific
+      Rule Accuracy (now feasible since vector signal is in place).
 
 ## Phase 4 — Real LangChain Retriever Plumbing
 
