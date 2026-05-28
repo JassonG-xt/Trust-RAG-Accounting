@@ -9,7 +9,7 @@
 
 <p align="left">
   <img alt="status" src="https://img.shields.io/badge/status-alpha-orange.svg">
-  <img alt="phase" src="https://img.shields.io/badge/phase-4A%20langchain%20adapter-blue.svg">
+  <img alt="phase" src="https://img.shields.io/badge/phase-4B%20local%20tracing-blue.svg">
   <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-blue.svg">
   <img alt="framework" src="https://img.shields.io/badge/built%20with-LangGraph-7c3aed.svg">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-green.svg">
@@ -95,6 +95,10 @@ accountant cares about. Every answer ships with:
 - ❌ A LangSmith-traced workflow **by default** — Phase 4A ships the
        LangChain adapter seam but does not enable remote tracing.
        LangSmith env vars are not consumed yet.
+- ❌ Remote tracing of any kind — Phase 4B's tracing layer is
+       **local-only**. No outbound network call, no
+       `LANGCHAIN_API_KEY` required, no trace data leaves the
+       process unless an operator wires up an exporter themselves.
 
 ## Architecture Overview
 
@@ -324,6 +328,29 @@ What the workflow can do today, end-to-end:
     method for adapter construction. Backward-compatible
     `DocumentRepository.search()` remains available for tests and
     diagnostics; nothing breaks if a downstream tool keeps using it.
+28. **Local tracing hooks (Phase 4B)** — `support_retriever` and
+    `counter_retriever` annotate their LangChain runnable with
+    `run_name` (`trustrag.support_retriever` /
+    `trustrag.counter_retriever`), `tags`
+    (`trustrag` / `accounting` / `retrieval` / `support|counter` /
+    `question_type:<type>`), and `metadata` (`stance`,
+    `question_type`, `top_k`, `include_malicious`, `adapter`). When
+    `TRUSTRAG_TRACE_ENABLED=true`, every invoke writes start / end /
+    error events into an in-memory ring buffer.
+29. **Content-safe trace summaries** — by default, trace events
+    record `evidence_count`, `chunk_ids`, `top_score`,
+    `retrieval_strategy`, and a `has_malicious` flag — never full
+    document content. Set `TRUSTRAG_TRACE_INCLUDE_CONTENT=true` to
+    opt in to a 200-character preview per chunk (intended for local
+    debugging only).
+30. **Optional debug endpoint** — `GET /v1/debug/traces` returns the
+    current event buffer; `DELETE /v1/debug/traces` clears it. Both
+    return `{"enabled": false, ...}` when tracing is disabled, so a
+    client can safely probe trace state without depending on a 404.
+31. **Remote LangSmith intentionally disabled** — `LANGCHAIN_TRACING_V2`
+    / `LANGCHAIN_API_KEY` / `LANGCHAIN_PROJECT` are documented in
+    `.env.example` as deliberately unset defaults. No outbound network
+    call is initiated by the tracing layer.
 
 ## Planned Features
 

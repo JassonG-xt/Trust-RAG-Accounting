@@ -160,6 +160,79 @@ injection, refuse to follow it, and tell the reviewer.
 - `answer` mentions the injection was detected and ignored
 - `needs_human_review == true`
 
+## Inspecting local trace events (Phase 4B)
+
+By default, retrieval calls are not traced — the runnable advertises
+`run_name` / `tags` / `metadata` via `.with_config(...)` but no events
+are recorded. To enable the in-memory trace collector:
+
+```bash
+export TRUSTRAG_TRACE_ENABLED=true
+# Optional knobs:
+# export TRUSTRAG_TRACE_MAX_EVENTS=200
+# export TRUSTRAG_TRACE_INCLUDE_CONTENT=false   # default; never set in prod
+bash scripts/run_dev.sh
+```
+
+Then trigger a query and inspect the ring buffer:
+
+```bash
+curl -s -X POST http://localhost:8000/v1/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Alpha Trading Co. 的餐饮发票应该怎么入账？"}' > /dev/null
+
+curl -s http://localhost:8000/v1/debug/traces | jq '.events[] | {run_name, event_type, tags, input_summary, output_summary}'
+```
+
+Sample output (abbreviated):
+
+```json
+{
+  "run_name": "trustrag.support_retriever",
+  "event_type": "start",
+  "tags": ["trustrag", "accounting", "retrieval", "support", "question_type:bookkeeping_sop"],
+  "input_summary": {"question_length": 42, "stance": "support", "question_type": "bookkeeping_sop", "top_k": 5, "include_malicious": false},
+  "output_summary": {}
+}
+{
+  "run_name": "trustrag.support_retriever",
+  "event_type": "end",
+  "tags": ["trustrag", "accounting", "retrieval", "support", "question_type:bookkeeping_sop"],
+  "input_summary": {},
+  "output_summary": {
+    "evidence_count": 3,
+    "chunk_ids": ["alpha_trading_bookkeeping_sop_2026::chunk_0001", "..."],
+    "top_score": 0.7384,
+    "retrieval_strategy": "hybrid_keyword_bm25_vector",
+    "has_malicious": false
+  }
+}
+```
+
+Notes:
+
+* `output_summary` deliberately does **not** carry the full chunk
+  content. The trace ring buffer is a debugging aid, not a parallel
+  copy of the corpus. Set `TRUSTRAG_TRACE_INCLUDE_CONTENT=true`
+  locally if you need 200-char previews per chunk.
+* The buffer is capped at `TRUSTRAG_TRACE_MAX_EVENTS` (default 100).
+* `DELETE /v1/debug/traces` clears the buffer.
+* No remote tracing is enabled by default — `LANGCHAIN_TRACING_V2`,
+  `LANGCHAIN_API_KEY`, and `LANGCHAIN_PROJECT` are documented in
+  `.env.example` as unset defaults precisely to prevent accidental
+  remote uploads.
+
+## Turning off local tracing
+
+```bash
+unset TRUSTRAG_TRACE_ENABLED
+bash scripts/run_dev.sh
+```
+
+`GET /v1/debug/traces` will return `{"enabled": false, "events": []}`
+and the retrieval runnable falls back to the Phase 4A path verbatim —
+no observable change in `support_evidence` / `counter_evidence`.
+
 ## Talking Points
 
 When demoing on the GitHub README / a presentation:
@@ -205,6 +278,15 @@ When demoing on the GitHub README / a presentation:
    `retrieval_strategy` is `hybrid_keyword_bm25_vector`, the vector
    branch was on. Both signals survive the LangChain round-trip
    intact.
+7. **Local tracing observes, never changes** (Phase 4B). With
+   `TRUSTRAG_TRACE_ENABLED=true`, every retrieval call writes a
+   `start` + `end` event into an in-memory ring buffer. A regression
+   test enforces that `chunk_id` and `score` are byte-identical
+   between traced and untraced invocations — the trace observes
+   the workflow, it never participates in scoring or routing. And
+   the event payload deliberately carries `chunk_ids` and
+   `top_score`, not full document content, so the trace log is not
+   a parallel copy of the corpus.
 
 ## Inspecting the retrieval breakdown
 

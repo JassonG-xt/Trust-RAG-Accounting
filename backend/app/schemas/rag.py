@@ -238,3 +238,28 @@ class RAGQueryResponse(BaseModel):
     citations: list[Citation] = Field(default_factory=list)
     needs_human_review: bool = False
     errors: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Phase 4B — Local trace debug endpoint
+# ---------------------------------------------------------------------------
+
+
+class TracesResponse(BaseModel):
+    """Response shape for ``GET /v1/debug/traces``.
+
+    ``events`` is a list of trace event dicts (see
+    :class:`backend.app.tracing.models.TraceEvent`). Returned as
+    ``dict`` rather than the Pydantic class so the API surface stays
+    forward-compatible if the trace model adds optional fields.
+    """
+
+    enabled: bool
+    events: list[dict] = Field(default_factory=list)
+
+
+class TracesClearResponse(BaseModel):
+    """Response shape for ``DELETE /v1/debug/traces``."""
+
+    enabled: bool
+    cleared: int = 0

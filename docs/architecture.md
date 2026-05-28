@@ -134,6 +134,10 @@ backend/app/
 │   ├── document_mapping.py  # ScoredChunk ↔ langchain Document
 │   ├── trust_rag_retriever.py # BaseRetriever wrapping RetrievalService
 │   └── runnable_retrieval.py  # build_retrieval_runnable factory
+├── tracing/           # Phase 4B: Local trace ring buffer + callbacks
+│   ├── models.py            # TraceEvent + summarize_evidence_payload
+│   ├── local_collector.py   # LocalTraceCollector + maybe_get_trace_collector
+│   └── callbacks.py         # LocalTraceCallbackHandler(BaseCallbackHandler)
 ├── graph/
 │   ├── state.py       # TrustRAGState (TypedDict) — accounting fields
 │   ├── workflow.py    # build_workflow() / get_workflow() / run_query()
@@ -143,6 +147,49 @@ backend/app/
     │                           # dispatches to retrieval/RetrievalService
     └── mock_knowledge_base.py  # legacy compat layer (kept for old imports)
 ```
+
+**Phase 4B tracing layer (additive on top of Phase 4A):**
+
+```
+support_retriever / counter_retriever node
+       │
+       ▼  build_retrieval_runnable(run_name, tags, metadata, trace_collector)
+       │
+       │  TrustRAGLangChainRetriever | RunnableLambda(_to_evidence_dicts)
+       │             .with_config(run_name=..., tags=..., metadata=...)
+       │                          │
+       │                          ▼
+       │              RunnableLambda(_traced_invoke)  ← only when trace_collector is not None
+       │                          │  record_start(...)
+       │                          ▼
+       │              configured_runnable.invoke(question)
+       │                          │
+       │  on exception:           ▼
+       │  record_error(...)  →  list[evidence dict]
+       │                          │
+       │                          ▼
+       │              record_end(... output_summary=...)
+       ▼
+LocalTraceCollector (in-memory ring buffer)
+       │
+       ▼
+GET  /v1/debug/traces  →  {"enabled": true|false, "events": [...]}
+DELETE /v1/debug/traces  →  {"enabled": ..., "cleared": N}
+```
+
+The tracing layer is *additive* and *observe-only*. Output
+identity-equality with Phase 4A is enforced by a regression test
+(``test_runnable_traced_output_matches_untraced_output``). Default
+state is **disabled** — set ``TRUSTRAG_TRACE_ENABLED=true`` to turn
+it on. Remote LangSmith transport is deliberately not wired in
+Phase 4B.
+
+``LocalTraceCallbackHandler`` provides the alternate, callback-flow
+integration path (``runnable.with_config(callbacks=[handler])``).
+The default graph nodes use the explicit recording path; the
+callback handler is exposed so a future composition (e.g. retrieval
+nested inside a larger LangChain chain) can capture trace events
+without bypassing the LangChain callback system.
 
 **Phase 4A retrieval flow:**
 
