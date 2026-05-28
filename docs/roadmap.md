@@ -595,13 +595,52 @@ docs. **Completed.**
 - [x] Unsafe refusal still bypasses the review queue, so no reviewer
       action can be applied to an unsafe request.
 
-### Phase 7C — Durable review persistence + dashboard polish (deferred)
+### Phase 7C — Dashboard filtering, pagination, and export (current) ✅
+
+- [x] ``backend/app/review/service.py`` — added
+      :class:`ReviewQueueFilter` and :class:`ReviewActionFilter`
+      dataclasses, ``list_queue`` now returns ``(page, total)`` after
+      filter + sort + paginate, ``summary`` aggregates over the
+      filtered queue, ``list_actions_paginated`` mirrors the same
+      shape for action history.
+- [x] ``backend/app/review/models.py`` — additive
+      ``total`` / ``limit`` / ``offset`` / ``filters`` / ``sort``
+      fields on :class:`ReviewQueueResponse` /
+      :class:`ReviewActionHistoryResponse`; new
+      :class:`ReviewQueueSummaryResponse` and
+      :class:`ReviewQueueExportResponse`.
+- [x] ``backend/app/main.py`` — ``GET /v1/review/queue`` accepts
+      ``status`` / ``question_type`` / ``reason`` / ``reviewer`` /
+      ``has_actions`` / ``sort`` / ``limit`` / ``offset`` query
+      params. New endpoints: ``GET /v1/review/queue/summary``,
+      ``GET /v1/review/queue/export.json``,
+      ``GET /v1/review/queue/export.csv``. Static-path routes are
+      declared BEFORE the ``{review_queue_id}`` route so FastAPI
+      matches ``export.json`` / ``summary`` correctly.
+      ``GET /v1/review/queue/{id}/actions`` gains the same filter +
+      pagination knobs.
+- [x] ``frontend/{index.html,app.js,styles.css}`` — Review Queue
+      panel now renders a filter form (status dropdown, question
+      type input, reason input, reviewer input, has_actions
+      checkbox, sort selector, page-size selector, reset button),
+      six summary cards, Prev / Next pager, and Export JSON / CSV
+      buttons. Filter input is debounced (180ms) and resets offset
+      to 0 on every change.
+- [x] CSV export uses stdlib ``csv.DictWriter``; full document
+      content is excluded.
+- [x] 37 new tests in ``test_review_filters_export.py`` across
+      service filtering, action history filtering, summary,
+      FastAPI query params, JSON / CSV export, and dashboard
+      wiring. Total pytest count: **403 passed** (was 366).
+- [x] Eval gate behavior preserved. No new dependency, no real LLM,
+      no Postgres, no auth.
+
+### Phase 7D — Durable review persistence + auth (deferred)
 
 - [ ] Postgres backend behind the
       :class:`LocalReviewCheckpointStore` and
       :class:`LocalReviewActionStore` interfaces.
 - [ ] Real authentication / authorization for reviewer actions.
-- [ ] Dashboard filtering (by status / category / reviewer).
 - [ ] Historical eval trend dashboard.
 - [ ] Real LLM rewrite + answer replay from a reviewed checkpoint.
 - [ ] Deployable UI.

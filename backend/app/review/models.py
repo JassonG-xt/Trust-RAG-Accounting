@@ -115,10 +115,52 @@ class ReviewQueueEntry(BaseModel):
 
 
 class ReviewQueueResponse(BaseModel):
-    """Response shape for ``GET /v1/review/queue``."""
+    """Response shape for ``GET /v1/review/queue``.
+
+    Phase 7C added the additive ``total`` / ``limit`` / ``offset`` /
+    ``filters`` / ``sort`` fields. Older clients that only inspect
+    ``enabled`` / ``count`` / ``entries`` keep working — the fields
+    have safe defaults.
+    """
 
     enabled: bool
     count: int = 0
+    total: int = 0
+    limit: int | None = None
+    offset: int = 0
+    filters: dict[str, Any] = Field(default_factory=dict)
+    sort: str | None = None
+    entries: list[ReviewQueueEntry] = Field(default_factory=list)
+
+
+class ReviewQueueSummaryResponse(BaseModel):
+    """Aggregate counts over the local queue.
+
+    Drives the Phase 7C dashboard summary cards. Computed by the
+    service layer in-memory — no extra storage. ``by_status`` is
+    keyed by computed status (post-action) so the summary reflects
+    what the reviewer sees, not the original handoff status.
+    """
+
+    enabled: bool
+    total: int = 0
+    by_status: dict[str, int] = Field(default_factory=dict)
+    by_question_type: dict[str, int] = Field(default_factory=dict)
+    by_reason: dict[str, int] = Field(default_factory=dict)
+
+
+class ReviewQueueExportResponse(BaseModel):
+    """Response shape for ``GET /v1/review/queue/export.json``.
+
+    Always includes the same trace-safe :class:`ReviewQueueEntry`
+    fields as the list endpoint — no full document content, no
+    secrets.
+    """
+
+    exported_at: str
+    count: int = 0
+    filters: dict[str, Any] = Field(default_factory=dict)
+    sort: str | None = None
     entries: list[ReviewQueueEntry] = Field(default_factory=list)
 
 
@@ -177,10 +219,19 @@ class ReviewActionResponse(BaseModel):
 
 
 class ReviewActionHistoryResponse(BaseModel):
-    """Response shape for ``GET /v1/review/queue/{id}/actions``."""
+    """Response shape for ``GET /v1/review/queue/{id}/actions``.
+
+    Phase 7C added ``count`` / ``total`` / ``limit`` / ``offset`` /
+    ``filters``. The legacy ``status`` + ``actions`` fields remain.
+    """
 
     review_queue_id: str
     status: str
+    count: int = 0
+    total: int = 0
+    limit: int | None = None
+    offset: int = 0
+    filters: dict[str, Any] = Field(default_factory=dict)
     actions: list[ReviewAction] = Field(default_factory=list)
 
 
@@ -237,6 +288,8 @@ __all__ = [
     "ReviewClearResponse",
     "ReviewEvidenceSummary",
     "ReviewQueueEntry",
+    "ReviewQueueExportResponse",
     "ReviewQueueResponse",
+    "ReviewQueueSummaryResponse",
     "summarize_evidence_for_review",
 ]

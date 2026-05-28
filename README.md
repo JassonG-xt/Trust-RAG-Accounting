@@ -9,7 +9,7 @@
 
 <p align="left">
   <img alt="status" src="https://img.shields.io/badge/status-alpha-orange.svg">
-  <img alt="phase" src="https://img.shields.io/badge/phase-7B%20reviewer%20actions-blue.svg">
+  <img alt="phase" src="https://img.shields.io/badge/phase-7C%20filters%20%26%20export-blue.svg">
   <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-blue.svg">
   <img alt="framework" src="https://img.shields.io/badge/built%20with-LangGraph-7c3aed.svg">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-green.svg">
@@ -470,6 +470,20 @@ What the workflow can do today, end-to-end:
     endpoints: `POST /v1/review/queue/{id}/actions` and
     `GET /v1/review/queue/{id}/actions`. No authentication, no LLM
     rewrite, no production authorization — local demo workflow only.
+49. **Review filtering, pagination, and export (Phase 7C)** - the
+    dashboard adds filter controls for status, question type,
+    review reason, reviewer, and "only with actions"; a sort
+    selector (newest / oldest / status A→Z); a page-size selector;
+    and Prev / Next pagination. Summary cards display Total /
+    Pending / Approved / Rejected / Changes / Resolved counts that
+    react to the filters. JSON and CSV export buttons download the
+    filtered queue from new endpoints
+    `GET /v1/review/queue/export.json` and `.../export.csv`. The
+    CSV uses stdlib `csv.DictWriter` and carries only the trace-safe
+    `ReviewQueueEntry` projection — no full document content. The
+    action-history endpoint gains `action_type` / `reviewer` /
+    `limit` / `offset` query parameters and a new `GET
+    /v1/review/queue/summary` aggregate endpoint backs the cards.
 
 ## Planned Features
 

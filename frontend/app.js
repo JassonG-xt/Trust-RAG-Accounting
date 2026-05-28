@@ -10,11 +10,22 @@ const examples = [
 const state = {
   documents: null,
   review: null,
+  reviewSummary: null,
   eval: null,
   traces: null,
   query: null,
   actionHistory: {},
   actionStatus: {},
+  reviewFilters: {
+    status: "",
+    question_type: "",
+    reason: "",
+    reviewer: "",
+    has_actions: false,
+    sort: "created_at_desc",
+    limit: 20,
+    offset: 0,
+  },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -35,6 +46,92 @@ function bindActions() {
     button.addEventListener("click", () => refreshPanel(button.dataset.refresh));
   });
   $("review-list").addEventListener("click", handleReviewClick);
+  bindReviewFilters();
+}
+
+function bindReviewFilters() {
+  const filterForm = $("review-filters");
+  if (!filterForm) return;
+  filterForm.addEventListener("input", scheduleReviewFilterUpdate);
+  filterForm.addEventListener("change", scheduleReviewFilterUpdate);
+  const resetBtn = $("review-filter-reset");
+  if (resetBtn) {
+    resetBtn.addEventListener("click", () => {
+      resetReviewFilters();
+      refreshReview();
+    });
+  }
+  const exportJson = $("review-export-json");
+  if (exportJson) {
+    exportJson.addEventListener("click", () => downloadExport("json"));
+  }
+  const exportCsv = $("review-export-csv");
+  if (exportCsv) {
+    exportCsv.addEventListener("click", () => downloadExport("csv"));
+  }
+}
+
+let _reviewFilterTimer = null;
+function scheduleReviewFilterUpdate() {
+  if (_reviewFilterTimer) clearTimeout(_reviewFilterTimer);
+  _reviewFilterTimer = setTimeout(() => {
+    readReviewFiltersFromForm();
+    state.reviewFilters.offset = 0;
+    refreshReview();
+  }, 180);
+}
+
+function readReviewFiltersFromForm() {
+  state.reviewFilters.status = $("review-filter-status").value;
+  state.reviewFilters.question_type = $("review-filter-question-type").value.trim();
+  state.reviewFilters.reason = $("review-filter-reason").value.trim();
+  state.reviewFilters.reviewer = $("review-filter-reviewer").value.trim();
+  state.reviewFilters.has_actions = $("review-filter-has-actions").checked;
+  state.reviewFilters.sort = $("review-filter-sort").value;
+  state.reviewFilters.limit = Number($("review-filter-limit").value) || 20;
+}
+
+function resetReviewFilters() {
+  state.reviewFilters = {
+    status: "",
+    question_type: "",
+    reason: "",
+    reviewer: "",
+    has_actions: false,
+    sort: "created_at_desc",
+    limit: 20,
+    offset: 0,
+  };
+  $("review-filter-status").value = "";
+  $("review-filter-question-type").value = "";
+  $("review-filter-reason").value = "";
+  $("review-filter-reviewer").value = "";
+  $("review-filter-has-actions").checked = false;
+  $("review-filter-sort").value = "created_at_desc";
+  $("review-filter-limit").value = "20";
+}
+
+function reviewFilterQueryString({includePaging = true} = {}) {
+  const f = state.reviewFilters;
+  const params = new URLSearchParams();
+  if (f.status) params.set("status", f.status);
+  if (f.question_type) params.set("question_type", f.question_type);
+  if (f.reason) params.set("reason", f.reason);
+  if (f.reviewer) params.set("reviewer", f.reviewer);
+  if (f.has_actions) params.set("has_actions", "true");
+  if (f.sort) params.set("sort", f.sort);
+  if (includePaging) {
+    params.set("limit", String(f.limit));
+    params.set("offset", String(f.offset));
+  }
+  return params.toString();
+}
+
+function downloadExport(format) {
+  const qs = reviewFilterQueryString({includePaging: false});
+  const suffix = format === "csv" ? "csv" : "json";
+  const url = `/v1/review/queue/export.${suffix}${qs ? `?${qs}` : ""}`;
+  window.open(url, "_blank");
 }
 
 function renderExamples() {
@@ -95,12 +192,23 @@ async function refreshDocuments() {
 }
 
 async function refreshReview() {
+  const qs = reviewFilterQueryString();
+  const summaryQs = reviewFilterQueryString({includePaging: false});
   try {
-    state.review = await fetchJson("/v1/review/queue");
-    renderReview(state.review);
+    const [queueData, summaryData] = await Promise.all([
+      fetchJson(`/v1/review/queue${qs ? `?${qs}` : ""}`),
+      fetchJson(`/v1/review/queue/summary${summaryQs ? `?${summaryQs}` : ""}`),
+    ]);
+    state.review = queueData;
+    state.reviewSummary = summaryData;
+    renderReviewSummary(summaryData);
+    renderReview(queueData);
+    renderReviewPager(queueData);
   } catch (error) {
     $("review-summary").textContent = `Review queue unavailable: ${messageOf(error)}`;
     $("review-list").innerHTML = emptyHtml("No review queue data available.");
+    $("review-pager").innerHTML = "";
+    $("review-summary-cards").innerHTML = "";
   }
 }
 
@@ -250,10 +358,107 @@ function renderReview(data) {
     return;
   }
   const entries = data.entries || [];
-  $("review-summary").textContent = `${data.count ?? entries.length} review checkpoints`;
-  $("review-list").innerHTML = entries.length
-    ? entries.map((entry) => reviewEntryHtml(entry)).join("")
-    : emptyHtml("No review checkpoints in the queue.");
+  const total = data.total ?? entries.length;
+  const offset = data.offset ?? 0;
+  const limit = data.limit ?? entries.length;
+  const pageEnd = Math.min(offset + entries.length, total);
+  const filterDescr = filterDescription(data.filters || {}, data.sort);
+  const summaryParts = [
+    `${total} matching checkpoints`,
+    total ? `showing ${offset + 1}–${pageEnd}` : null,
+    filterDescr,
+  ].filter(Boolean);
+  $("review-summary").textContent = summaryParts.join(" · ");
+  if (!entries.length) {
+    if (total === 0 && !filterDescr) {
+      $("review-list").innerHTML = emptyHtml(
+        "No review checkpoints in the queue. Run a tax_policy or invoice_compliance query to populate it."
+      );
+    } else {
+      $("review-list").innerHTML = emptyHtml(
+        "No entries match the current filters."
+      );
+    }
+    return;
+  }
+  $("review-list").innerHTML = entries
+    .map((entry) => reviewEntryHtml(entry))
+    .join("");
+}
+
+function filterDescription(filters, sort) {
+  const parts = [];
+  if (filters.status) parts.push(`status=${filters.status}`);
+  if (filters.question_type) parts.push(`type=${filters.question_type}`);
+  if (filters.reason) parts.push(`reason=${filters.reason}`);
+  if (filters.reviewer) parts.push(`reviewer=${filters.reviewer}`);
+  if (filters.has_actions) parts.push("has_actions=true");
+  if (sort && sort !== "created_at_desc") parts.push(`sort=${sort}`);
+  return parts.length ? `filters: ${parts.join(", ")}` : "";
+}
+
+function renderReviewSummary(data) {
+  const container = $("review-summary-cards");
+  if (!container) return;
+  if (!data || !data.enabled) {
+    container.innerHTML = "";
+    return;
+  }
+  const byStatus = data.by_status || {};
+  const cards = [
+    {label: "Total", value: data.total ?? 0, tone: "neutral"},
+    {label: "Pending", value: byStatus.pending ?? 0, tone: "warn"},
+    {label: "Approved", value: byStatus.approved ?? 0, tone: "pass"},
+    {label: "Rejected", value: byStatus.rejected ?? 0, tone: "fail"},
+    {label: "Changes", value: byStatus.changes_requested ?? 0, tone: "warn"},
+    {label: "Resolved", value: byStatus.resolved ?? 0, tone: "pass"},
+  ];
+  container.innerHTML = cards
+    .map(
+      (c) => `<div class="summary-card ${escapeHtml(c.tone)}">
+        <span class="summary-card-label">${escapeHtml(c.label)}</span>
+        <span class="summary-card-value">${escapeHtml(c.value)}</span>
+      </div>`
+    )
+    .join("");
+}
+
+function renderReviewPager(data) {
+  const pager = $("review-pager");
+  if (!pager) return;
+  if (!data || !data.enabled) {
+    pager.innerHTML = "";
+    return;
+  }
+  const total = data.total ?? 0;
+  const limit = data.limit ?? 20;
+  const offset = data.offset ?? 0;
+  if (total <= limit) {
+    pager.innerHTML = "";
+    return;
+  }
+  const currentPage = Math.floor(offset / limit) + 1;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const prevDisabled = offset <= 0 ? "disabled" : "";
+  const nextDisabled = offset + limit >= total ? "disabled" : "";
+  pager.innerHTML = `
+    <button type="button" class="secondary-button" id="review-pager-prev" ${prevDisabled}>← Prev</button>
+    <span class="review-pager-status">page ${escapeHtml(currentPage)} of ${escapeHtml(totalPages)}</span>
+    <button type="button" class="secondary-button" id="review-pager-next" ${nextDisabled}>Next →</button>
+  `;
+  const prev = $("review-pager-prev");
+  const next = $("review-pager-next");
+  if (prev) prev.addEventListener("click", () => paginateReview(-1));
+  if (next) next.addEventListener("click", () => paginateReview(1));
+}
+
+function paginateReview(direction) {
+  const f = state.reviewFilters;
+  const total = state.review?.total ?? 0;
+  const nextOffset = Math.max(0, f.offset + direction * f.limit);
+  if (nextOffset >= total && direction > 0) return;
+  f.offset = nextOffset;
+  refreshReview();
 }
 
 function renderEval(data) {

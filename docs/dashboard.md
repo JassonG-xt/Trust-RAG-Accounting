@@ -55,16 +55,102 @@ Then open `/dashboard`.
 It returns `available=false` when those files are missing. It never
 runs evals and never writes files.
 
-## Review Actions (Phase 7B)
+## Filtering and Export (Phase 7C)
 
-The dashboard exposes six reviewer actions per queued checkpoint:
+The dashboard's Review Queue panel supports server-side filtering,
+pagination, and export.
 
-- `approve`
-- `reject`
-- `request_changes`
-- `rewrite_note`
-- `resolve`
-- `reopen`
+### Filters
+
+Each filter sends a query parameter to `GET /v1/review/queue` and
+`GET /v1/review/queue/summary`:
+
+- `status` — pending / approved / rejected / changes_requested /
+  resolved / handoff_failed. Matches the *computed* status (post-
+  action), not the raw checkpoint status.
+- `question_type` — exact match (e.g. `tax_policy`).
+- `reason` — exact match against `human_review_reasons` (e.g.
+  `tax_policy_always_review`).
+- `reviewer` — matches any reviewer that appears in the
+  checkpoint's action history.
+- `has_actions` — `true` to show only checkpoints that have at
+  least one action.
+- `sort` — `created_at_desc` (default), `created_at_asc`,
+  `status_asc`.
+
+### Pagination
+
+- `limit` — default 20, max 200.
+- `offset` — default 0.
+- The dashboard renders a `← Prev / page X of Y / Next →` pager when
+  `total > limit`.
+
+The response carries both `count` (the current page size) and
+`total` (the size of the filtered set before paging) so clients can
+render a pager without re-counting.
+
+### Summary cards
+
+`GET /v1/review/queue/summary` aggregates the filtered queue:
+
+```json
+{
+  "enabled": true,
+  "total": 12,
+  "by_status": {"pending": 5, "approved": 6, "rejected": 1},
+  "by_question_type": {"tax_policy": 8, "invoice_compliance": 4},
+  "by_reason": {"tax_policy_always_review": 8, "..."}
+}
+```
+
+The dashboard renders one card per status (Total / Pending /
+Approved / Rejected / Changes / Resolved) tinted with the same
+pass/warn/fail palette as the answer badges.
+
+### Action history filtering
+
+`GET /v1/review/queue/{id}/actions` supports:
+
+- `action_type` — approve / reject / request_changes / rewrite_note
+  / resolve / reopen.
+- `reviewer` — exact match.
+- `limit` / `offset` — pagination parameters.
+
+The response keeps the Phase 7B `actions` list but adds `count`,
+`total`, `limit`, `offset`, and `filters` fields.
+
+### Export
+
+Two export endpoints share the same filter parameters as the list
+endpoint but ignore pagination — they return every filtered row:
+
+- `GET /v1/review/queue/export.json` →
+  `{"exported_at": "...", "count": N, "entries": [...], "filters": {...}, "sort": "..."}`
+- `GET /v1/review/queue/export.csv` → `text/csv` with
+  `Content-Disposition: attachment; filename="review_queue_export.csv"`.
+
+The CSV uses stdlib `csv.DictWriter`. Columns:
+
+```text
+review_queue_id, status, initial_status, question_type, confidence,
+needs_human_review, human_review_reasons, created_at, action_count,
+last_action_at, question
+```
+
+Full document content is **not** included in either export — the
+trace-safe `ReviewQueueEntry` projection is the only shape that
+leaves the JSONL store. Reviewers can follow `review_queue_id`
+back to the FastAPI endpoints for the rest.
+
+## Review Actions
+
+This dashboard supports local demo actions:
+- approve
+- reject
+- request_changes
+- rewrite_note
+- resolve
+- reopen
 
 State transitions:
 
@@ -84,6 +170,8 @@ Each action lands as one append-only JSON line in
 `data/review_actions.jsonl`. The dashboard fetches
 `GET /v1/review/queue/{id}/actions` after every action so the history
 view reflects server truth.
+
+These actions are stored in local JSONL and are not production-grade authorization.
 
 ### Production caveats
 
