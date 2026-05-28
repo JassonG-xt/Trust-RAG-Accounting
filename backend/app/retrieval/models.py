@@ -77,11 +77,14 @@ class MetadataFilter(BaseModel):
 class ScoreBreakdown(BaseModel):
     """Per-component contribution to a chunk's final retrieval score.
 
-    The six components are deliberately small and named after the
+    The seven components are deliberately small and named after the
     concept a reviewer would point at on a printout:
 
     * ``keyword`` — surface-token / type / family lexical hits.
     * ``bm25`` — normalized BM25 score from the bag-of-tokens layer.
+    * ``vector`` — normalized cosine-similarity score from the
+      vector retriever (Phase 3B). When the vector path is disabled
+      (config or no provider), this stays at 0.
     * ``metadata`` — bonus for matching declared document_type /
       policy_family.
     * ``client_match`` — bonus for a chunk whose client matches the
@@ -95,6 +98,7 @@ class ScoreBreakdown(BaseModel):
 
     keyword: float = 0.0
     bm25: float = 0.0
+    vector: float = 0.0
     metadata: float = 0.0
     client_match: float = 0.0
     stance: float = 0.0
@@ -106,6 +110,7 @@ class ScoreBreakdown(BaseModel):
         return (
             self.keyword
             + self.bm25
+            + self.vector
             + self.metadata
             + self.client_match
             + self.stance

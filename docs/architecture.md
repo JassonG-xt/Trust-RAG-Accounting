@@ -108,14 +108,23 @@ backend/app/
 │   ├── chunker.py         # Markdown-heading + paragraph + sliding window
 │   ├── store_writer.py    # JSON store I/O (documents + chunks)
 │   └── ingest_sample_docs.py  # CLI: writes documents.json + chunks.json
-├── retrieval/         # Phase 3A: pluggable retrieval layer
+├── retrieval/         # Phase 3A/3B: pluggable retrieval layer
 │   ├── models.py            # MetadataFilter + ScoredChunk + ScoreBreakdown
 │   ├── tokenizer.py         # Bilingual tokenizer + accounting query expansion
 │   ├── filters.py           # Client + doc_type inference + filter check
 │   ├── keyword_retriever.py # Lexical scorer (ported from _score_chunk)
 │   ├── bm25_retriever.py    # Pure-Python Okapi BM25
-│   ├── hybrid_retriever.py  # Linear-weight fusion + breakdown merge
+│   ├── vector_retriever.py  # Phase 3B: embedding-driven ANN retrieval
+│   ├── hybrid_retriever.py  # Linear-weight fusion (2-way or 3-way)
 │   └── retrieval_service.py # Facade — only entry point used by repository
+├── embeddings/        # Phase 3B: embedding provider abstraction
+│   ├── providers.py         # EmbeddingProvider Protocol + factory
+│   └── mock_provider.py     # Deterministic hashing-trick mock embedder
+├── vectorstore/       # Phase 3B: vector store layer (in-memory + Qdrant)
+│   ├── models.py            # VectorRecord, VectorSearchResult, VectorStore Protocol
+│   ├── in_memory.py         # Pure-Python cosine similarity store
+│   ├── qdrant_store.py      # Optional Qdrant adapter (extras: 'qdrant')
+│   └── filters.py           # MetadataFilter → payload-filter DSL mapping
 ├── graph/
 │   ├── state.py       # TrustRAGState (TypedDict) — accounting fields
 │   ├── workflow.py    # build_workflow() / get_workflow() / run_query()
@@ -126,7 +135,7 @@ backend/app/
     └── mock_knowledge_base.py  # legacy compat layer (kept for old imports)
 ```
 
-**Phase 3A retrieval flow:**
+**Phase 3B retrieval flow:**
 
 ```
 DocumentRepository.search(query, stance, question_type, ...)
@@ -134,15 +143,22 @@ DocumentRepository.search(query, stance, question_type, ...)
        ▼
 RetrievalService.search(...)
        │  builds MetadataFilter via filters.build_metadata_filter
+       │  selects 2-way or 3-way fusion based on settings.retrieval_enable_vector
        ▼
 HybridRetriever.search(query, metadata_filter, stance, top_k)
        │
-       ├── KeywordRetriever.search   ──┐
-       │                                ├─►  merge by chunk_id
-       └── BM25Retriever.search      ──┘     weighted: 0.45 keyword + 0.55 bm25
+       ├── KeywordRetriever.search       ──┐
+       ├── BM25Retriever.search          ──├─► merge by chunk_id
+       └── VectorRetriever.search        ──┘    3-way weights: 0.35 / 0.40 / 0.25
+                ↑                              (2-way fallback: 0.45 / 0.55)
+                │
+       ┌────────┴────────┐
+       │ EmbeddingProvider    (mock)
+       │ VectorStore          (InMemoryVectorStore / QdrantVectorStore)
+       └─────────────────┘
        │
        ▼
-list[ScoredChunk]    # each carries ScoreBreakdown + retrieval_strategy
+list[ScoredChunk]   # each carries ScoreBreakdown + retrieval_strategy
        │
        ▼
 DocumentRepository._scored_chunk_to_evidence_dict
@@ -151,19 +167,40 @@ DocumentRepository._scored_chunk_to_evidence_dict
 list[dict] → LangGraph state → FastAPI response
 ```
 
-The retrieval layer is the **only** seam Phase 3B (Qdrant +
-embeddings) will touch — graph nodes never reach past
-``DocumentRepository.search``. Adding a vector retriever means writing
-``VectorRetriever`` next to ``BM25Retriever`` and updating
-``RetrievalService`` to construct a ``HybridRetriever`` that fuses
-three sources instead of two.
+**retrieval_strategy values exposed on every hit:**
+
+* ``hybrid_keyword_bm25_vector`` — three-way fusion (default).
+* ``hybrid_keyword_bm25`` — vector disabled via ``RETRIEVAL_ENABLE_VECTOR=false``.
+* ``keyword`` / ``bm25`` / ``vector_mock`` / ``vector_qdrant`` — single
+  retriever paths (used by ablation tests, not by the production
+  workflow).
+
+**ScoreBreakdown components (Phase 3B):**
+
+``keyword`` + ``bm25`` + ``vector`` + ``metadata`` + ``client_match`` +
+``stance`` + ``malicious_penalty``. The first three are additive
+signals (weighted in the hybrid layer). The middle three are
+chunk-level bonuses (taken as max across retrievers, never
+double-counted). The last is a penalty that drives malicious chunks
+to a capped final score (0.20).
 
 **Score breakdown invariant.** For every chunk-level evidence dict
 returned by the repository, ``score == round(breakdown.total(), 4)``
-holds. This is enforced by a test
-(``test_hybrid_retriever_breakdown_total_matches_score``) so future
+holds. This is enforced by tests
+(``test_hybrid_retriever_breakdown_total_matches_score`` and
+``test_hybrid_with_vector_breakdown_total_matches_score``) so future
 changes to scoring weights cannot silently drift the score off the
 breakdown.
+
+**Vector store options:**
+
+* **InMemoryVectorStore** (default) — pure-Python cosine similarity,
+  payload-filter DSL, used by every test. No dependency on
+  ``qdrant-client``.
+* **QdrantVectorStore** (optional) — opt in via
+  ``VECTOR_STORE=qdrant`` + ``QDRANT_URL`` + install the
+  ``trust-rag[qdrant]`` extra. The adapter shares the same shape as
+  the in-memory store; switching is a config change.
 
 **Phase 2B data flow (still authoritative for the ingestion side):**
 

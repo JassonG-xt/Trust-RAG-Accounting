@@ -321,13 +321,16 @@ def test_hybrid_retriever_emits_strategy_and_breakdown(chunks):
     )
     assert results
     top = results[0]
-    assert top.retrieval_strategy == "hybrid_keyword_bm25"
-    # Both components should be present (>= 0).
+    # Phase 3B: vector retrieval is enabled by default, so strategy
+    # advertises the three-way fusion.
+    assert top.retrieval_strategy == "hybrid_keyword_bm25_vector"
+    # Three additive signals should all be reported.
     bd = top.score_breakdown
     assert bd.keyword >= 0.0
     assert bd.bm25 >= 0.0
-    # At least one of keyword / bm25 should be positive.
-    assert bd.keyword + bd.bm25 > 0.0
+    assert bd.vector >= 0.0
+    # At least one of them should be positive.
+    assert bd.keyword + bd.bm25 + bd.vector > 0.0
 
 
 def test_hybrid_retriever_breakdown_total_matches_score(chunks):
@@ -425,12 +428,13 @@ def test_repository_search_evidence_has_breakdown_and_strategy(
     assert "chunk_id" in top
     assert "content" in top
     assert "score" in top
-    # Phase 3A additions.
+    # Phase 3A additions plus the Phase 3B vector field.
     assert "score_breakdown" in top
-    assert top["retrieval_strategy"] == "hybrid_keyword_bm25"
+    assert top["retrieval_strategy"] == "hybrid_keyword_bm25_vector"
     breakdown = top["score_breakdown"]
     assert "keyword" in breakdown
     assert "bm25" in breakdown
+    assert "vector" in breakdown
     assert "metadata" in breakdown
     assert "client_match" in breakdown
     assert "stance" in breakdown
@@ -501,6 +505,7 @@ def test_repository_breakdown_invariant_at_dict_layer(
         total = (
             bd["keyword"]
             + bd["bm25"]
+            + bd["vector"]
             + bd["metadata"]
             + bd["client_match"]
             + bd["stance"]

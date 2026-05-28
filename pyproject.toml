@@ -50,6 +50,9 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.10",
 ]
+qdrant = [
+    "qdrant-client>=1.7",
+]
 
 [project.urls]
 Homepage = "https://github.com/yourname/trust-rag"
