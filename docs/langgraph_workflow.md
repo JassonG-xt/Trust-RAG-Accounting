@@ -52,8 +52,8 @@ only return the fields they actually contribute.
 |------|----------------|----------|------------------|
 | `query_analyzer` | Classify into one of 9 accounting question types and emit `needs_temporal_check` / `needs_safety_check`. | Keyword router with priority for unsafe intent. | LLM classifier with entity extraction (client, period, policy family). |
 | `claim_decomposer` | Break the question into structured claims with `needs_temporal_check` / `needs_counter_evidence` per claim. | Single-claim passthrough + historical probe for comparison questions. | LLM-driven decomposer that splits multi-part questions. |
-| `support_retriever` | Fetch evidence that supports answering. | **Phase 2A**: calls `DocumentRepository.search(question, stance="support")` against ingested Markdown documents in `data/trustrag_documents.json`. Client-aware filtering applied. | Hybrid retrieval (BM25 + embeddings + reranker) with client / version filters — same `DocumentRepository.search` signature. |
-| `counter_retriever` | Fetch contradicting / historical evidence. | **Phase 2A**: `DocumentRepository.search(stance="counter")` returns records with non-null `valid_to` (historical versions). | Counter-claim generator + dedicated index of superseded versions. |
+| `support_retriever` | Fetch evidence that supports answering. | **Phase 4A**: builds a `TrustRAGLangChainRetriever` (a real `langchain_core.retrievers.BaseRetriever`) via `build_retrieval_runnable(...)` and invokes it. Internally delegates to `DocumentRepository.get_retrieval_service().search(stance="support")`. Same scoring + rerank + filters as Phase 3C; the only change is the *call path* now goes through LangChain's runnable composition. | Real LLM-judge-driven retrieval routing in a Phase 4B / Phase 5 chain. |
+| `counter_retriever` | Fetch contradicting / historical evidence. | **Phase 4A**: same adapter path with `stance="counter"`. The workflow-level "auto-detect injection-trigger query" safety policy is re-applied at the node so the malicious chunk still surfaces for `safety_checker`. | Counter-claim generator + dedicated index of superseded versions. |
 | `temporal_checker` | Identify the currently effective version using ingested `valid_from`/`valid_to`/`replaces` metadata against an `as_of` date. **Phase 2A**: shifts `as_of` to mid-year when the question mentions a historical year ("2024 年" → 2024-06-30). Uses `replaces` metadata as a hard tie-break edge; emits `temporal_conflict=true` when multiple actives in the same family cannot be disambiguated. | Pure date arithmetic + replaces graph traversal. | Event-time reasoning with audit metadata. |
 | `conflict_detector` | Detect version-level contradictions inside a policy family. **Phase 2A**: uses ingested `policy_family` field (no more `doc_id` regex). | Metadata join on `policy_family`. | Claim-level NLI. |
 | `safety_checker` | Two passes: (a) prompt-injection in retrieved evidence, (b) unsafe accounting intent in the user question. | Regex + `is_malicious` hint + 4-category intent table. | Real safety classifier + red-team replay harness. |
@@ -78,6 +78,44 @@ flowchart TD
 
 The pipeline is linear: every node runs every time. Conditional routing
 (below) is planned for Phase 5.
+
+## 3.1 LangChain Adapter Path (Phase 4A)
+
+The `support_retriever` and `counter_retriever` nodes are the only
+two places where Phase 4A changed the *call path* (they did not
+change the workflow topology, the state schema, or the response
+shape). The node now reads:
+
+```python
+def support_retriever(state):
+    runnable = build_retrieval_runnable(
+        retrieval_service=get_repository().get_retrieval_service(),
+        question_type=state.get("question_type"),
+        stance="support",
+        top_k=5,
+        include_malicious=_is_malicious_query(state.get("question") or ""),
+    )
+    return {"support_evidence": runnable.invoke(state.get("question") or "")}
+```
+
+`build_retrieval_runnable` composes a `TrustRAGLangChainRetriever`
+(a real `langchain_core.retrievers.BaseRetriever`) with a
+`RunnableLambda` that maps `Document → evidence dict`. The retriever
+itself does no scoring — it delegates to `RetrievalService.search`
+and stamps every returned `Document` with the same `score`,
+`score_breakdown`, `retrieval_strategy`, `chunk_id`, parent-document
+metadata, and `is_malicious` flag the workflow has been consuming
+since Phase 3C.
+
+Why a thin adapter rather than reimplementing retrieval in
+LangChain shapes? The retrieval pipeline already has eight
+breakdown components, a malicious-cap invariant, and three layered
+sub-retrievers — re-doing that math in LangChain would mean
+maintaining two scoring implementations. The adapter just *exposes*
+the existing math through a LangChain-shaped door, so future
+LangChain-native consumers (multi-query retrievers, contextual
+compression, LangSmith tracing) get a real `BaseRetriever` to
+compose against.
 
 ## 4. Future Conditional Routing (Phase 5)
 
