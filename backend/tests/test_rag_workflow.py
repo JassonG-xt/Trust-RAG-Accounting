@@ -104,6 +104,7 @@ def test_bookkeeping_sop_query_routes_to_alpha_trading(client: TestClient) -> No
         "keyword",
         "bm25",
         "vector",
+        "reranker",
         "metadata",
         "client_match",
         "stance",
