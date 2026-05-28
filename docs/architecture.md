@@ -108,16 +108,64 @@ backend/app/
 │   ├── chunker.py         # Markdown-heading + paragraph + sliding window
 │   ├── store_writer.py    # JSON store I/O (documents + chunks)
 │   └── ingest_sample_docs.py  # CLI: writes documents.json + chunks.json
+├── retrieval/         # Phase 3A: pluggable retrieval layer
+│   ├── models.py            # MetadataFilter + ScoredChunk + ScoreBreakdown
+│   ├── tokenizer.py         # Bilingual tokenizer + accounting query expansion
+│   ├── filters.py           # Client + doc_type inference + filter check
+│   ├── keyword_retriever.py # Lexical scorer (ported from _score_chunk)
+│   ├── bm25_retriever.py    # Pure-Python Okapi BM25
+│   ├── hybrid_retriever.py  # Linear-weight fusion + breakdown merge
+│   └── retrieval_service.py # Facade — only entry point used by repository
 ├── graph/
 │   ├── state.py       # TrustRAGState (TypedDict) — accounting fields
 │   ├── workflow.py    # build_workflow() / get_workflow() / run_query()
 │   └── nodes/         # one file per node, accounting-aware behavior
 └── services/
-    ├── document_repository.py  # chunk store → document store → samples → fallback
+    ├── document_repository.py  # chunk store → document store → samples → fallback,
+    │                           # dispatches to retrieval/RetrievalService
     └── mock_knowledge_base.py  # legacy compat layer (kept for old imports)
 ```
 
-**Phase 2B data flow:**
+**Phase 3A retrieval flow:**
+
+```
+DocumentRepository.search(query, stance, question_type, ...)
+       │
+       ▼
+RetrievalService.search(...)
+       │  builds MetadataFilter via filters.build_metadata_filter
+       ▼
+HybridRetriever.search(query, metadata_filter, stance, top_k)
+       │
+       ├── KeywordRetriever.search   ──┐
+       │                                ├─►  merge by chunk_id
+       └── BM25Retriever.search      ──┘     weighted: 0.45 keyword + 0.55 bm25
+       │
+       ▼
+list[ScoredChunk]    # each carries ScoreBreakdown + retrieval_strategy
+       │
+       ▼
+DocumentRepository._scored_chunk_to_evidence_dict
+       │  flattens to legacy evidence dict + adds score_breakdown / strategy
+       ▼
+list[dict] → LangGraph state → FastAPI response
+```
+
+The retrieval layer is the **only** seam Phase 3B (Qdrant +
+embeddings) will touch — graph nodes never reach past
+``DocumentRepository.search``. Adding a vector retriever means writing
+``VectorRetriever`` next to ``BM25Retriever`` and updating
+``RetrievalService`` to construct a ``HybridRetriever`` that fuses
+three sources instead of two.
+
+**Score breakdown invariant.** For every chunk-level evidence dict
+returned by the repository, ``score == round(breakdown.total(), 4)``
+holds. This is enforced by a test
+(``test_hybrid_retriever_breakdown_total_matches_score``) so future
+changes to scoring weights cannot silently drift the score off the
+breakdown.
+
+**Phase 2B data flow (still authoritative for the ingestion side):**
 
 ```
 sample_docs/*.md / *.pdf / *.docx
@@ -152,13 +200,16 @@ The loader refuses to guess accounting fields. If the sidecar is
 missing or required keys (`title`, `version`, `document_type`) are
 absent, ingestion fails with a clear error.
 
-**Boundary rules (unchanged):**
+**Boundary rules (Phase 3A):**
 
 - Routes import only `schemas/` and `graph/workflow.py`.
 - Nodes import services and state. They never import FastAPI.
 - Services know nothing about the graph or about HTTP.
-- The repository is the **single seam** for Phase 3 vector-store
-  migration — only `DocumentRepository.search` needs to change.
+- The repository is the **single seam** for the Phase 3B vector-store
+  migration. Inside the repository, ``RetrievalService`` is the
+  single seam between "what got loaded" (chunks) and "what gets
+  scored" (retrievers). Only that service needs to change when a
+  vector retriever joins the fusion.
 
 ## 7. Risk Review Flow
 

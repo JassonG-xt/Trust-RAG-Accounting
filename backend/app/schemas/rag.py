@@ -76,6 +76,21 @@ class Evidence(BaseModel):
     score: float = Field(default=0.0, description="Retriever score (higher is better).")
     source_type: Literal["policy", "faq", "wiki", "external", "unknown"] = "policy"
     stance: Literal["support", "counter", "neutral"] = "neutral"
+    # Phase 3A retrieval explainability — optional, non-breaking.
+    score_breakdown: dict[str, float] | None = Field(
+        default=None,
+        description=(
+            "Per-component scoring contributions: keyword, bm25, metadata, "
+            "client_match, stance, malicious_penalty."
+        ),
+    )
+    retrieval_strategy: str | None = Field(
+        default=None,
+        description=(
+            "Name of the retriever that produced this hit "
+            "(e.g. 'hybrid_keyword_bm25', 'keyword', 'bm25')."
+        ),
+    )
 
 
 class Claim(BaseModel):

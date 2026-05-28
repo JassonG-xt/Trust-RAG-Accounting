@@ -9,7 +9,7 @@
 
 <p align="left">
   <img alt="status" src="https://img.shields.io/badge/status-alpha-orange.svg">
-  <img alt="phase" src="https://img.shields.io/badge/phase-2B%20multiformat%20+%20chunks-blue.svg">
+  <img alt="phase" src="https://img.shields.io/badge/phase-3A%20hybrid%20retrieval-blue.svg">
   <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-blue.svg">
   <img alt="framework" src="https://img.shields.io/badge/built%20with-LangGraph-7c3aed.svg">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-green.svg">
@@ -80,6 +80,11 @@ accountant cares about. Every answer ships with:
 - ❌ A way to bypass internal review on regulated surfaces
 - ❌ A source of final tax conclusions — tax-policy questions
        *always* require human review
+- ❌ A vector-store retriever **yet** — Phase 3A is local lexical +
+       BM25 only. Embeddings, ANN search, and rerankers arrive in
+       Phase 3B / 3C.
+- ❌ A neural reranker — no cross-encoder, no Cohere / BGE
+- ❌ A real LLM generator — answer templating is still deterministic
 
 ## Architecture Overview
 
@@ -101,11 +106,27 @@ accountant cares about. Every answer ships with:
                               │
                               ▼
 ┌────────────────────────────────────────────────────────────┐
-│            Services (mock today, real next)                │
-│  • Mock Knowledge Base (7 fictional accounting records)    │
-│  • Unsafe-intent table (tax_evasion, invoice_fabrication,  │
-│    voucher_destruction, regulator_bypass)                  │
-│  • (planned) Qdrant + BM25 + LLM provider + Postgres       │
+│        Retrieval layer (Phase 3A — pluggable)              │
+│                                                            │
+│   DocumentRepository  ─►  RetrievalService                 │
+│                              │                             │
+│                              ▼                             │
+│                         HybridRetriever                    │
+│                          ┌──────┴───────┐                  │
+│                  KeywordRetriever   BM25Retriever          │
+│                          └──────┬───────┘                  │
+│                                 ▼                          │
+│                  ScoredChunk + ScoreBreakdown              │
+└─────────────────────────────┬──────────────────────────────┘
+                              │
+                              ▼
+┌────────────────────────────────────────────────────────────┐
+│                    Document store                          │
+│  • data/trustrag_chunks.json  (canonical)                  │
+│  • data/trustrag_documents.json  (Phase 2A back-compat)    │
+│  • sample_docs/*.{md,pdf,docx} (loaded at runtime)         │
+│  • hardcoded fallback (last resort)                        │
+│  • (planned 3B) Qdrant + embedding provider                │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -200,6 +221,29 @@ What the workflow can do today, end-to-end:
 13. `GET /v1/documents` lists every loaded record plus `chunk_count`
     and the load `source` (chunk_store / document_store /
     sample_docs / hardcoded).
+14. **Local hybrid retrieval over chunks** — `DocumentRepository.search`
+    runs through a `RetrievalService → HybridRetriever →
+    KeywordRetriever + BM25Retriever` pipeline. Both sub-retrievers
+    are pure-Python, dependency-free, and operate on the same chunk
+    corpus with the same `MetadataFilter`. Linear-weighted fusion
+    (`keyword_weight=0.45`, `bm25_weight=0.55`) produces stable rankings
+    across runs.
+15. **Reviewer-facing retrieval explainability** — every evidence dict
+    carries a `score_breakdown` (keyword / bm25 / metadata /
+    client_match / stance / malicious_penalty) and a
+    `retrieval_strategy` field. The invariant
+    `score == breakdown.total()` is enforced and tested, so a 0.84
+    score always has an auditable trail.
+16. **Bilingual accounting query expansion** — Chinese terms (`餐饮`,
+    `打车`, `小规模纳税人`) expand into their English equivalents
+    (`meal/entertainment`, `taxi`, `small-scale taxpayer`) at query
+    time, letting English-language chunks be retrieved by Chinese
+    queries without an embedding model.
+17. **Metadata-aware filtering as a first-class object** — client,
+    document_type, policy_family, and the malicious-quarantine flag
+    live on a structured `MetadataFilter`. Type / client inference
+    happens once in `filters.py`; every retriever consumes the same
+    filter so they cannot diverge on what "Alpha query" means.
 
 ## Planned Features
 
@@ -286,8 +330,19 @@ deterministic mocks.
       "valid_from": "2026-01-01",
       "client": "Alpha Trading Co.",
       "document_type": "bookkeeping_sop",
+      "chunk_id": "alpha_trading_bookkeeping_sop_2026::chunk_0001",
+      "section_title": "Meal & Entertainment Expenses",
       "content": "Meal invoices for client entertainment should be recorded under business entertainment expenses (业务招待费). A valid invoice and a signed client visit note are both required before the entry is booked.",
-      "score": 0.95,
+      "score": 0.7384,
+      "score_breakdown": {
+        "keyword": 0.108,
+        "bm25": 0.2475,
+        "metadata": 0.20,
+        "client_match": 0.15,
+        "stance": 0.05,
+        "malicious_penalty": 0.0
+      },
+      "retrieval_strategy": "hybrid_keyword_bm25",
       "stance": "support"
     }
   ],

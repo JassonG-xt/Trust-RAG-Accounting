@@ -86,25 +86,67 @@ docs. **Completed.**
 - ✅ 40 pytest tests pass: 9 chunking + 8 multiformat + 14 ingestion
       + 8 workflow + 1 health.
 
-## Phase 3 — Accounting Hybrid Retrieval
+## Phase 3A — Accounting Hybrid Retrieval (current) ✅
+
+- ✅ New `backend/app/retrieval/` package with `MetadataFilter`,
+      `ScoredChunk`, `ScoreBreakdown` Pydantic models.
+- ✅ Bilingual accounting tokenizer with curated query expansion
+      (`餐饮` → `meal/entertainment`, `打车` → `taxi`,
+      `小规模纳税人` → `small-scale taxpayer`, etc.).
+- ✅ `KeywordRetriever` — preserves Phase 2A scoring behavior
+      (client / type / stance / chunk-index stability) under the new
+      pluggable interface, exposes per-component score breakdown.
+- ✅ Pure-Python Okapi `BM25Retriever` — no external dependency,
+      `k1=1.5, b=0.75`, max-normalized to `[0, 1]`.
+- ✅ `HybridRetriever` — linear weighted fusion (0.45 keyword + 0.55
+      BM25), merge by chunk_id, stable sort by `(score desc, chunk_id
+      asc)`. Malicious chunks are quarantined behind a final-score
+      cap of 0.20 with the cap surfaced as an explicit
+      ``malicious_penalty`` so the score breakdown invariant
+      ``score == breakdown.total()`` still holds.
+- ✅ `RetrievalService` — single facade
+      (`backend/app/services/document_repository.py` only imports
+      this). Owns metadata-filter construction.
+- ✅ `DocumentRepository.search` routed through `RetrievalService`;
+      every evidence dict carries `score_breakdown` +
+      `retrieval_strategy`. Legacy `limit` + `client` kwargs honored
+      for back-compat. New optional kwargs: `top_k`, `question_type`,
+      `include_malicious`.
+- ✅ `support_retriever` / `counter_retriever` pass
+      `state["question_type"]` through to the retrieval layer for
+      stronger document_type inference.
+- ✅ Pydantic `Evidence` schema gained optional `score_breakdown` +
+      `retrieval_strategy` fields (non-breaking).
+- ✅ 29 new retrieval tests (tokenizer / filters / KeywordRetriever /
+      BM25Retriever / HybridRetriever / DocumentRepository). Total
+      pytest count: 69 passed.
+- ✅ Client-aware filtering still preserved at the chunk level
+      (Alpha query cannot surface Beta chunks and vice versa).
+
+## Phase 3B — Embeddings + Qdrant Vector Store
 
 - [ ] Embedding provider abstraction (`mock`, `openai`, `bedrock`,
       on-prem).
 - [ ] Qdrant vector store with per-client / per-version metadata
-      filters.
-- [ ] BM25 sidecar (OpenSearch / Whoosh).
-- [ ] Reranker (cross-encoder) wired into `support_retriever` and
-      `counter_retriever`.
+      filters mapped from `MetadataFilter`.
+- [ ] `VectorRetriever` joins the `HybridRetriever` fusion alongside
+      `KeywordRetriever` and `BM25Retriever`.
 - [ ] Retrieval metrics: Current Policy Accuracy, Client-Specific Rule
       Accuracy.
 
-## Phase 4 — Real LangChain Retriever + Reranker
+## Phase 3C — Reranker
 
-- [ ] Replace the mock retriever with a real `LangChainRetriever`
-      wrapping the Qdrant + BM25 layer.
-- [ ] Reranker integration (BGE / Cohere / open-source cross-encoder).
-- [ ] Client-aware metadata routing pushed down into the retriever
-      (no more post-filtering in Python).
+- [ ] Cross-encoder reranker (BGE / Cohere / open-source) wired into
+      `RetrievalService` as a post-hybrid pass.
+- [ ] Reranker score added as another column in `ScoreBreakdown`.
+
+## Phase 4 — Real LangChain Retriever Plumbing
+
+- [ ] Wrap `RetrievalService` in a real `LangChainRetriever` so the
+      retrieval layer participates in LangGraph runnable composition
+      (instead of being called directly from node functions).
+- [ ] Push client-aware metadata routing down into the retriever (no
+      more post-filtering in Python).
 
 ## Phase 5 — LangGraph Conditional Routing
 
