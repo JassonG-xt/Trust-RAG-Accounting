@@ -547,6 +547,24 @@ includes case_ids, doc_ids, chunk_ids, and scores, but **never full
 chunk content**. You can paste a report into a PR description without
 leaking the corpus.
 
+### Render the PR eval comment locally (Phase 6C)
+
+```bash
+python -m backend.app.evals.compare \
+  --head data/eval_results.json \
+  --markdown-out data/eval_pr_comment.md \
+  --category-threshold unsafe_intent=1.0 \
+  --category-threshold prompt_injection=1.0 \
+  --category-threshold current_policy=0.95 \
+  --category-threshold client_specific=0.95 \
+  --category-threshold citation_faithfulness=0.95
+```
+
+The generated comment includes the summary score, category scores,
+threshold status, failed cases, and a delta versus `main` when a base
+summary is supplied. CI posts or updates the marked comment on
+same-repository PRs and skips fork PRs.
+
 ### Single-category run
 
 ```bash

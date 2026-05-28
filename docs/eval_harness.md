@@ -1,7 +1,8 @@
-# TrustRAG - Accounting RAG Eval Harness (Phase 6A/6B)
+# TrustRAG - Accounting RAG Eval Harness (Phase 6A/6B/6C)
 
 This document describes the deterministic, locally-runnable eval
-harness shipped in Phase 6A and wired into CI in Phase 6B. The
+harness shipped in Phase 6A, wired into CI in Phase 6B, and surfaced
+as a PR comment with regression deltas in Phase 6C. The
 harness is the regression-gate for
 TrustRAG's accounting-firm quality bar — every commit that changes
 retrieval, routing, safety, or human-review should pass the suite
@@ -43,7 +44,7 @@ So Phase 6A intentionally builds a **deterministic** harness first:
 - Two consecutive runs produce byte-identical
   `EvalRunSummary` objects.
 
-Phase 6C will *add* an optional LLM-as-judge layer on top — but the
+Future phases may add an optional LLM-as-judge layer on top, but the
 deterministic floor stays as the regression gate.
 
 ## 2. Eval categories
@@ -189,14 +190,19 @@ print(summary.score, summary.passed, summary.failed)
 
 ## CI Gate
 
-Phase 6B wires this deterministic harness into GitHub Actions. Every
-pull request to `main` and every push to `main` runs:
+Phase 6B wires this deterministic harness into GitHub Actions. Phase
+6C adds a same-repository PR comment bot and regression delta versus
+`main`. Every pull request to `main` and every push to `main` runs:
 
 1. Sample document ingestion.
 2. Accounting eval gate with regression and threshold checks.
-3. `python -m pytest backend/tests`.
-4. Markdown eval report append to the GitHub Step Summary.
-5. Eval JSON and Markdown upload as the `accounting-eval-report`
+3. Same-repository PRs run a reference eval against `origin/main`
+   when available.
+4. Same-repository PRs render and post/update a compact eval comment.
+5. `python -m pytest backend/tests`.
+6. Markdown eval report append to the GitHub Step Summary.
+7. Eval JSON, Markdown, PR comment, and base-summary upload as the
+   `accounting-eval-report`
    artifact.
 
 Threshold policy:
@@ -213,6 +219,26 @@ Local CI-equivalent command:
 ```bash
 bash scripts/run_eval_gate.sh
 ```
+
+Local PR-comment rendering command:
+
+```bash
+python -m backend.app.evals.compare \
+  --head data/eval_results.json \
+  --markdown-out data/eval_pr_comment.md \
+  --category-threshold unsafe_intent=1.0 \
+  --category-threshold prompt_injection=1.0 \
+  --category-threshold current_policy=0.95 \
+  --category-threshold client_specific=0.95 \
+  --category-threshold citation_faithfulness=0.95
+```
+
+The PR comment includes the overall score, pass/fail/skipped counts,
+category-level scores, category threshold status, failed active cases,
+delta versus `main` when a base summary is available, and the
+`accounting-eval-report` artifact name. Fork PRs skip comment posting
+because the workflow intentionally avoids write attempts with
+insufficient permissions.
 
 The CI gate stays offline and deterministic: no secrets, no external
 eval service, no real LLM, no RAGAS / DeepEval, no Docker, no Qdrant,
@@ -250,14 +276,14 @@ without leaking the corpus.
 
 ## 6. What's not covered yet
 
-- **LLM-as-judge.** Phase 6C will add an optional layer that asks an
-  LLM "is this answer faithful to the cited evidence?". The
-  deterministic suite stays as the floor.
-- **PR comment bot and regression delta.** Phase 6C can compare the
-  PR report against `main` and post a compact summary back to the PR.
+- **LLM-as-judge.** A future optional layer may ask an LLM "is this
+  answer faithful to the cited evidence?". The deterministic suite
+  stays as the floor.
 - **Real-provider eval.** The suite runs against mock embedding +
-  mock reranker. Phase 6C will repeat the suite against Qdrant + a
-  real reranker to detect provider-specific regressions.
+  mock reranker. A future provider eval can repeat the suite against
+  Qdrant + a real reranker to detect provider-specific regressions.
+- **Historical eval trend dashboard.** Phase 6C compares one PR to
+  one `main` run; it does not persist trend data over time.
 - **Reviewer write-side.** Phase 5C will add reviewer actions
   (approve/reject/rewrite); the eval will then assert that the
   rewritten answer flows back into the response correctly.

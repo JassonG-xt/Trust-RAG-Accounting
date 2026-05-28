@@ -6,6 +6,11 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
 jobs:
   backend-tests-and-evals:
     runs-on: ubuntu-latest
@@ -37,6 +42,8 @@ jobs:
             --chunks-out data/trustrag_chunks.json
 
       - name: Run accounting eval gate
+        id: eval_gate
+        continue-on-error: true
         run: |
           python -m backend.app.evals.runner \
             --cases backend/app/evals/cases/accounting_eval_cases.json \
@@ -50,8 +57,67 @@ jobs:
             --category-threshold client_specific=0.95 \
             --category-threshold citation_faithfulness=0.95
 
+      - name: Run base eval for PR delta
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          set -u
+          rm -rf /tmp/trustrag-base /tmp/eval_base_results.json /tmp/eval_base_report.md
+          git fetch origin main --depth=1
+          if ! git worktree add /tmp/trustrag-base origin/main; then
+            echo "[eval] base summary unavailable: failed to create origin/main worktree"
+            exit 0
+          fi
+
+          if (
+            cd /tmp/trustrag-base
+            mkdir -p data
+            PYTHONPATH=/tmp/trustrag-base python -m backend.app.ingestion.ingest_sample_docs \
+              --source sample_docs \
+              --documents-out data/trustrag_documents.json \
+              --chunks-out data/trustrag_chunks.json
+
+            PYTHONPATH=/tmp/trustrag-base python -m backend.app.evals.runner \
+              --cases backend/app/evals/cases/accounting_eval_cases.json \
+              --out /tmp/eval_base_results.json \
+              --markdown-out /tmp/eval_base_report.md \
+              --fail-on-regression
+          ); then
+            cp /tmp/eval_base_results.json data/eval_base_results.json
+            echo "[eval] wrote base summary to data/eval_base_results.json"
+          else
+            echo "[eval] base summary unavailable: base eval failed"
+          fi
+
+          git worktree remove /tmp/trustrag-base --force || true
+
+      - name: Generate eval PR comment
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          python -m backend.app.evals.compare \
+            --base data/eval_base_results.json \
+            --head data/eval_results.json \
+            --markdown-out data/eval_pr_comment.md \
+            --category-threshold unsafe_intent=1.0 \
+            --category-threshold prompt_injection=1.0 \
+            --category-threshold current_policy=0.95 \
+            --category-threshold client_specific=0.95 \
+            --category-threshold citation_faithfulness=0.95
+
+      - name: Post eval PR comment
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          COMMENT_FILE: data/eval_pr_comment.md
+        run: python scripts/post_eval_pr_comment.py
+
       - name: Run pytest
         run: python -m pytest backend/tests
+
+      - name: Fail on accounting eval gate failure
+        if: steps.eval_gate.outcome == 'failure'
+        run: exit 1
 
       - name: Append eval report to step summary
         if: always()
@@ -65,6 +131,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: accounting-eval-report
+          if-no-files-found: ignore
           path: |
             data/eval_results.json
             data/eval_report.md
+            data/eval_pr_comment.md
+            data/eval_base_results.json
