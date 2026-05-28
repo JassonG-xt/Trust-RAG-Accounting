@@ -148,6 +148,44 @@ backend/app/
     └── mock_knowledge_base.py  # legacy compat layer (kept for old imports)
 ```
 
+**Phase 5A graph topology (conditional routing):**
+
+```
+START → query_analyzer
+            │
+            ├─ routing_decision == "unsafe_fast_path"
+            │       │
+            │       ▼
+            │     safety_checker → judge_agent → answer_generator → END
+            │     (no retrieval, no temporal, no conflict)
+            │
+            └─ routing_decision == "standard_rag"
+                    │
+                    ▼
+                  claim_decomposer
+                  → support_retriever
+                  → counter_retriever
+                  → temporal_checker
+                  → conflict_detector
+                  → safety_checker
+                  → judge_agent
+                  → answer_generator
+                  → END
+```
+
+The conditional edge function ``route_after_query_analysis`` is a
+pure reader: it returns ``"unsafe_fast_path"`` when
+``state["routing_decision"]`` is that string and ``"standard_rag"``
+otherwise. Mutation lives in ``query_analyzer`` (single source of
+truth), the conditional function is mutation-free (test pinned).
+
+``visited_nodes`` uses ``Annotated[list[str], operator.add]`` so each
+node's ``return {"visited_nodes": ["x"]}`` *appends* via the LangGraph
+reducer. That makes route-aware regression testing trivial — the
+unsafe fast-path's ``visited_nodes`` is exactly
+``["query_analyzer", "safety_checker", "judge_agent", "answer_generator"]``,
+and the standard path's is the full nine-node list.
+
 **Phase 4B tracing layer (additive on top of Phase 4A):**
 
 ```

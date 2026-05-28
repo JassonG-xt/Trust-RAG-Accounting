@@ -81,5 +81,6 @@ def conflict_detector(state: TrustRAGState) -> dict:
             "has_conflict": has_conflict,
             "conflict_pairs": conflict_pairs,
             "explanation": explanation,
-        }
+        },
+        "visited_nodes": ["conflict_detector"],
     }

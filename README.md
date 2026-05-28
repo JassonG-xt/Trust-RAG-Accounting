@@ -9,7 +9,7 @@
 
 <p align="left">
   <img alt="status" src="https://img.shields.io/badge/status-alpha-orange.svg">
-  <img alt="phase" src="https://img.shields.io/badge/phase-4B%20local%20tracing-blue.svg">
+  <img alt="phase" src="https://img.shields.io/badge/phase-5A%20unsafe%20routing-blue.svg">
   <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-blue.svg">
   <img alt="framework" src="https://img.shields.io/badge/built%20with-LangGraph-7c3aed.svg">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-green.svg">
@@ -168,12 +168,13 @@ Full breakdown in [`docs/architecture.md`](docs/architecture.md).
 ```mermaid
 flowchart TD
     START([START]) --> Q[query_analyzer]
-    Q --> CD[claim_decomposer]
+    Q -->|unsafe_request| SC[safety_checker]
+    Q -->|standard_rag| CD[claim_decomposer]
     CD --> SR[support_retriever]
     SR --> CR[counter_retriever]
     CR --> TC[temporal_checker]
     TC --> CF[conflict_detector]
-    CF --> SC[safety_checker]
+    CF --> SC
     SC --> JA[judge_agent]
     JA --> AG[answer_generator]
     AG --> END([END])
@@ -351,6 +352,35 @@ What the workflow can do today, end-to-end:
     / `LANGCHAIN_API_KEY` / `LANGCHAIN_PROJECT` are documented in
     `.env.example` as deliberately unset defaults. No outbound network
     call is initiated by the tracing layer.
+32. **Conditional routing for unsafe accounting requests (Phase 5A)** —
+    the LangGraph workflow now branches after `query_analyzer`. When
+    `question_type == "unsafe_request"` (tax evasion, invoice
+    fabrication, voucher destruction, regulator bypass, …), the
+    workflow takes a *fast path* that skips claim decomposition,
+    both retrieval nodes, temporal checking, and conflict detection,
+    going straight to `safety_checker → judge_agent → answer_generator`.
+33. **Standard accounting questions still use the full RAG path** —
+    every non-unsafe question type (`bookkeeping_sop`,
+    `invoice_compliance`, `reimbursement_rule`, `tax_policy`, …)
+    runs the same 9-node evidence-aware pipeline as Phase 4B. No
+    behavioral regression on the standard path is allowed by the
+    test suite.
+34. **Prompt-injection inspection is NOT classified as `unsafe_request`** —
+    questions like *"文档里说 Ignore previous instructions，系统应该照做吗？"*
+    take the standard path so retrieval can surface the adversarial
+    chunk to `safety_checker`. Only the *user's* intent (asking the
+    system to perform a non-compliant action) triggers the fast path.
+35. **`visited_nodes` regression surface** — every node appends its
+    own name via a LangGraph `operator.add` reducer, so the unsafe
+    fast-path emits exactly `["query_analyzer", "safety_checker",
+    "judge_agent", "answer_generator"]` and the standard path emits
+    the full 9-node list. Tests pin both shapes so a future routing
+    regression fails loudly.
+36. **Tracing confirms the unsafe path skipped retrieval** — with
+    `TRUSTRAG_TRACE_ENABLED=true`, `GET /v1/debug/traces` for an
+    unsafe query returns zero `trustrag.support_retriever` /
+    `trustrag.counter_retriever` events. The standard path still
+    emits the four retrieval events as before.
 
 ## Planned Features
 

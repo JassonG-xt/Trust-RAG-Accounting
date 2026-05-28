@@ -137,7 +137,8 @@ def temporal_checker(state: TrustRAGState) -> dict:
                 "temporal_conflict": False,
                 "selection_reason": "temporal check disabled by config",
                 "notes": "temporal check disabled by config",
-            }
+            },
+            "visited_nodes": ["temporal_checker"],
         }
 
     question = state.get("question") or ""
@@ -228,5 +229,6 @@ def temporal_checker(state: TrustRAGState) -> dict:
                 if selected_record
                 else "no active version found in retrieved evidence"
             ),
-        }
+        },
+        "visited_nodes": ["temporal_checker"],
     }

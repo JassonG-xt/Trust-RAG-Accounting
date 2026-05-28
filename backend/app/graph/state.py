@@ -9,11 +9,26 @@ The state is intentionally a ``TypedDict`` (not a Pydantic model) because:
 * The public API layer (see :mod:`backend.app.schemas.rag`) is where strict
   validation lives — we cross that boundary exactly once, in
   :mod:`backend.app.main`.
+
+Phase 5A adds three routing-aware fields:
+
+* ``routing_decision`` — ``"unsafe_fast_path"`` or ``"standard_rag"``.
+  Written by ``query_analyzer``, read by the LangGraph conditional edge
+  function ``route_after_query_analysis``. Internal-only — does not
+  ship in the FastAPI response.
+* ``routing_reason`` — short human-readable explanation that pairs
+  with ``routing_decision`` for trace logs.
+* ``visited_nodes`` — ordered list of node names that actually ran for
+  this query. Uses the ``operator.add`` reducer so each node's
+  ``return {"visited_nodes": ["my_name"]}`` *appends* rather than
+  replaces. This is the regression-test surface that proves the
+  ``unsafe_fast_path`` branch did not enter retrieval nodes.
 """
 
 from __future__ import annotations
 
-from typing import TypedDict
+from operator import add
+from typing import Annotated, TypedDict
 
 
 class TrustRAGState(TypedDict, total=False):
@@ -27,6 +42,14 @@ class TrustRAGState(TypedDict, total=False):
     domain: str
     needs_temporal_check: bool
     needs_safety_check: bool
+
+    # Phase 5A — internal routing surface (NOT exposed via FastAPI).
+    routing_decision: str | None
+    routing_reason: str | None
+    # The ``add`` reducer makes ``return {"visited_nodes": ["x"]}`` append
+    # to the existing list instead of overwriting it. Without the
+    # reducer, only the last node's return value would survive.
+    visited_nodes: Annotated[list[str], add]
 
     # claim_decomposer
     claims: list[dict]
@@ -66,6 +89,9 @@ def initial_state(question: str) -> TrustRAGState:
         domain="accounting",
         needs_temporal_check=False,
         needs_safety_check=True,
+        routing_decision=None,
+        routing_reason=None,
+        visited_nodes=[],
         claims=[],
         support_evidence=[],
         counter_evidence=[],

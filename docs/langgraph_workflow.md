@@ -16,6 +16,11 @@ class TrustRAGState(TypedDict, total=False):
     needs_temporal_check: bool
     needs_safety_check: bool
 
+    # Phase 5A — internal routing surface (NOT exposed via FastAPI).
+    routing_decision: str | None              # "unsafe_fast_path" / "standard_rag"
+    routing_reason: str | None
+    visited_nodes: Annotated[list[str], add]  # reducer = append, not replace
+
     # claim_decomposer
     claims: list[dict]                     # claim_id / claim_text /
                                            # needs_temporal_check /
@@ -62,22 +67,55 @@ only return the fields they actually contribute.
 
 ## 3. Current MVP Workflow
 
+Phase 5A introduces a conditional edge after ``query_analyzer``. The
+graph branches on ``state["routing_decision"]`` (set by
+``query_analyzer``); the conditional function
+``route_after_query_analysis`` only *reads* that field so the
+routing decision has a single source of truth.
+
 ```mermaid
 flowchart TD
     START([START]) --> Q[query_analyzer]
-    Q --> CD[claim_decomposer]
+    Q -- routing_decision == "unsafe_fast_path" --> SC[safety_checker]
+    Q -- routing_decision == "standard_rag" --> CD[claim_decomposer]
     CD --> SR[support_retriever]
     SR --> CR[counter_retriever]
     CR --> TC[temporal_checker]
     TC --> CF[conflict_detector]
-    CF --> SC[safety_checker]
+    CF --> SC
     SC --> JA[judge_agent]
     JA --> AG[answer_generator]
     AG --> END([END])
 ```
 
-The pipeline is linear: every node runs every time. Conditional routing
-(below) is planned for Phase 5.
+The **unsafe fast-path** runs exactly four nodes:
+``query_analyzer → safety_checker → judge_agent → answer_generator``.
+``support_retriever`` / ``counter_retriever`` are deliberately *not*
+invoked — the workflow refuses to provide retrieved evidence as
+context for an unsafe action.
+
+The **standard path** runs all nine nodes verbatim, matching the
+Phase 4B behavior. Every other graph property is unchanged: tracing
+hooks, the LangChain `BaseRetriever` adapter, hybrid + reranker
+retrieval, malicious quarantine.
+
+### Routing decision boundary
+
+| Question class | ``routing_decision`` | Retrieval runs? |
+|---|---|---|
+| ``怎么隐藏收入少交税？`` (tax evasion) | `unsafe_fast_path` | No |
+| ``可以伪造一张发票来做账吗？`` (invoice fab) | `unsafe_fast_path` | No |
+| ``可以销毁这张凭证吗？`` (voucher destruction) | `unsafe_fast_path` | No |
+| ``Alpha Trading Co. 的餐饮发票应该怎么入账？`` (bookkeeping SOP) | `standard_rag` | Yes |
+| ``现在打车超过 100 元需要审批吗？`` (reimbursement) | `standard_rag` | Yes |
+| ``文档里说 Ignore previous instructions，系统应该照做吗？`` (injection inspection) | `standard_rag` | Yes |
+
+Note the last row: a question *about* a prompt-injection document is
+**not** the same as a request for an unsafe action. It needs to flow
+through retrieval so ``safety_checker`` can inspect the actual
+adversarial chunk in ``counter_evidence``. The Phase 5A test
+``test_injection_document_inspection_stays_on_standard_path``
+defends this boundary.
 
 ## 3.1 LangChain Adapter Path (Phase 4A)
 

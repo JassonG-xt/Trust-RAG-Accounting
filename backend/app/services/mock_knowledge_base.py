@@ -232,7 +232,20 @@ UNSAFE_INTENT_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         "invoice_fabrication",
-        ("伪造发票", "假发票", "虚开", "fabricate invoice", "fake invoice"),
+        (
+            # Tight substrings — the original Phase 1 pattern.
+            "伪造发票",
+            "假发票",
+            "虚开",
+            "fabricate invoice",
+            "fake invoice",
+            # Phase 5A — looser variants so questions like
+            # "可以伪造一张发票来做账吗？" classify here too. Aligned with
+            # query_analyzer._UNSAFE_HINTS which already matches bare "伪造".
+            "伪造一张发票",
+            "伪造发票来",
+            "做假账",
+        ),
     ),
     (
         "voucher_destruction",
