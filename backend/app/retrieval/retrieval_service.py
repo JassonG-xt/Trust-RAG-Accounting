@@ -1,4 +1,4 @@
-"""Facade for the Phase 3A/3B retrieval layer.
+"""Facade for the Phase 3A/3B/3C retrieval layer.
 
 :class:`RetrievalService` is the *only* class
 :class:`backend.app.services.document_repository.DocumentRepository`
@@ -13,16 +13,24 @@ Phase 3B additions:
   ``settings.retrieval_enable_vector`` / ``settings.embedding_provider``
   / ``settings.vector_store``. The default config (mock embeddings +
   in-memory store) keeps the system fully local and offline.
-* Routes both two-way (no vector) and three-way (vector enabled)
-  fusion through the same :class:`HybridRetriever` — only the weights
-  differ.
 
-Why the service owns embedder + store construction:
+Phase 3C additions:
 
-* The repository should not import anything Qdrant-specific.
-* The graph nodes should not know whether vector retrieval is on.
-* Switching to a real embedding provider (Phase 3B+) is a one-file
-  change here.
+* Optionally constructs a :class:`Reranker` based on
+  ``settings.reranker_provider``. When enabled (default ``mock``),
+  the retrieval flow becomes:
+
+      hybrid.search(top_k=wide_k) → reranker.rerank(top_k=caller_top_k)
+
+  where ``wide_k = max(caller_top_k, settings.reranker_top_n)``.
+  The reranker is responsible for a *precision-oriented* reorder of
+  hybrid's recall-oriented candidate pool.
+
+Why the service owns embedder + store + reranker construction:
+
+* The repository should not import anything reranker-specific.
+* The graph nodes should not know whether reranking is on.
+* Switching to a real reranker (Phase 3E) is a one-file change here.
 """
 
 from __future__ import annotations
@@ -58,7 +66,7 @@ _PHASE_3B_VECTOR_WEIGHT = 0.25
 
 
 class RetrievalService:
-    """Wraps the keyword + BM25 (+ optional vector) pipeline behind one entry point."""
+    """Wraps keyword + BM25 (+ vector) (+ reranker) behind one entry point."""
 
     def __init__(
         self,
@@ -67,6 +75,7 @@ class RetrievalService:
         settings: Settings | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         vector_store: VectorStore | None = None,
+        reranker: Any | None = None,
     ) -> None:
         self._chunks: list[DocumentChunk] = list(chunks)
         self._settings = settings or get_settings()
@@ -119,6 +128,15 @@ class RetrievalService:
                 vector_weight=0.0,
             )
 
+        # Phase 3C — optional reranker. Resolved lazily so this module
+        # never imports the rerankers package at top level (which would
+        # otherwise introduce a circular import via retrieval.tokenizer).
+        if reranker is not None:
+            self._reranker = reranker
+        else:
+            self._reranker = self._build_reranker()
+        self._reranker_top_n = max(1, int(self._settings.reranker_top_n))
+
     # -- Public --------------------------------------------------------------
 
     def search(
@@ -136,12 +154,24 @@ class RetrievalService:
             include_malicious=include_malicious,
             stance=stance,
         )
-        return self._hybrid.search(
+
+        # When the reranker is enabled, fetch a wider candidate pool
+        # so the rerank pass has enough material to reorder.
+        if self._reranker is not None:
+            wide_k = max(top_k, self._reranker_top_n)
+        else:
+            wide_k = top_k
+
+        candidates = self._hybrid.search(
             query,
-            top_k=top_k,
+            top_k=wide_k,
             metadata_filter=metadata_filter,
             stance=stance,
         )
+
+        if self._reranker is not None:
+            return self._reranker.rerank(query, candidates, top_k=top_k)
+        return candidates[:top_k]
 
     # -- Sub-retriever accessors (tests + ablation) --------------------------
 
@@ -160,6 +190,10 @@ class RetrievalService:
     @property
     def hybrid(self) -> HybridRetriever:
         return self._hybrid
+
+    @property
+    def reranker(self):
+        return self._reranker
 
     @property
     def chunks(self) -> list[DocumentChunk]:
@@ -194,6 +228,36 @@ class RetrievalService:
         raise ValueError(
             f"Unknown VECTOR_STORE={backend!r}. Supported: 'memory', 'qdrant'."
         )
+
+    def _build_reranker(self):
+        """Construct the configured reranker, or ``None`` when disabled.
+
+        Lazy import on purpose — keeps ``retrieval_service`` decoupled
+        from the ``rerankers`` package at module load time, which
+        avoids a circular import via ``retrieval.tokenizer``.
+        """
+
+        provider = (self._settings.reranker_provider or "").strip().lower()
+        if provider in {"", "none", "off", "disabled"}:
+            return None
+
+        try:
+            from ..rerankers import create_reranker
+
+            return create_reranker(
+                provider,
+                weight=float(self._settings.reranker_weight),
+            )
+        except Exception:
+            # Reranker is post-hoc precision tooling — never crash the
+            # workflow because rerank init failed. Log and continue
+            # without a reranker (behavior reverts to Phase 3B).
+            logger.exception(
+                "Reranker (%s) could not be initialized; falling back "
+                "to no rerank pass.",
+                provider,
+            )
+            return None
 
 
 __all__ = ["RetrievalService"]

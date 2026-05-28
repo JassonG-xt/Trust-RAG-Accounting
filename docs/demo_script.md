@@ -228,12 +228,48 @@ The breakdown attributes the score to:
   three-way mode, 0.0 in two-way). The vector branch uses the
   deterministic `MockEmbeddingProvider` + `InMemoryVectorStore` by
   default — no API key, no Docker, no network.
+* `reranker` — post-hybrid reranker contribution from
+  `MockReranker` (Phase 3C), already scaled by `reranker_weight`
+  (default 0.15). The reranker computes query-document relevance
+  via bilingual token overlap + title hit + section hit + client
+  match + document-type bonuses. Stays at 0.0 when
+  `RERANKER_PROVIDER=none`.
 * `metadata` — document_type match against the inferred filter.
 * `client_match` — chunk's client matched the inferred client.
 * `stance` — small reward for being on the correct temporal side
   (current → support, expired → counter).
 * `malicious_penalty` — negative contribution that drives malicious
-  chunks down. Always 0 for benign chunks.
+  chunks down. Always 0 for benign chunks. **Re-applied after rerank**
+  so a high reranker score cannot lift a malicious chunk past the
+  0.20 quarantine cap.
+
+## Inspecting the reranker
+
+```bash
+curl -s -X POST http://localhost:8000/v1/rag/query \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "Alpha Trading Co. 的餐饮发票应该怎么入账？"}' \
+  | jq '.support_evidence[0].score_breakdown.reranker, .support_evidence[0].score_breakdown'
+```
+
+The first jq output is the reranker's contribution to the final
+score for the top hit. The second is the full breakdown. A positive
+value means the post-hybrid pass identified this candidate as
+genuinely relevant to the query (high token / title / client
+overlap). A zero value means the reranker didn't find a match —
+the candidate stayed in the top-K because of its hybrid score
+alone.
+
+## Turning off the reranker
+
+```bash
+export RERANKER_PROVIDER=none
+bash scripts/run_dev.sh
+```
+
+The retrieval chain falls back to Phase 3B output: hybrid retrieval
+with no reordering. `score_breakdown.reranker` stays in the response
+shape (always 0.0) so downstream clients don't break.
 
 ## Switching to Qdrant (optional)
 

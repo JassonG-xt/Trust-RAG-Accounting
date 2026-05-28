@@ -175,11 +175,49 @@ docs. **Completed.**
 - ✅ Alpha / Beta client isolation preserved end-to-end, including
       through the vector branch.
 
-## Phase 3C — Reranker
+## Phase 3C — Reranker Seam (current) ✅
 
-- [ ] Cross-encoder reranker (BGE / Cohere / open-source) wired into
-      `RetrievalService` as a post-hybrid pass.
-- [ ] Reranker score added as another column in `ScoreBreakdown`.
+- ✅ `backend/app/rerankers/` package with `Reranker` Protocol +
+      `create_reranker` factory + `MockReranker` + `BGEReranker`
+      placeholder.
+- ✅ `MockReranker` — deterministic, dependency-free (no torch /
+      transformers / GPU). Computes query-document relevance via
+      bilingual token overlap + title hit + section hit + client
+      match + document_type bonuses. Same `(query, candidates)` →
+      identical output.
+- ✅ `ScoreBreakdown.reranker` field added. Invariant
+      `score == breakdown.total()` extended to eight components.
+- ✅ Malicious cap (0.20) **re-applied after rerank** by absorbing
+      the overshoot into `malicious_penalty`, so the invariant
+      survives. A high reranker score cannot lift a malicious chunk
+      out of quarantine.
+- ✅ `RetrievalService` owns reranker construction and the
+      post-hybrid pass. Lazy import via `_build_reranker()` keeps the
+      retrieval package free of a top-level dependency on the
+      rerankers package (avoids circular import via
+      `retrieval.tokenizer`).
+- ✅ Wide candidate pool — when reranker is enabled, hybrid is
+      called with `top_k = max(caller_top_k, settings.reranker_top_n)`
+      so the rerank pass has enough material to reorder.
+- ✅ Stable tiebreak `(score desc, chunk_id asc)` preserved through
+      rerank.
+- ✅ `core/config.py` gains `reranker_provider`, `reranker_top_n`,
+      `reranker_weight`. Default values: `mock`, `12`, `0.15`. Set
+      `RERANKER_PROVIDER=none` to disable the rerank pass entirely.
+- ✅ `RetrievalService` degrades gracefully — if reranker init
+      raises, log and continue without rerank (workflow boots).
+- ✅ `pyproject.toml` gains an empty
+      `[project.optional-dependencies.reranker]` group documenting
+      the Phase 3E adapter seam without pulling any heavy ML deps.
+- ✅ `.env.example` documents the new reranker env vars.
+- ✅ 24 new tests in `test_rerankers.py` covering determinism,
+      relevance ranking, malicious cap preservation, factory
+      dispatch, RetrievalService integration (default-on and
+      explicit-off via `RERANKER_PROVIDER=none`). Total pytest count:
+      **127 passed**.
+- ✅ Alpha / Beta client isolation preserved through the rerank
+      pass. Malicious quarantine preserved. Breakdown invariant
+      preserved.
 
 ## Phase 3D — Real Embedding Provider
 
@@ -188,6 +226,15 @@ docs. **Completed.**
 - [ ] Provider-level rate-limiting + retry budget.
 - [ ] Retrieval metrics: Current Policy Accuracy, Client-Specific
       Rule Accuracy (now feasible since vector signal is in place).
+
+## Phase 3E — Real Reranker Provider
+
+- [ ] BGE / Cohere / cross-encoder reranker adapter behind the
+      `Reranker` Protocol.
+- [ ] `[reranker]` extras group populated with the chosen ML
+      dependencies (torch / transformers / sentence-transformers).
+- [ ] Per-pair score caching so reranker latency doesn't compound
+      under hybrid + rerank.
 
 ## Phase 4 — Real LangChain Retriever Plumbing
 

@@ -125,6 +125,10 @@ backend/app/
 │   ├── in_memory.py         # Pure-Python cosine similarity store
 │   ├── qdrant_store.py      # Optional Qdrant adapter (extras: 'qdrant')
 │   └── filters.py           # MetadataFilter → payload-filter DSL mapping
+├── rerankers/         # Phase 3C: post-hybrid precision pass
+│   ├── providers.py         # Reranker Protocol + create_reranker factory
+│   ├── mock_reranker.py     # Deterministic content-overlap reranker
+│   └── external_adapters.py # BGEReranker stub (Phase 3E placeholder)
 ├── graph/
 │   ├── state.py       # TrustRAGState (TypedDict) — accounting fields
 │   ├── workflow.py    # build_workflow() / get_workflow() / run_query()
@@ -135,7 +139,7 @@ backend/app/
     └── mock_knowledge_base.py  # legacy compat layer (kept for old imports)
 ```
 
-**Phase 3B retrieval flow:**
+**Phase 3C retrieval flow:**
 
 ```
 DocumentRepository.search(query, stance, question_type, ...)
@@ -143,9 +147,10 @@ DocumentRepository.search(query, stance, question_type, ...)
        ▼
 RetrievalService.search(...)
        │  builds MetadataFilter via filters.build_metadata_filter
-       │  selects 2-way or 3-way fusion based on settings.retrieval_enable_vector
+       │  selects 2-way or 3-way hybrid fusion via settings.retrieval_enable_vector
+       │  wide_k = max(top_k, settings.reranker_top_n) when reranker enabled
        ▼
-HybridRetriever.search(query, metadata_filter, stance, top_k)
+HybridRetriever.search(query, metadata_filter, stance, top_k=wide_k)
        │
        ├── KeywordRetriever.search       ──┐
        ├── BM25Retriever.search          ──├─► merge by chunk_id
@@ -158,7 +163,16 @@ HybridRetriever.search(query, metadata_filter, stance, top_k)
        └─────────────────┘
        │
        ▼
-list[ScoredChunk]   # each carries ScoreBreakdown + retrieval_strategy
+top-N candidate ScoredChunks
+       │
+       ▼
+Reranker.rerank(query, candidates, top_k=caller_top_k)
+       │  default: MockReranker (deterministic, no model)
+       │  optional: BGEReranker / CohereReranker (Phase 3E)
+       │  disabled: RERANKER_PROVIDER=none → just candidates[:top_k]
+       │  updates ScoreBreakdown.reranker, re-applies malicious cap
+       ▼
+list[ScoredChunk]   # final ordering after rerank
        │
        ▼
 DocumentRepository._scored_chunk_to_evidence_dict
@@ -175,22 +189,31 @@ list[dict] → LangGraph state → FastAPI response
   retriever paths (used by ablation tests, not by the production
   workflow).
 
-**ScoreBreakdown components (Phase 3B):**
+The reranker does **not** change ``retrieval_strategy``. It's a
+post-processing step: the breakdown column ``reranker > 0`` is the
+signal that the rerank pass touched the candidate. This keeps the
+"where did this candidate come from" question and the "did we
+re-score it" question as two separate dimensions of the audit trail.
 
-``keyword`` + ``bm25`` + ``vector`` + ``metadata`` + ``client_match`` +
-``stance`` + ``malicious_penalty``. The first three are additive
-signals (weighted in the hybrid layer). The middle three are
-chunk-level bonuses (taken as max across retrievers, never
-double-counted). The last is a penalty that drives malicious chunks
-to a capped final score (0.20).
+**ScoreBreakdown components (Phase 3C):**
+
+``keyword`` + ``bm25`` + ``vector`` + ``reranker`` + ``metadata`` +
+``client_match`` + ``stance`` + ``malicious_penalty``. The first
+four are additive signals (weighted in their respective layers). The
+middle three are chunk-level bonuses (taken as max across retrievers,
+never double-counted). The last is a penalty that drives malicious
+chunks to a capped final score (0.20). The cap is **re-applied after
+rerank** so a high reranker score cannot lift a malicious chunk out
+of quarantine.
 
 **Score breakdown invariant.** For every chunk-level evidence dict
 returned by the repository, ``score == round(breakdown.total(), 4)``
 holds. This is enforced by tests
-(``test_hybrid_retriever_breakdown_total_matches_score`` and
-``test_hybrid_with_vector_breakdown_total_matches_score``) so future
-changes to scoring weights cannot silently drift the score off the
-breakdown.
+(``test_hybrid_retriever_breakdown_total_matches_score``,
+``test_hybrid_with_vector_breakdown_total_matches_score``, and
+``test_retrieval_service_reranker_does_not_break_breakdown_invariant``)
+so future changes to scoring weights cannot silently drift the score
+off the breakdown.
 
 **Vector store options:**
 

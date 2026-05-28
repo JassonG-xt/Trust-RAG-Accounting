@@ -9,7 +9,7 @@
 
 <p align="left">
   <img alt="status" src="https://img.shields.io/badge/status-alpha-orange.svg">
-  <img alt="phase" src="https://img.shields.io/badge/phase-3B%20vector%20retrieval-blue.svg">
+  <img alt="phase" src="https://img.shields.io/badge/phase-3C%20reranker-blue.svg">
   <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-blue.svg">
   <img alt="framework" src="https://img.shields.io/badge/built%20with-LangGraph-7c3aed.svg">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-green.svg">
@@ -87,7 +87,10 @@ accountant cares about. Every answer ships with:
 - ❌ A required Qdrant deployment — Qdrant is an **optional** adapter
        behind the `[qdrant]` extras group; tests + local demos run
        fully offline against the in-memory store.
-- ❌ A neural reranker — no cross-encoder, no Cohere / BGE
+- ❌ A neural reranker **yet** — Phase 3C ships a deterministic
+       mock reranker. BGE / Cohere / open-source cross-encoders are
+       a Phase 3E adapter seam; no `torch` / `transformers` in the
+       default install.
 - ❌ A real LLM generator — answer templating is still deterministic
 
 ## Architecture Overview
@@ -110,7 +113,7 @@ accountant cares about. Every answer ships with:
                               │
                               ▼
 ┌────────────────────────────────────────────────────────────┐
-│        Retrieval layer (Phase 3B — pluggable)              │
+│        Retrieval layer (Phase 3C — pluggable)              │
 │                                                            │
 │   DocumentRepository  ─►  RetrievalService                 │
 │                              │                             │
@@ -124,9 +127,16 @@ accountant cares about. Every answer ships with:
 │                                  optional Qdrant)          │
 │                  └──────────────┬──────────┘               │
 │                                 ▼                          │
+│                       top-N candidates                     │
+│                                 │                          │
+│                                 ▼                          │
+│                      Reranker (default: MockReranker)      │
+│                       optional BGE / Cohere (Phase 3E)     │
+│                                 │                          │
+│                                 ▼                          │
 │                  ScoredChunk + ScoreBreakdown              │
-│         (keyword / bm25 / vector / metadata / client /     │
-│            stance / malicious_penalty)                     │
+│         (keyword / bm25 / vector / reranker / metadata /   │
+│           client_match / stance / malicious_penalty)       │
 └─────────────────────────────┬──────────────────────────────┘
                               │
                               ▼
@@ -277,6 +287,17 @@ What the workflow can do today, end-to-end:
     "餐饮发票" embeds into the same hash buckets as English chunks
     containing "meal / invoice / entertainment". Vector retrieval
     becomes a useful signal even without a real cross-lingual model.
+23. **Post-hybrid reranker seam (Phase 3C)** — `RetrievalService`
+    runs a `Reranker.rerank(query, candidates, top_k=k)` pass after
+    hybrid retrieval. Default provider is a deterministic
+    `MockReranker` (no GPU, no network, no torch). Operators disable
+    the rerank pass via `RERANKER_PROVIDER=none`; a future Phase 3E
+    will wire BGE / Cohere behind the same Protocol.
+24. **Reranker score in the breakdown** — `score_breakdown.reranker`
+    is the eighth breakdown component. The invariant
+    `score == breakdown.total()` is preserved through the rerank
+    pass (and the malicious cap is re-applied so adversarial chunks
+    cannot escape quarantine via a high rerank score).
 
 ## Planned Features
 
@@ -371,6 +392,7 @@ deterministic mocks.
         "keyword": 0.0378,
         "bm25": 0.099,
         "vector": 0.1875,
+        "reranker": 0.108,
         "metadata": 0.20,
         "client_match": 0.15,
         "stance": 0.05,

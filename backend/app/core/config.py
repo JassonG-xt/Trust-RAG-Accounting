@@ -95,6 +95,19 @@ class Settings:
         default_factory=lambda: os.getenv("QDRANT_COLLECTION", "trustrag_chunks")
     )
 
+    # Phase 3C — reranker. Default ON with the deterministic mock so the
+    # post-hybrid precision pass exercises end-to-end without GPU /
+    # network / torch. Operators disable it via RERANKER_PROVIDER=none.
+    reranker_provider: str = field(
+        default_factory=lambda: os.getenv("RERANKER_PROVIDER", "mock")
+    )
+    reranker_top_n: int = field(
+        default_factory=lambda: _int_env("RERANKER_TOP_N", 12)
+    )
+    reranker_weight: float = field(
+        default_factory=lambda: _float_env("RERANKER_WEIGHT", 0.15)
+    )
+
 
 def get_settings() -> Settings:
     """Return application settings.

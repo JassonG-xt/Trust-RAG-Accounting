@@ -428,13 +428,15 @@ def test_repository_search_evidence_has_breakdown_and_strategy(
     assert "chunk_id" in top
     assert "content" in top
     assert "score" in top
-    # Phase 3A additions plus the Phase 3B vector field.
+    # Phase 3A additions plus the Phase 3B vector field plus the
+    # Phase 3C reranker field.
     assert "score_breakdown" in top
     assert top["retrieval_strategy"] == "hybrid_keyword_bm25_vector"
     breakdown = top["score_breakdown"]
     assert "keyword" in breakdown
     assert "bm25" in breakdown
     assert "vector" in breakdown
+    assert "reranker" in breakdown
     assert "metadata" in breakdown
     assert "client_match" in breakdown
     assert "stance" in breakdown
@@ -506,6 +508,7 @@ def test_repository_breakdown_invariant_at_dict_layer(
             bd["keyword"]
             + bd["bm25"]
             + bd["vector"]
+            + bd["reranker"]
             + bd["metadata"]
             + bd["client_match"]
             + bd["stance"]

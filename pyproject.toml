@@ -53,6 +53,12 @@ dev = [
 qdrant = [
     "qdrant-client>=1.7",
 ]
+reranker = [
+    # Placeholder for Phase 3E real reranker adapters (BGE / Cohere /
+    # open-source cross-encoders). The Phase 3C MockReranker has no
+    # external dependency, so this group stays empty by design — its
+    # presence documents the seam.
+]
 
 [project.urls]
 Homepage = "https://github.com/yourname/trust-rag"
