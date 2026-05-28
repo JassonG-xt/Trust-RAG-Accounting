@@ -565,6 +565,34 @@ threshold status, failed cases, and a delta versus `main` when a base
 summary is supplied. CI posts or updates the marked comment on
 same-repository PRs and skips fork PRs.
 
+## Opening the local dashboard (Phase 7A)
+
+Generate the local corpus and eval report, start FastAPI, then open the
+dashboard:
+
+```bash
+python -m backend.app.ingestion.ingest_sample_docs \
+  --source sample_docs \
+  --documents-out data/trustrag_documents.json \
+  --chunks-out data/trustrag_chunks.json
+
+bash scripts/run_eval_gate.sh
+
+bash scripts/run_dev.sh
+```
+
+Open:
+
+```text
+http://localhost:8000/dashboard
+```
+
+The dashboard is served directly by FastAPI with no Node, npm, or
+frontend build step. It provides a query console, evidence and citation
+inspection, document/chunk overview, human review queue viewer, latest
+eval report viewer, and local trace viewer. If tracing is disabled or
+eval artifacts are missing, the relevant panel renders a placeholder.
+
 ### Single-category run
 
 ```bash

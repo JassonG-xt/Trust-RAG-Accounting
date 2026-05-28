@@ -160,6 +160,19 @@ class Settings:
         )
     )
 
+    # Phase 7A dashboard diagnostics. These are read-only inputs used by
+    # ``GET /v1/evals/latest``; the API never runs evals or writes files.
+    trustrag_eval_results_path: str = field(
+        default_factory=lambda: os.getenv(
+            "TRUSTRAG_EVAL_RESULTS_PATH", "data/eval_results.json"
+        )
+    )
+    trustrag_eval_report_path: str = field(
+        default_factory=lambda: os.getenv(
+            "TRUSTRAG_EVAL_REPORT_PATH", "data/eval_report.md"
+        )
+    )
+
 
 def get_settings() -> Settings:
     """Return application settings.

@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TrustRAG Accounting Dashboard</title>
+    <link rel="stylesheet" href="/dashboard/static/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Local reviewer workbench</p>
+        <h1>TrustRAG Accounting Dashboard</h1>
+      </div>
+      <div class="status-grid" aria-label="Backend status">
+        <div class="stat">
+          <span class="stat-label">Backend</span>
+          <span class="stat-value" id="backend-status">Checking</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Documents</span>
+          <span class="stat-value" id="document-count">0</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Chunks</span>
+          <span class="stat-value" id="chunk-count">0</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="dashboard-shell">
+      <section class="panel query-panel" aria-labelledby="query-title">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Console</p>
+            <h2 id="query-title">RAG Query</h2>
+          </div>
+          <button class="secondary-button" id="clear-query" type="button">Clear</button>
+        </div>
+
+        <label class="field-label" for="question-input">Question</label>
+        <textarea
+          id="question-input"
+          rows="7"
+          placeholder="Ask about client SOPs, reimbursement policy, tax notes, invoice rules, or unsafe accounting requests."
+        ></textarea>
+
+        <div class="example-list" id="example-list" aria-label="Example questions"></div>
+
+        <button class="primary-button" id="run-query" type="button">Run Query</button>
+        <p class="inline-status" id="query-status">Idle</p>
+      </section>
+
+      <section class="main-stack">
+        <section class="panel answer-panel" aria-labelledby="answer-title">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Result</p>
+              <h2 id="answer-title">Answer</h2>
+            </div>
+            <div class="badge-row" id="answer-badges"></div>
+          </div>
+          <div class="answer-text" id="answer-text">Run a query to inspect the answer and review metadata.</div>
+          <dl class="metadata-grid" id="answer-metadata"></dl>
+          <div class="json-strip">
+            <div>
+              <h3>Safety</h3>
+              <pre id="safety-json">{}</pre>
+            </div>
+            <div>
+              <h3>Temporal</h3>
+              <pre id="temporal-json">{}</pre>
+            </div>
+            <div>
+              <h3>Conflict</h3>
+              <pre id="conflict-json">{}</pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="citations-title">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Grounding</p>
+              <h2 id="citations-title">Evidence / Citations</h2>
+            </div>
+          </div>
+          <div class="evidence-columns">
+            <div>
+              <h3>Citations</h3>
+              <div class="list-stack" id="citations-list"></div>
+            </div>
+            <div>
+              <h3>Support Evidence</h3>
+              <div class="list-stack" id="support-list"></div>
+            </div>
+            <div>
+              <h3>Counter Evidence</h3>
+              <div class="list-stack" id="counter-list"></div>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <aside class="side-stack">
+        <section class="panel" aria-labelledby="documents-title">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Corpus</p>
+              <h2 id="documents-title">Documents</h2>
+            </div>
+            <button class="secondary-button" data-refresh="documents" type="button">Refresh</button>
+          </div>
+          <div class="summary-line" id="documents-summary">No document data loaded.</div>
+          <div class="list-stack compact" id="documents-list"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="review-title">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Queue</p>
+              <h2 id="review-title">Human Review</h2>
+            </div>
+            <button class="secondary-button" data-refresh="review" type="button">Refresh</button>
+          </div>
+          <div class="summary-line" id="review-summary">No queue data loaded.</div>
+          <div class="list-stack compact" id="review-list"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="eval-title">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Gate</p>
+              <h2 id="eval-title">Eval Report</h2>
+            </div>
+            <button class="secondary-button" data-refresh="eval" type="button">Refresh</button>
+          </div>
+          <div class="summary-line" id="eval-summary">No eval data loaded.</div>
+          <div class="category-table-wrap" id="eval-categories"></div>
+          <details class="details-block">
+            <summary>Markdown report</summary>
+            <pre id="eval-markdown">No report loaded.</pre>
+          </details>
+        </section>
+
+        <section class="panel" aria-labelledby="trace-title">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Trace</p>
+              <h2 id="trace-title">Local Traces</h2>
+            </div>
+            <button class="secondary-button" data-refresh="traces" type="button">Refresh</button>
+          </div>
+          <div class="summary-line" id="trace-summary">No trace data loaded.</div>
+          <div class="list-stack compact" id="trace-list"></div>
+        </section>
+      </aside>
+    </main>
+
+    <script src="/dashboard/static/app.js" defer></script>
+  </body>
+</html>
