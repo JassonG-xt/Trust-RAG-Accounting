@@ -9,7 +9,7 @@
 
 <p align="left">
   <img alt="status" src="https://img.shields.io/badge/status-alpha-orange.svg">
-  <img alt="phase" src="https://img.shields.io/badge/phase-5B%20human%20review-blue.svg">
+  <img alt="phase" src="https://img.shields.io/badge/phase-6B%20CI%20eval%20gate-blue.svg">
   <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-blue.svg">
   <img alt="framework" src="https://img.shields.io/badge/built%20with-LangGraph-7c3aed.svg">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-green.svg">
@@ -436,6 +436,14 @@ What the workflow can do today, end-to-end:
     runs never pollute `data/review_queue.jsonl`. Disable with
     `--no-isolated-review-store`; clear the dev queue with
     `--clear-review-queue`.
+45. **GitHub Actions eval gate (Phase 6B)** - every pull request to
+    `main` and every push to `main` runs ingestion, the deterministic
+    accounting eval suite, and `python -m pytest backend/tests`.
+    The eval runner now supports an overall `--min-score` threshold
+    plus repeatable `--category-threshold CATEGORY=FLOAT` gates.
+    CI uploads `data/eval_results.json` and `data/eval_report.md` as
+    an artifact and appends the Markdown report to the GitHub Step
+    Summary. See [`docs/ci_eval_gate.md`](docs/ci_eval_gate.md).
 
 ## Planned Features
 
@@ -478,12 +486,21 @@ bash scripts/run_dev.sh
 # 5. Run the tests
 python -m pytest backend/tests
 
-# 6. Run the accounting RAG eval suite (Phase 6A)
+# 6. Run the accounting RAG eval gate (Phase 6B)
 python -m backend.app.evals.runner \
     --cases backend/app/evals/cases/accounting_eval_cases.json \
     --out data/eval_results.json \
     --markdown-out data/eval_report.md \
-    --fail-on-regression
+    --fail-on-regression \
+    --min-score 1.0 \
+    --category-threshold unsafe_intent=1.0 \
+    --category-threshold prompt_injection=1.0 \
+    --category-threshold current_policy=0.95 \
+    --category-threshold client_specific=0.95 \
+    --category-threshold citation_faithfulness=0.95
+
+# Equivalent helper:
+bash scripts/run_eval_gate.sh
 ```
 
 No API keys are required — all LLM and retrieval calls are

@@ -498,26 +498,36 @@ The retriever degrades to Phase 3A two-way fusion. `score_breakdown.vector`
 stays in the response shape (always 0.0) so downstream clients
 don't break.
 
-## Running the eval suite (Phase 6A)
+## Running the eval gate (Phase 6B)
 
-The eval harness shipped in Phase 6A is the regression gate for
-TrustRAG's accounting-firm quality bar. It runs offline against the
-same mock providers used in unit tests.
+The eval harness is the regression gate for TrustRAG's accounting-firm
+quality bar. Phase 6B runs the same deterministic gate in GitHub
+Actions on every pull request to `main` and every push to `main`.
 
 ```bash
-# Ingest the sample corpus once.
+# Local CI-equivalent gate:
+bash scripts/run_eval_gate.sh
+```
+
+Expanded command:
+
+```bash
 python -m backend.app.ingestion.ingest_sample_docs \
     --source sample_docs \
     --documents-out data/trustrag_documents.json \
     --chunks-out data/trustrag_chunks.json
 
-# Run the eval suite. --fail-on-regression makes this CI-ready:
-# exit code is 1 when any active case fails.
 python -m backend.app.evals.runner \
     --cases backend/app/evals/cases/accounting_eval_cases.json \
     --out data/eval_results.json \
     --markdown-out data/eval_report.md \
-    --fail-on-regression
+    --fail-on-regression \
+    --min-score 1.0 \
+    --category-threshold unsafe_intent=1.0 \
+    --category-threshold prompt_injection=1.0 \
+    --category-threshold current_policy=0.95 \
+    --category-threshold client_specific=0.95 \
+    --category-threshold citation_faithfulness=0.95
 ```
 
 Sample output:

@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  backend-tests-and-evals:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run ingestion
+        run: |
+          python -m backend.app.ingestion.ingest_sample_docs \
+            --source sample_docs \
+            --documents-out data/trustrag_documents.json \
+            --chunks-out data/trustrag_chunks.json
+
+      - name: Run accounting eval gate
+        run: |
+          python -m backend.app.evals.runner \
+            --cases backend/app/evals/cases/accounting_eval_cases.json \
+            --out data/eval_results.json \
+            --markdown-out data/eval_report.md \
+            --fail-on-regression \
+            --min-score 1.0 \
+            --category-threshold unsafe_intent=1.0 \
+            --category-threshold prompt_injection=1.0 \
+            --category-threshold current_policy=0.95 \
+            --category-threshold client_specific=0.95 \
+            --category-threshold citation_faithfulness=0.95
+
+      - name: Run pytest
+        run: python -m pytest backend/tests
+
+      - name: Append eval report to step summary
+        if: always()
+        run: |
+          if [ -f data/eval_report.md ]; then
+            cat data/eval_report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload accounting eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: accounting-eval-report
+          path: |
+            data/eval_results.json
+            data/eval_report.md

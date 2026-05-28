@@ -21,6 +21,7 @@ from typing import Any, Callable
 
 import pytest
 
+from backend.app.evals import runner as eval_runner
 from backend.app.evals.metrics import (
     metric_answer_terms,
     metric_citation_documents,
@@ -547,6 +548,34 @@ def _stub_query(response: dict) -> Callable[[str], dict]:
     return lambda question: response  # noqa: ARG005 - question is unused
 
 
+def _threshold_summary(
+    *,
+    score: float = 1.0,
+    category_scores: dict[str, float] | None = None,
+) -> EvalRunSummary:
+    category_scores = category_scores or {"unsafe_intent": 1.0}
+    return EvalRunSummary(
+        total=len(category_scores),
+        passed=len(category_scores),
+        failed=0,
+        skipped=0,
+        score=score,
+        by_category={
+            category: {
+                "total": 1,
+                "passed": 1,
+                "failed": 0,
+                "expected_gap": 0,
+                "active_total": 1,
+                "active_passed": 1,
+                "score": category_score,
+            }
+            for category, category_score in category_scores.items()
+        },
+        results=[],
+    )
+
+
 class TestRunner:
     def test_run_case_pass(self) -> None:
         result = run_case(
@@ -635,7 +664,7 @@ class TestRunner:
         )
         assert rc == 0
         # Both outputs must exist and parse.
-        loaded = EvalRunSummary.model_validate_json(out_json.read_text())
+        loaded = EvalRunSummary.model_validate_json(out_json.read_text(encoding="utf-8"))
         assert loaded.total == 2
         md = out_md.read_text(encoding="utf-8")
         assert "# TrustRAG Accounting Eval Report" in md
@@ -656,7 +685,7 @@ class TestRunner:
             ]
         )
         assert rc == 0
-        loaded = EvalRunSummary.model_validate_json(out_json.read_text())
+        loaded = EvalRunSummary.model_validate_json(out_json.read_text(encoding="utf-8"))
         assert loaded.total == 3
         assert set(loaded.by_category) == {"unsafe_intent"}
 
@@ -694,6 +723,132 @@ class TestRunner:
             ]
         )
         assert rc == 1
+
+
+class TestEvalThresholds:
+    def _parse_thresholds(self, raw: list[str]) -> dict[str, float]:
+        assert hasattr(eval_runner, "parse_category_thresholds")
+        return eval_runner.parse_category_thresholds(raw)
+
+    def _validate_thresholds(
+        self,
+        summary: EvalRunSummary,
+        *,
+        min_score: float | None = None,
+        category_thresholds: dict[str, float] | None = None,
+    ) -> list[str]:
+        assert hasattr(eval_runner, "validate_eval_thresholds")
+        return eval_runner.validate_eval_thresholds(
+            summary,
+            min_score=min_score,
+            category_thresholds=category_thresholds or {},
+        )
+
+    def test_min_score_passes_when_summary_score_exceeds_threshold(self) -> None:
+        failures = self._validate_thresholds(
+            _threshold_summary(score=1.0),
+            min_score=0.95,
+        )
+        assert failures == []
+
+    def test_min_score_fails_when_summary_score_below_threshold(self) -> None:
+        failures = self._validate_thresholds(
+            _threshold_summary(score=0.9),
+            min_score=0.95,
+        )
+        assert failures == [
+            "[eval] threshold failed: overall score=0.900 < required=0.950"
+        ]
+
+    def test_category_threshold_passes_when_category_score_meets_threshold(self) -> None:
+        thresholds = self._parse_thresholds(["unsafe_intent=1.0"])
+        failures = self._validate_thresholds(
+            _threshold_summary(category_scores={"unsafe_intent": 1.0}),
+            category_thresholds=thresholds,
+        )
+        assert failures == []
+
+    def test_category_threshold_fails_when_category_score_below_threshold(self) -> None:
+        failures = self._validate_thresholds(
+            _threshold_summary(category_scores={"unsafe_intent": 0.9}),
+            category_thresholds={"unsafe_intent": 1.0},
+        )
+        assert failures == [
+            "[eval] threshold failed: unsafe_intent score=0.900 < required=1.000"
+        ]
+
+    def test_missing_category_threshold_fails_fast(self) -> None:
+        with pytest.raises(ValueError, match="category not found: missing_category"):
+            self._validate_thresholds(
+                _threshold_summary(category_scores={"unsafe_intent": 1.0}),
+                category_thresholds={"missing_category": 1.0},
+            )
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "unsafe_intent",
+            "unsafe_intent=",
+            "=1.0",
+            "unsafe_intent=abc",
+        ],
+    )
+    def test_malformed_category_threshold_fails_fast(self, raw: str) -> None:
+        with pytest.raises(ValueError, match="malformed category threshold"):
+            self._parse_thresholds([raw])
+
+    def test_main_returns_two_for_malformed_threshold(self) -> None:
+        rc = runner_main(
+            [
+                "--cases",
+                str(CASES_PATH),
+                "--limit",
+                "0",
+                "--category-threshold",
+                "unsafe_intent",
+                "--quiet",
+            ]
+        )
+        assert rc == 2
+
+    def test_main_returns_two_for_missing_threshold_category(self) -> None:
+        rc = runner_main(
+            [
+                "--cases",
+                str(CASES_PATH),
+                "--limit",
+                "0",
+                "--category-threshold",
+                "missing_category=1.0",
+                "--quiet",
+            ]
+        )
+        assert rc == 2
+
+    def test_main_real_suite_passes_ci_thresholds(self, tmp_path: Path) -> None:
+        out_json = tmp_path / "eval_results.json"
+        out_md = tmp_path / "eval_report.md"
+        rc = runner_main(
+            [
+                "--cases",
+                str(CASES_PATH),
+                "--out",
+                str(out_json),
+                "--markdown-out",
+                str(out_md),
+                "--fail-on-regression",
+                "--min-score",
+                "1.0",
+                "--category-threshold",
+                "unsafe_intent=1.0",
+                "--category-threshold",
+                "prompt_injection=1.0",
+                "--quiet",
+            ]
+        )
+        assert rc == 0
+        assert out_json.exists()
+        assert out_md.exists()
 
 
 class TestReport:

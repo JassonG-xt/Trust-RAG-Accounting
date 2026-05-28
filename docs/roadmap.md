@@ -467,7 +467,7 @@ docs. **Completed.**
 
 ## Phase 6 — Accounting RAG Eval Harness
 
-### Phase 6A — Deterministic local eval harness (current) ✅
+### Phase 6A — Deterministic local eval harness ✅
 
 - [x] Eval case schema (`backend/app/evals/models.py`) — Pydantic
       v2 with optional fields; load-time validation; status =
@@ -495,23 +495,27 @@ docs. **Completed.**
 - [x] Docs: `docs/eval_harness.md` (new); README, architecture,
       demo_script, roadmap updated.
 
-### Phase 6B — CI gate
+### Phase 6B — GitHub Actions CI eval gate (current) ✅
 
-- [ ] GitHub Action that runs `python -m backend.app.evals.runner
-      --fail-on-regression` on every PR.
-- [ ] Markdown report uploaded as a CI artifact.
-- [ ] Per-category thresholds (e.g. unsafe + prompt_injection
-      must be `1.000`; client_specific must be ≥ `0.95`).
-- [ ] Comment summary on the PR with regression delta vs. main.
+- [x] GitHub Action runs ingestion, the accounting eval gate, and
+      `python -m pytest backend/tests` on every PR to `main` and push
+      to `main`.
+- [x] Eval runner supports `--min-score` for the active-suite score.
+- [x] Eval runner supports repeatable
+      `--category-threshold CATEGORY=FLOAT` checks; malformed values
+      and missing active categories exit `2`.
+- [x] CI uploads `data/eval_results.json` and `data/eval_report.md`
+      as the `accounting-eval-report` artifact.
+- [x] CI appends `data/eval_report.md` to the GitHub Step Summary.
+- [x] Local helper `bash scripts/run_eval_gate.sh` runs the same
+      ingestion + threshold policy.
 
-### Phase 6C — LLM-as-judge + real-provider eval
+### Phase 6C — Eval reporting extensions
 
-- [ ] Optional LLM-as-judge layer that asks "is the answer
-      faithful to the cited evidence?". Deterministic suite stays
-      the floor; LLM judge is additive.
-- [ ] Re-run the suite against Qdrant + a real reranker to detect
-      provider-specific regressions.
-- [ ] Anonymised firm dataset replayed through the harness.
+- [ ] PR comment bot.
+- [ ] Regression delta versus `main`.
+- [ ] Real provider eval.
+- [ ] Optional LLM-as-judge analysis.
 
 ## Phase 7 — Frontend Dashboard
 
