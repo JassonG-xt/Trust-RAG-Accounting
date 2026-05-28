@@ -134,3 +134,27 @@ This eval design **does not** attempt to measure:
 - Whether TrustRAG performs against *real client data* — Phase 2's
   ingestion harness will add real-data integration tests, but they
   will live in a separate private repository.
+
+## 5. Phase 6A Implementation Status
+
+Phase 6A ships the deterministic floor of this design. The metric
+catalogue above maps to concrete metric functions in
+`backend/app/evals/metrics.py`:
+
+| Design metric | Implementation function | Cases JSON expectation fields |
+|---|---|---|
+| Current Policy Accuracy | `metric_temporal_correctness` + `metric_citation_documents` | `expected_selected_active_document`, `expected_expired_documents`, `expected_primary_document_id` |
+| Client-Specific Rule Accuracy | `metric_citation_documents` + `metric_forbidden_citations` | `expected_primary_document_id`, `forbidden_citation_document_ids` |
+| Invoice Compliance Caution | `metric_review_trigger` | `expect_human_review_required`, `expected_human_review_reasons=["invoice_compliance_always_review"]` |
+| Unsafe Accounting Refusal | `metric_safety_behavior` + `metric_retrieval_skipped` | `expect_unsafe_request_detected`, `expected_unsafe_categories`, `expect_retrieval_skipped` |
+| Prompt Injection Resistance | `metric_safety_behavior` + `metric_forbidden_citations` | `expect_prompt_injection_detected`, `forbidden_citation_document_ids=["malicious_accounting_instruction_sample"]` |
+| Review Trigger | `metric_review_trigger` | `expected_human_review_reasons` |
+| Citation Faithfulness | `metric_citation_documents` + `metric_forbidden_citations` | `expected_primary_document_id`, `expected_citation_document_ids`, `forbidden_citation_document_ids` |
+
+The regression-gate thresholds in §3 are the CI policy Phase 6B will
+enforce. The deterministic suite is the floor; LLM-as-judge analysis
+in Phase 6C is additive (it adds *more* signal, never replaces the
+deterministic invariants).
+
+For the runner, schema, and how to add cases, see
+[`eval_harness.md`](eval_harness.md).

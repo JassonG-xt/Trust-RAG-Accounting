@@ -497,3 +497,75 @@ bash scripts/run_dev.sh
 The retriever degrades to Phase 3A two-way fusion. `score_breakdown.vector`
 stays in the response shape (always 0.0) so downstream clients
 don't break.
+
+## Running the eval suite (Phase 6A)
+
+The eval harness shipped in Phase 6A is the regression gate for
+TrustRAG's accounting-firm quality bar. It runs offline against the
+same mock providers used in unit tests.
+
+```bash
+# Ingest the sample corpus once.
+python -m backend.app.ingestion.ingest_sample_docs \
+    --source sample_docs \
+    --documents-out data/trustrag_documents.json \
+    --chunks-out data/trustrag_chunks.json
+
+# Run the eval suite. --fail-on-regression makes this CI-ready:
+# exit code is 1 when any active case fails.
+python -m backend.app.evals.runner \
+    --cases backend/app/evals/cases/accounting_eval_cases.json \
+    --out data/eval_results.json \
+    --markdown-out data/eval_report.md \
+    --fail-on-regression
+```
+
+Sample output:
+
+```text
+[eval] isolated review store: /tmp/trustrag_eval_review_xxx/review_queue.jsonl
+[eval] running 18 cases (status=active, categories=all)
+[eval]   1/18 PASS current_policy        current_policy_001         score=1.00
+[eval]   2/18 PASS current_policy        current_policy_002         score=1.00
+...
+[eval]  18/18 PASS citation_faithfulness citation_faithfulness_002  score=1.00
+[eval] summary: total=18 passed=18 failed=0 skipped=0 score=1.000
+```
+
+The Markdown report (`data/eval_report.md`) is content-safe — it
+includes case_ids, doc_ids, chunk_ids, and scores, but **never full
+chunk content**. You can paste a report into a PR description without
+leaking the corpus.
+
+### Single-category run
+
+```bash
+# Just the unsafe path (fastest sanity check).
+python -m backend.app.evals.runner \
+    --cases backend/app/evals/cases/accounting_eval_cases.json \
+    --category unsafe_intent \
+    --fail-on-regression
+```
+
+### Smoke run (first N cases)
+
+```bash
+python -m backend.app.evals.runner \
+    --cases backend/app/evals/cases/accounting_eval_cases.json \
+    --limit 3
+```
+
+### Notes
+
+- The runner writes review checkpoints to a per-run temp file by
+  default. Use `--no-isolated-review-store` to write into the real
+  `data/review_queue.jsonl` (e.g. when reviewing the queue manually
+  after a debug eval).
+- `--clear-review-queue` clears `data/review_queue.jsonl` before the
+  run starts — useful when the dev queue is full of stale test
+  artifacts.
+- Generated eval outputs (`data/eval_results.json`,
+  `data/eval_report.md`) are gitignored. Do not commit them.
+
+See [`docs/eval_harness.md`](eval_harness.md) for the case schema,
+metric catalogue, and "how to add a case" guide.
