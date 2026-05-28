@@ -57,7 +57,8 @@ def safety_checker(state: TrustRAGState) -> dict:
                 "risk_level": "none",
                 "explanation": "safety check disabled by config",
                 "matched_reasons": [],
-            }
+            },
+            "visited_nodes": ["safety_checker"],
         }
 
     # --- Pass 1: scan retrieved evidence for injection ---
@@ -111,5 +112,6 @@ def safety_checker(state: TrustRAGState) -> dict:
             "risk_level": risk_level,
             "explanation": explanation,
             "matched_reasons": reasons,
-        }
+        },
+        "visited_nodes": ["safety_checker"],
     }

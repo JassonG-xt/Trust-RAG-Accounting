@@ -346,10 +346,64 @@ docs. **Completed.**
 
 ## Phase 5 — LangGraph Conditional Routing
 
-- [ ] `query_analyzer` fast-path to `safety_checker` for unsafe intent.
-- [ ] `judge_agent` → `human_review_handoff` on tax / conflict / low
-      confidence.
-- [ ] State checkpoint persistence in Postgres at the handoff boundary.
+### Phase 5A — Unsafe Request Fast-Path ✅
+
+- ✅ ``backend/app/graph/state.py`` — added ``routing_decision`` /
+      ``routing_reason`` / ``visited_nodes`` (with
+      ``Annotated[list[str], operator.add]`` reducer) to
+      ``TrustRAGState``. ``initial_state`` initializes the routing
+      fields explicitly.
+- ✅ ``backend/app/graph/workflow.py`` — added
+      ``route_after_query_analysis(state) -> str`` as a pure reader
+      of ``state["routing_decision"]``. ``build_workflow`` switched
+      from a flat ``query_analyzer → claim_decomposer`` edge to
+      ``add_conditional_edges`` with two branches:
+      ``unsafe_fast_path → safety_checker`` and
+      ``standard_rag → claim_decomposer``. Standard-path edges
+      preserved verbatim. The tail
+      ``safety_checker → judge_agent → answer_generator → END`` is
+      shared by both branches.
+- ✅ ``query_analyzer`` writes ``routing_decision`` /
+      ``routing_reason`` in every return path and appends itself to
+      ``visited_nodes``. Other nodes append themselves too — that
+      list is the Phase 5A regression surface.
+- ✅ ``safety_checker`` / ``judge_agent`` / ``answer_generator``
+      already handle empty evidence safely (they use ``state.get(...)
+      or []``), so the unsafe fast-path produces an empty
+      ``support_evidence`` / ``counter_evidence`` / ``citations`` and
+      a ``refuse_unsafe`` judge verdict + ``confidence=0.0`` +
+      ``needs_human_review=true`` without crashing.
+- ✅ ``support_retriever`` / ``counter_retriever`` runnable trace
+      metadata now carries ``route:<routing_decision>`` in tags
+      plus ``routing_decision`` / ``routing_reason`` in metadata —
+      so a trace reader can confirm which branch fired without
+      reading the state graph.
+- ✅ ``backend/app/services/mock_knowledge_base.py`` — broadened
+      ``UNSAFE_INTENT_PATTERNS[invoice_fabrication]`` to include
+      ``伪造一张发票`` / ``伪造发票来`` / ``做假账`` so
+      ``safety_checker``'s intent detection aligns with
+      ``query_analyzer``'s broader ``伪造`` hint.
+- ✅ ``backend/tests/test_conditional_routing.py`` — 13 new tests
+      across 7 groups: unsafe fast-path identity, invoice fabrication
+      fast-path, standard-path full 9-node trace, prompt-injection
+      inspection stays standard, FastAPI unsafe-query response shape,
+      tracing-confirms-no-retrieval for unsafe, and unit-level tests
+      for ``route_after_query_analysis`` (mutation-free contract
+      enforced). Total pytest count: **195 passed**.
+- ✅ Phase 5A internal field deliberately NOT exposed in the
+      FastAPI response — ``routing_decision`` is internal state +
+      tests + traces only, regression-tested via
+      ``test_fastapi_unsafe_query_returns_refusal_shape``.
+- ✅ No FastAPI API change, no new dependency, no real LLM, no
+      Postgres checkpoint, no human-review handoff.
+
+### Phase 5B — Human Review Handoff & Low-confidence Routing (deferred)
+
+- [ ] ``judge_agent`` → ``human_review_handoff`` conditional edge on
+      ``tax_policy`` / ``invoice_compliance`` / ``conflict`` /
+      ``low_confidence`` outcomes.
+- [ ] Postgres state checkpointing at the handoff boundary.
+- [ ] Reviewer queue (approve / rewrite / reject) API surface.
 
 ## Phase 6 — Accounting RAG Eval Harness
 

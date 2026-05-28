@@ -267,7 +267,11 @@ def answer_generator(state: TrustRAGState) -> dict:
     conclusion = verdict.get("conclusion") or "answerable"
 
     if conclusion == "refuse_unsafe":
-        return _refuse_unsafe(state)
-    if conclusion == "insufficient_evidence":
-        return _insufficient_evidence(state)
-    return _answer_from_evidence(state)
+        result = _refuse_unsafe(state)
+    elif conclusion == "insufficient_evidence":
+        result = _insufficient_evidence(state)
+    else:
+        result = _answer_from_evidence(state)
+
+    result["visited_nodes"] = ["answer_generator"]
+    return result

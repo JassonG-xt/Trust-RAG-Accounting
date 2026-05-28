@@ -39,7 +39,7 @@ def claim_decomposer(state: TrustRAGState) -> dict:
     question = (state.get("question") or "").strip()
     question_type = state.get("question_type") or "general_accounting_qa"
     if not question:
-        return {"claims": []}
+        return {"claims": [], "visited_nodes": ["claim_decomposer"]}
 
     needs_temporal = (
         question_type in _TEMPORAL_TYPES
@@ -73,4 +73,4 @@ def claim_decomposer(state: TrustRAGState) -> dict:
 
     # Unsafe requests still get a single claim so the downstream pipeline
     # has something to attach citations / refusal context to.
-    return {"claims": claims}
+    return {"claims": claims, "visited_nodes": ["claim_decomposer"]}

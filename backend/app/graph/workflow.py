@@ -1,6 +1,6 @@
 """TrustRAG LangGraph workflow builder.
 
-The MVP wires the nine nodes into a linear pipeline:
+Phase 0–4 shipped a fully linear pipeline:
 
     START
       -> query_analyzer
@@ -14,9 +14,28 @@ The MVP wires the nine nodes into a linear pipeline:
       -> answer_generator
       -> END
 
-Phase 2 will introduce conditional edges: low-confidence verdicts route to
-a clarification node, safety violations short-circuit the answer generator,
-etc. See ``docs/langgraph_workflow.md`` for the planned topology.
+Phase 5A adds a conditional edge after ``query_analyzer``. When the
+analyzer classifies the question as ``unsafe_request`` (tax evasion,
+invoice fabrication, voucher destruction, regulator bypass, …), the
+workflow takes a *fast path*: it skips claim decomposition, both
+retrieval nodes, temporal checking, and conflict detection, going
+straight to ``safety_checker -> judge_agent -> answer_generator``.
+
+Everything else takes the standard evidence-aware path verbatim.
+
+```
+            ┌─> safety_checker -> judge_agent -> answer_generator
+unsafe ─────┘
+            (skip retrieval entirely)
+
+standard ──> claim_decomposer -> support_retriever -> counter_retriever
+                 -> temporal_checker -> conflict_detector
+                     -> safety_checker -> judge_agent -> answer_generator
+```
+
+The routing decision lives in ``state["routing_decision"]`` (set by
+``query_analyzer``) so the LangGraph conditional function only *reads*
+state, never mutates it.
 """
 
 from __future__ import annotations
@@ -39,17 +58,36 @@ from .nodes import (
 from .state import TrustRAGState, initial_state
 
 
-_NODE_ORDER: tuple[tuple[str, object], ...] = (
-    ("query_analyzer", query_analyzer),
-    ("claim_decomposer", claim_decomposer),
-    ("support_retriever", support_retriever),
-    ("counter_retriever", counter_retriever),
-    ("temporal_checker", temporal_checker),
-    ("conflict_detector", conflict_detector),
-    ("safety_checker", safety_checker),
-    ("judge_agent", judge_agent),
-    ("answer_generator", answer_generator),
-)
+# ---------------------------------------------------------------------------
+# Conditional routing
+# ---------------------------------------------------------------------------
+
+
+_UNSAFE_BRANCH = "unsafe_fast_path"
+_STANDARD_BRANCH = "standard_rag"
+
+
+def route_after_query_analysis(state: TrustRAGState) -> str:
+    """Phase 5A conditional edge.
+
+    Reads ``state["routing_decision"]`` (written by ``query_analyzer``)
+    and returns the LangGraph branch label. The function never mutates
+    state — that contract keeps the routing decision auditable from
+    a single place (the analyzer).
+    """
+
+    decision = state.get("routing_decision")
+    if decision == _UNSAFE_BRANCH:
+        return _UNSAFE_BRANCH
+    # Default branch covers every non-unsafe question_type, including
+    # the case where query_analyzer didn't set routing_decision at all
+    # (e.g. an empty question or a future node added before analysis).
+    return _STANDARD_BRANCH
+
+
+# ---------------------------------------------------------------------------
+# Graph wiring
+# ---------------------------------------------------------------------------
 
 
 def build_workflow():
@@ -60,14 +98,42 @@ def build_workflow():
     """
 
     graph = StateGraph(TrustRAGState)
-    for name, fn in _NODE_ORDER:
-        graph.add_node(name, fn)
 
-    # Linear edge wiring. The order in ``_NODE_ORDER`` is the source of truth.
-    graph.add_edge(START, _NODE_ORDER[0][0])
-    for (name, _), (next_name, _) in zip(_NODE_ORDER, _NODE_ORDER[1:]):
-        graph.add_edge(name, next_name)
-    graph.add_edge(_NODE_ORDER[-1][0], END)
+    # Register every node — both branches share most of them.
+    graph.add_node("query_analyzer", query_analyzer)
+    graph.add_node("claim_decomposer", claim_decomposer)
+    graph.add_node("support_retriever", support_retriever)
+    graph.add_node("counter_retriever", counter_retriever)
+    graph.add_node("temporal_checker", temporal_checker)
+    graph.add_node("conflict_detector", conflict_detector)
+    graph.add_node("safety_checker", safety_checker)
+    graph.add_node("judge_agent", judge_agent)
+    graph.add_node("answer_generator", answer_generator)
+
+    # Entry into query_analyzer.
+    graph.add_edge(START, "query_analyzer")
+
+    # Phase 5A — conditional edge: unsafe_fast_path skips retrieval.
+    graph.add_conditional_edges(
+        "query_analyzer",
+        route_after_query_analysis,
+        {
+            _UNSAFE_BRANCH: "safety_checker",
+            _STANDARD_BRANCH: "claim_decomposer",
+        },
+    )
+
+    # Standard-path linear edges (unchanged from Phase 4B).
+    graph.add_edge("claim_decomposer", "support_retriever")
+    graph.add_edge("support_retriever", "counter_retriever")
+    graph.add_edge("counter_retriever", "temporal_checker")
+    graph.add_edge("temporal_checker", "conflict_detector")
+    graph.add_edge("conflict_detector", "safety_checker")
+
+    # Tail shared by both branches.
+    graph.add_edge("safety_checker", "judge_agent")
+    graph.add_edge("judge_agent", "answer_generator")
+    graph.add_edge("answer_generator", END)
 
     return graph.compile()
 
@@ -85,3 +151,11 @@ def run_query(question: str) -> dict:
     workflow = get_workflow()
     state = initial_state(question)
     return workflow.invoke(state)
+
+
+__all__ = [
+    "build_workflow",
+    "get_workflow",
+    "route_after_query_analysis",
+    "run_query",
+]

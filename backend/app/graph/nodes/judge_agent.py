@@ -138,4 +138,5 @@ def judge_agent(state: TrustRAGState) -> dict:
             "conclusion": conclusion,
             "reasoning_summary": _summarize(reasoning_parts),
         },
+        "visited_nodes": ["judge_agent"],
     }

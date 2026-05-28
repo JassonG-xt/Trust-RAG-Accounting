@@ -4,10 +4,11 @@ Pulls evidence that *supports* answering the user's question.
 
 Phase 4A routes through the LangChain adapter layer instead of calling
 :meth:`DocumentRepository.search` directly. Phase 4B layers local
-tracing on top: when ``TRUSTRAG_TRACE_ENABLED=true`` the runnable is
-wrapped in a span-recording invoker that writes start / end / error
-events into the :class:`LocalTraceCollector`. The retrieval signal
-itself is unchanged.
+tracing on top. Phase 5A adds ``routing_decision`` / ``routing_reason``
+to the runnable's metadata + a ``route:standard_rag`` tag so a trace
+reader can immediately see that this node is part of the standard
+evidence-aware path (the unsafe fast-path never executes this node).
+The retrieval signal itself is unchanged.
 """
 
 from __future__ import annotations
@@ -28,6 +29,8 @@ def support_retriever(state: TrustRAGState) -> dict:
     settings = get_settings()
     question = state.get("question") or ""
     question_type = state.get("question_type")
+    routing_decision = state.get("routing_decision") or "standard_rag"
+    routing_reason = state.get("routing_reason") or "default_standard_rag"
 
     repository = get_repository()
     # Workflow-level safety policy: when the user's query literally
@@ -40,6 +43,7 @@ def support_retriever(state: TrustRAGState) -> dict:
     tags = list(_BASE_TAGS)
     if question_type:
         tags.append(f"question_type:{question_type}")
+    tags.append(f"route:{routing_decision}")
 
     metadata = {
         "stance": "support",
@@ -47,6 +51,8 @@ def support_retriever(state: TrustRAGState) -> dict:
         "top_k": _TOP_K,
         "include_malicious": include_malicious,
         "adapter": "TrustRAGLangChainRetriever",
+        "routing_decision": routing_decision,
+        "routing_reason": routing_reason,
     }
 
     trace_collector = maybe_get_trace_collector(settings)
@@ -63,4 +69,7 @@ def support_retriever(state: TrustRAGState) -> dict:
         trace_collector=trace_collector,
     )
     evidence = runnable.invoke(question)
-    return {"support_evidence": evidence}
+    return {
+        "support_evidence": evidence,
+        "visited_nodes": ["support_retriever"],
+    }

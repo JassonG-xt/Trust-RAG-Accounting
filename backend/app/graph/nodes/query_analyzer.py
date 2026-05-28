@@ -125,18 +125,24 @@ def query_analyzer(state: TrustRAGState) -> dict:
             "domain": "accounting",
             "needs_temporal_check": False,
             "needs_safety_check": True,
+            "routing_decision": "standard_rag",
+            "routing_reason": "default_standard_rag",
+            "visited_nodes": ["query_analyzer"],
             "errors": ["empty question"],
         }
 
     lower = question.lower()
 
-    # 1. Highest priority: unsafe intent.
+    # 1. Highest priority: unsafe intent → Phase 5A fast-path routing.
     if _has_any(question, lower, _UNSAFE_HINTS):
         return {
             "question_type": "unsafe_request",
             "domain": "accounting",
             "needs_temporal_check": False,
             "needs_safety_check": True,
+            "routing_decision": "unsafe_fast_path",
+            "routing_reason": "question_type=unsafe_request",
+            "visited_nodes": ["query_analyzer"],
         }
 
     has_how_verb = _has_any_lower(lower, _HOW_VERBS) or any(h in question for h in _HOW_VERBS)
@@ -202,4 +208,7 @@ def query_analyzer(state: TrustRAGState) -> dict:
         "domain": "accounting",
         "needs_temporal_check": needs_temporal_check,
         "needs_safety_check": True,
+        "routing_decision": "standard_rag",
+        "routing_reason": "default_standard_rag",
+        "visited_nodes": ["query_analyzer"],
     }
