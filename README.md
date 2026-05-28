@@ -9,7 +9,7 @@
 
 <p align="left">
   <img alt="status" src="https://img.shields.io/badge/status-alpha-orange.svg">
-  <img alt="phase" src="https://img.shields.io/badge/phase-6C%20PR%20eval%20comment-blue.svg">
+  <img alt="phase" src="https://img.shields.io/badge/phase-7A%20minimal%20dashboard-blue.svg">
   <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-blue.svg">
   <img alt="framework" src="https://img.shields.io/badge/built%20with-LangGraph-7c3aed.svg">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-green.svg">
@@ -452,6 +452,13 @@ What the workflow can do today, end-to-end:
     `accounting-eval-report` artifact reference. Fork PRs skip the
     comment path safely, and reruns update the existing marked comment
     instead of creating duplicates.
+47. **Minimal local dashboard (Phase 7A)** - FastAPI serves a
+    vanilla HTML / CSS / JavaScript reviewer dashboard at
+    `http://localhost:8000/dashboard`. It has no Node, npm, React,
+    Vite, external CDN, or build step. The dashboard wraps existing
+    local APIs for the query console, evidence and citation
+    inspection, document/chunk overview, human review queue, latest
+    eval report, and local traces when tracing is enabled.
 
 ## Planned Features
 
@@ -519,6 +526,9 @@ python -m backend.app.evals.compare \
     --category-threshold current_policy=0.95 \
     --category-threshold client_specific=0.95 \
     --category-threshold citation_faithfulness=0.95
+
+# 7. Open the local reviewer dashboard (Phase 7A)
+# http://localhost:8000/dashboard
 ```
 
 No API keys are required — all LLM and retrieval calls are

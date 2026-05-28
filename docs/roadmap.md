@@ -531,11 +531,24 @@ docs. **Completed.**
 
 ## Phase 7 — Frontend Dashboard
 
-- [ ] Next.js reviewer dashboard with:
-  - Question input + live workflow trace.
-  - Evidence panel (support / counter side-by-side).
-  - Temporal timeline of policy versions.
-  - Review queue with approve / rewrite / reject.
+### Phase 7A — Minimal reviewer dashboard (current) ✅
+
+- [x] FastAPI-served static dashboard at `/dashboard`.
+- [x] Vanilla HTML / CSS / JavaScript only: no Node, npm, React,
+      Next.js, Vite, CDN, telemetry, or build step.
+- [x] Query console for TrustRAG accounting questions.
+- [x] Evidence, citation, safety, temporal, conflict, and review
+      metadata inspection.
+- [x] Documents/chunks overview, human review queue viewer, latest
+      eval report viewer, and local trace viewer.
+- [x] Read-only `GET /v1/evals/latest` diagnostic endpoint.
+
+### Phase 7B — Reviewer actions and durable UI (deferred)
+
+- [ ] Reviewer approve / reject / rewrite actions.
+- [ ] Persistent dashboard state.
+- [ ] Deployable UI.
+- [ ] Historical eval dashboard.
 
 ## Phase 8 — GitHub Page Showcase
 

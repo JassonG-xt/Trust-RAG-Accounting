@@ -9,11 +9,15 @@ graph.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from .core.config import get_settings
+from .evals.models import EvalRunSummary
 from .graph.workflow import run_query
 from .review import (
     ReviewClearResponse,
@@ -22,6 +26,8 @@ from .review import (
 )
 from .schemas.rag import (
     DocumentsResponse,
+    EvalLatestResponse,
+    EvalLatestSummary,
     HealthResponse,
     HumanReviewSummary,
     RAGQueryRequest,
@@ -33,6 +39,10 @@ from .services.document_repository import get_repository
 from .tracing import get_local_trace_collector
 
 logger = logging.getLogger("trust_rag.main")
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+FRONTEND_DIR = PROJECT_ROOT / "frontend"
+FRONTEND_INDEX = FRONTEND_DIR / "index.html"
 
 
 def create_app() -> FastAPI:
@@ -49,10 +59,25 @@ def create_app() -> FastAPI:
             "human-review boundaries. Phase 2A: real Markdown ingestion."
         ),
     )
+    if FRONTEND_DIR.exists():
+        app.mount(
+            "/dashboard/static",
+            StaticFiles(directory=FRONTEND_DIR),
+            name="dashboard-static",
+        )
 
     @app.get("/healthz", response_model=HealthResponse, tags=["meta"])
     def healthz() -> HealthResponse:
         return HealthResponse()
+
+    @app.get("/dashboard", include_in_schema=False)
+    def dashboard() -> FileResponse:
+        if not FRONTEND_INDEX.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"dashboard file not found: {FRONTEND_INDEX}",
+            )
+        return FileResponse(FRONTEND_INDEX)
 
     @app.get("/v1/documents", response_model=DocumentsResponse, tags=["meta"])
     def list_documents() -> DocumentsResponse:
@@ -79,6 +104,72 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
         return _state_to_response(state)
+
+    @app.get(
+        "/v1/evals/latest",
+        response_model=EvalLatestResponse,
+        tags=["evals"],
+    )
+    def latest_eval() -> EvalLatestResponse:
+        """Read the latest local eval artifacts for the dashboard.
+
+        The endpoint is intentionally passive: it never runs evals and
+        never writes files. Missing artifacts simply return
+        ``available=false`` so a fresh checkout still has a usable
+        dashboard.
+        """
+
+        current_settings = get_settings()
+        results_path = Path(current_settings.trustrag_eval_results_path)
+        report_path = Path(current_settings.trustrag_eval_report_path)
+        if not results_path.exists() and not report_path.exists():
+            return EvalLatestResponse(
+                available=False,
+                summary=None,
+                by_category={},
+                markdown_report=None,
+            )
+
+        summary: EvalRunSummary | None = None
+        if results_path.exists():
+            try:
+                summary = EvalRunSummary.model_validate_json(
+                    results_path.read_text(encoding="utf-8")
+                )
+            except Exception as exc:
+                logger.warning("failed to read eval results from %s: %s", results_path, exc)
+
+        markdown_report = None
+        if report_path.exists():
+            try:
+                markdown_report = report_path.read_text(encoding="utf-8")
+            except Exception as exc:
+                logger.warning("failed to read eval report from %s: %s", report_path, exc)
+
+        if summary is None and markdown_report is None:
+            return EvalLatestResponse(
+                available=False,
+                summary=None,
+                by_category={},
+                markdown_report=None,
+            )
+
+        return EvalLatestResponse(
+            available=True,
+            summary=(
+                EvalLatestSummary(
+                    total=summary.total,
+                    passed=summary.passed,
+                    failed=summary.failed,
+                    skipped=summary.skipped,
+                    score=summary.score,
+                )
+                if summary is not None
+                else None
+            ),
+            by_category=summary.by_category if summary is not None else {},
+            markdown_report=markdown_report,
+        )
 
     @app.get("/v1/debug/traces", response_model=TracesResponse, tags=["debug"])
     def list_traces() -> TracesResponse:

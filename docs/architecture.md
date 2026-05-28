@@ -92,6 +92,27 @@ replaceable.
 
 ## 6. Backend Architecture
 
+Phase 7A adds a local reviewer dashboard on top of the backend without
+changing the LangGraph workflow or the existing RAG response shape.
+FastAPI serves `frontend/index.html`, `frontend/app.js`, and
+`frontend/styles.css` at `GET /dashboard` and
+`/dashboard/static/*`. The dashboard has no Node, npm, React, Vite,
+CDN, telemetry, or frontend build step.
+
+The dashboard is a thin client over existing diagnostic APIs:
+
+- `GET /healthz`
+- `GET /v1/documents`
+- `POST /v1/rag/query`
+- `GET /v1/review/queue`
+- `GET /v1/debug/traces`
+- `GET /v1/evals/latest`
+
+`GET /v1/evals/latest` is read-only. It reads
+`data/eval_results.json` and `data/eval_report.md` when present and
+returns `available=false` when a fresh checkout has no generated eval
+artifacts. It never runs evals and never writes files.
+
 ```
 backend/app/
 ├── main.py            # FastAPI app, route handlers, state→response mapping

@@ -292,3 +292,25 @@ class TracesClearResponse(BaseModel):
 
     enabled: bool
     cleared: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 7A - Dashboard eval diagnostic endpoint
+# ---------------------------------------------------------------------------
+
+
+class EvalLatestSummary(BaseModel):
+    total: int
+    passed: int
+    failed: int
+    skipped: int
+    score: float
+
+
+class EvalLatestResponse(BaseModel):
+    """Read-only projection for the latest local eval artifacts."""
+
+    available: bool
+    summary: EvalLatestSummary | None = None
+    by_category: dict = Field(default_factory=dict)
+    markdown_report: str | None = None
