@@ -1,36 +1,20 @@
-# Minimal Reviewer Dashboard
+# Dashboard
 
-Phase 7A adds a lightweight local dashboard served by FastAPI at:
+TrustRAG Accounting ships a local dashboard served directly by FastAPI:
 
 ```text
 http://localhost:8000/dashboard
 ```
 
-Phase 7B layers reviewer actions on top: every queued checkpoint can
-be moved through a small state machine from the same page.
+It is intentionally lightweight:
 
-The dashboard is intentionally small:
+- No Node.
+- No npm.
+- No React, Next.js, Vite, or frontend build step.
+- No external CDN, fonts, telemetry, or chart library.
+- Only `frontend/index.html`, `frontend/styles.css`, and `frontend/app.js`.
 
-- no Node or npm
-- no React, Next.js, Vite, or frontend build step
-- no external CDN, fonts, telemetry, or assets
-- vanilla `frontend/index.html`, `frontend/styles.css`, and
-  `frontend/app.js`
-
-## Panels
-
-- RAG query console with accounting demo questions.
-- Answer, confidence, question type, and human-review metadata.
-- Citations, support evidence, and counter evidence with collapsible
-  content previews.
-- Documents/chunks overview from `GET /v1/documents`.
-- Human review queue from `GET /v1/review/queue` with computed
-  status, action buttons, reviewer note, optional rewritten answer,
-  and action history.
-- Latest eval report from `GET /v1/evals/latest`.
-- Local traces from `GET /v1/debug/traces` when tracing is enabled.
-
-## Local Demo
+## Run Locally
 
 ```bash
 python -m backend.app.ingestion.ingest_sample_docs \
@@ -39,193 +23,133 @@ python -m backend.app.ingestion.ingest_sample_docs \
   --chunks-out data/trustrag_chunks.json
 
 bash scripts/run_eval_gate.sh
-
 bash scripts/archive_eval_snapshot.sh
-
 bash scripts/run_dev.sh
 ```
 
-Then open `/dashboard`.
+Open:
 
-## Eval Report Endpoint
+```text
+http://localhost:8000/dashboard
+```
 
-`GET /v1/evals/latest` reads local generated files only:
+## Panels
 
-- `data/eval_results.json`
-- `data/eval_report.md`
+| Panel | API |
+|---|---|
+| Query console | `POST /v1/rag/query` |
+| Answer and citations | `POST /v1/rag/query` response |
+| Document/chunk overview | `GET /v1/documents` |
+| Human review queue | `GET /v1/review/queue` |
+| Review summary cards | `GET /v1/review/queue/summary` |
+| Reviewer actions | `POST /v1/review/queue/{id}/actions` |
+| Action history | `GET /v1/review/queue/{id}/actions` |
+| Review export | `GET /v1/review/queue/export.json` and `.csv` |
+| Latest eval report | `GET /v1/evals/latest` |
+| Eval trend panel | `GET /v1/evals/history` |
+| Local traces | `GET /v1/debug/traces` |
 
-It returns `available=false` when those files are missing. It never
-runs evals and never writes files.
+## Demo Flow
+
+1. Ask an Alpha Trading bookkeeping question and inspect client-specific citations.
+2. Ask a reimbursement policy question and inspect active/stale versions.
+3. Ask a Beta invoice-compliance question and inspect the review queue.
+4. Ask a tax-policy question and observe forced human review.
+5. Ask an unsafe request and observe the fast refusal path.
+6. Ask about a prompt-injection document and inspect the safety analysis.
+7. Apply a reviewer action and inspect action history.
+8. Open the eval report and Eval Trend panel.
+
+The full script is in [`demo_walkthrough.md`](demo_walkthrough.md).
+
+## Eval Report Viewer
+
+`GET /v1/evals/latest` reads:
+
+```text
+data/eval_results.json
+data/eval_report.md
+```
+
+If those files do not exist, the response returns `available=false`. The endpoint is read-only. It never runs evals or writes files.
 
 ## Eval Trends
 
-Phase 7D adds a local-file-driven trend panel. It reads compact
-snapshots from:
+The Eval Trend panel reads compact local snapshots:
 
 ```text
 data/eval_history/*.json
 ```
 
-Run:
+Create a snapshot:
 
 ```bash
 bash scripts/run_eval_gate.sh
 bash scripts/archive_eval_snapshot.sh
 ```
 
-Then open:
+The panel displays:
 
-```text
-http://localhost:8000/dashboard
-```
+- Latest eval score.
+- Latest pass/fail/skipped counts.
+- Score delta versus the previous snapshot.
+- Snapshot count.
+- Category score table for the latest snapshot.
+- Lightweight SVG/CSS trend visualization.
 
-The dashboard fetches `GET /v1/evals/history` and renders:
-
-- latest eval score,
-- latest pass / fail / skipped counts,
-- score delta versus the previous snapshot,
-- snapshot count,
-- category score table for the latest snapshot,
-- a lightweight SVG score trend.
-
-If no snapshots exist, the panel shows:
+Empty state:
 
 ```text
 No eval history snapshots found. Run eval gate and archive a snapshot.
 ```
 
-The API is read-only. It never runs evals, archives snapshots, pulls
-GitHub artifacts, or writes files from the dashboard request path.
+`GET /v1/evals/history` is read-only. It does not run evals, archive snapshots, import GitHub artifacts, or write files.
 
-## Filtering and Export (Phase 7C)
+## Review Filtering and Export
 
-The dashboard's Review Queue panel supports server-side filtering,
-pagination, and export.
+`GET /v1/review/queue` supports:
 
-### Filters
+- `status`
+- `question_type`
+- `reason`
+- `reviewer`
+- `has_actions`
+- `sort`
+- `limit`
+- `offset`
 
-Each filter sends a query parameter to `GET /v1/review/queue` and
-`GET /v1/review/queue/summary`:
+`GET /v1/review/queue/summary` uses the same filters and returns aggregate counts by status, question type, and reason.
 
-- `status` — pending / approved / rejected / changes_requested /
-  resolved / handoff_failed. Matches the *computed* status (post-
-  action), not the raw checkpoint status.
-- `question_type` — exact match (e.g. `tax_policy`).
-- `reason` — exact match against `human_review_reasons` (e.g.
-  `tax_policy_always_review`).
-- `reviewer` — matches any reviewer that appears in the
-  checkpoint's action history.
-- `has_actions` — `true` to show only checkpoints that have at
-  least one action.
-- `sort` — `created_at_desc` (default), `created_at_asc`,
-  `status_asc`.
-
-### Pagination
-
-- `limit` — default 20, max 200.
-- `offset` — default 0.
-- The dashboard renders a `← Prev / page X of Y / Next →` pager when
-  `total > limit`.
-
-The response carries both `count` (the current page size) and
-`total` (the size of the filtered set before paging) so clients can
-render a pager without re-counting.
-
-### Summary cards
-
-`GET /v1/review/queue/summary` aggregates the filtered queue:
-
-```json
-{
-  "enabled": true,
-  "total": 12,
-  "by_status": {"pending": 5, "approved": 6, "rejected": 1},
-  "by_question_type": {"tax_policy": 8, "invoice_compliance": 4},
-  "by_reason": {"tax_policy_always_review": 8, "..."}
-}
-```
-
-The dashboard renders one card per status (Total / Pending /
-Approved / Rejected / Changes / Resolved) tinted with the same
-pass/warn/fail palette as the answer badges.
-
-### Action history filtering
-
-`GET /v1/review/queue/{id}/actions` supports:
-
-- `action_type` — approve / reject / request_changes / rewrite_note
-  / resolve / reopen.
-- `reviewer` — exact match.
-- `limit` / `offset` — pagination parameters.
-
-The response keeps the Phase 7B `actions` list but adds `count`,
-`total`, `limit`, `offset`, and `filters` fields.
-
-### Export
-
-Two export endpoints share the same filter parameters as the list
-endpoint but ignore pagination — they return every filtered row:
-
-- `GET /v1/review/queue/export.json` →
-  `{"exported_at": "...", "count": N, "entries": [...], "filters": {...}, "sort": "..."}`
-- `GET /v1/review/queue/export.csv` → `text/csv` with
-  `Content-Disposition: attachment; filename="review_queue_export.csv"`.
-
-The CSV uses stdlib `csv.DictWriter`. Columns:
+Export endpoints ignore pagination and export the full filtered set:
 
 ```text
-review_queue_id, status, initial_status, question_type, confidence,
-needs_human_review, human_review_reasons, created_at, action_count,
-last_action_at, question
+GET /v1/review/queue/export.json
+GET /v1/review/queue/export.csv
 ```
 
-Full document content is **not** included in either export — the
-trace-safe `ReviewQueueEntry` projection is the only shape that
-leaves the JSONL store. Reviewers can follow `review_queue_id`
-back to the FastAPI endpoints for the rest.
+The export shape is content-safe. It mirrors the review queue projection and excludes full document content.
 
-## Review Actions
+## Reviewer Actions
 
-This dashboard supports local demo actions:
-- approve
-- reject
-- request_changes
-- rewrite_note
-- resolve
-- reopen
+Supported local demo actions:
 
-State transitions:
+- `approve`
+- `reject`
+- `request_changes`
+- `rewrite_note`
+- `resolve`
+- `reopen`
 
-```text
-pending --approve----------> approved
-pending --reject-----------> rejected
-pending --request_changes--> changes_requested
-pending --resolve----------> resolved
-pending --rewrite_note-----> pending (note only)
+The state machine is implemented in `backend/app/review/state_machine.py`. Actions are appended to `data/review_actions.jsonl` and reflected back through the action-history API.
 
-changes_requested --approve / reject / resolve / reopen ...
-approved / rejected / resolved --reopen--> pending
-handoff_failed --rewrite_note / reopen ...
-```
+This is a local demo workflow, not production authorization:
 
-Each action lands as one append-only JSON line in
-`data/review_actions.jsonl`. The dashboard fetches
-`GET /v1/review/queue/{id}/actions` after every action so the history
-view reflects server truth.
+- No authentication.
+- No authorization.
+- Reviewer names are local user-provided strings.
+- JSONL files are local and gitignored.
+- Reviewer rewrites are stored but not replayed into the RAG workflow.
 
-These actions are stored in local JSONL and are not production-grade authorization.
+## Screenshot Targets
 
-### Production caveats
-
-This is a **local demo workflow**, not a production audit system:
-
-- No authentication. The reviewer field is whatever the dashboard
-  sends (`local_reviewer` by default).
-- No authorization. Anyone with HTTP access to the FastAPI process
-  can apply any action.
-- No persistence beyond the local JSONL file. Run `DELETE
-  /v1/review/queue` (or restart with the file cleared) and the
-  action log is gone.
-- No LLM-generated rewrite. `rewritten_answer` is a free-text
-  reviewer field the system stores verbatim; nothing replays it back
-  into the workflow.
+Use [`screenshots.md`](screenshots.md) for the recommended screenshot list and capture setup.

@@ -1,690 +1,96 @@
-# TrustRAG — Roadmap (Accounting Firm Edition)
+# Roadmap
 
-> Phasing is *quality-gated*, not calendar-gated. Each phase ships when
-> it can pass its own regression suite.
+TrustRAG Accounting is phase-gated by tests and evals, not dates. Each phase is considered complete only when local tests, the deterministic accounting eval gate, and CI are green.
 
-## Phase 0 — Generic TrustRAG Scaffold ✅
+## Completed
 
-Initial scaffold with LangGraph workflow skeleton, deterministic mock
-KB, sample policies, Pydantic API contract, pytest suite, and project
-docs. **Completed.**
+| Phase | Status | Summary |
+|---|---|---|
+| 0 | Complete | FastAPI + LangGraph workflow skeleton. |
+| 1 | Complete | Accounting-firm verticalization with fictional clients and accounting question types. |
+| 2A | Complete | Markdown ingestion and `DocumentRepository`. |
+| 2B | Complete | Markdown/PDF/DOCX ingestion and chunk layer. |
+| 3A | Complete | Hybrid retrieval interface with local keyword + BM25 retrieval. |
+| 3B | Complete | Embedding provider seam and deterministic mock vector retrieval. |
+| 3C | Complete | Reranker seam with deterministic mock reranker. |
+| 4A | Complete | LangChain `BaseRetriever` adapter and Runnable retrieval nodes. |
+| 4B | Complete | Local tracing hooks and runnable metadata. |
+| 5A | Complete | Unsafe request fast-path conditional routing. |
+| 5B | Complete | Human review handoff and local review queue. |
+| 6A | Complete | Accounting RAG eval harness. |
+| 6B | Complete | GitHub Actions CI eval gate. |
+| 6C | Complete | PR eval comment bot and regression delta. |
+| 7A | Complete | Minimal FastAPI-served reviewer dashboard. |
+| 7B | Complete | Reviewer actions and local review state transitions. |
+| 7C | Complete | Dashboard filtering, pagination, and export. |
+| 7D | Complete | Historical eval trend dashboard from local snapshots. |
+| 8A | Complete | GitHub showcase polish: README, architecture, demo, screenshots guide, API examples. |
 
-## Phase 1 — Accounting Firm Vertical (current) ✅
+Current `main` baseline before Phase 8A:
 
-- ✅ Mock KB rewritten to accounting domain (reimbursement 2024/2026,
-      Alpha SOP, Beta invoice rule, VAT note, monthly checklist,
-      adversarial sample).
-- ✅ Pydantic schemas extended with accounting-specific fields:
-      `Claim.claim_id/claim_text/needs_temporal_check/needs_counter_evidence`,
-      `SafetyAnalysis.unsafe_request_detected/unsafe_intent_categories`,
-      `JudgeVerdict.conclusion/reasoning_summary`,
-      `Evidence.client/document_type`.
-- ✅ Node behaviors updated:
-  - `query_analyzer` classifies into 9 accounting question types.
-  - `claim_decomposer` emits structured claims with routing hints.
-  - `safety_checker` adds unsafe-request detection on user intent
-    (tax_evasion / invoice_fabrication / voucher_destruction /
-    regulator_bypass).
-  - `judge_agent` outputs `conclusion` + `reasoning_summary`; forces
-    human review on tax / invoice / conflict / injection paths.
-  - `answer_generator` has three paths: refusal / insufficient /
-    evidence-based. All include the standing risk disclaimer.
-- ✅ Client-aware retrieval — Alpha SOP cannot leak into Beta answers.
-- ✅ 7 sample_docs and 7 pytest tests covering the matrix.
-- ✅ README, docs/, demo script all rebranded for the accounting
-      firm scenario.
+- 419 backend tests passing.
+- 18/18 active eval cases passing.
+- Eval score `1.000`.
+- CI green.
+- Tag `trustrag-accounting-phase-7d-eval-trends-v1`.
 
-## Phase 2A — Real Markdown Ingestion (current) ✅
+## Current Capabilities
 
-- ✅ YAML front-matter parser (`backend/app/ingestion/frontmatter.py`)
-      with explicit date → ISO-string normalization.
-- ✅ `AccountingDocument` Pydantic model with stable `document_id`,
-      `policy_family`, `replaces`, `checksum`, `ingested_at`.
-- ✅ Markdown loader + ingestion CLI:
-      `python -m backend.app.ingestion.ingest_sample_docs --source sample_docs --out data/trustrag_documents.json`.
-- ✅ `DocumentRepository` with three-tier loading (JSON store →
-      sample_docs/ → hardcoded fallback) and client-aware search.
-- ✅ Retrievers (`support_retriever`, `counter_retriever`) routed
-      through the repository — workflow no longer reads hardcoded mock
-      records.
-- ✅ `temporal_checker` upgraded to use `replaces` metadata for
-      tie-break; emits `active_documents`, `expired_documents`,
-      `selected_active_document`, `temporal_conflict`,
-      `selection_reason`.
-- ✅ `conflict_detector` switched from doc_id regex to ingested
-      `policy_family` metadata.
-- ✅ `query_analyzer` priority fix — HOW-verb on bookkeeping topic
-      routes to `bookkeeping_sop` rather than `invoice_compliance`.
-- ✅ `judge_agent` hard-gate model: review fires on unsafe / injection
-      / tax_policy / invoice_compliance / evidence_conflict /
-      temporal_conflict / insufficient_evidence / low_confidence.
-- ✅ Optional read-only `GET /v1/documents` diagnostic endpoint.
-- ✅ Phase 2A tests added (13 ingestion + 8 workflow = 21 new/updated).
+- Local FastAPI API and Swagger docs.
+- LangGraph workflow with unsafe fast-path and human-review handoff.
+- Multi-format ingestion with metadata validation.
+- Local hybrid retrieval over chunks.
+- Deterministic mock embedding and reranker providers.
+- Content-safe prompt-injection handling.
+- Local reviewer dashboard with actions, filters, pagination, and export.
+- Latest eval report viewer and local eval trend panel.
+- Deterministic eval suite in CI with PR comments and artifacts.
 
-## Phase 2B — Multi-format ingestion + chunk layer (current) ✅
+## Near-Term Next Steps
 
-- ✅ `pypdf` + `python-docx` added; PDF and DOCX loaders accept
-      sidecar `*.metadata.yaml` files (TrustRAG refuses to guess
-      accounting metadata).
-- ✅ `unified_loader.load_documents_from_directory` dispatches on
-      file suffix and skips sidecar / hidden files.
-- ✅ `DocumentChunk` Pydantic model inherits every document-level
-      field needed by graph nodes; stable
-      `{document_id}::chunk_{NNNN}` IDs.
-- ✅ `chunker.py` deterministic chunking: ATX-heading split for
-      Markdown, paragraph split for PDF/DOCX, sliding-window fallback
-      for oversize sections.
-- ✅ `store_writer` + `ingest_sample_docs` CLI v2:
-      `--documents-out` + `--chunks-out` (Phase 2A `--out` flag still
-      works via back-compat).
-- ✅ `DocumentRepository` loads chunks first
-      (`chunk_store → document_store → sample_docs → fallback`) and
-      returns chunk-level evidence dicts.
-- ✅ Workflow citations carry `chunk_id`, `section_title`, `source`,
-      `document_id`.
-- ✅ `GET /v1/documents` exposes `chunk_count` and load `source`.
-- ✅ 40 pytest tests pass: 9 chunking + 8 multiformat + 14 ingestion
-      + 8 workflow + 1 health.
+### Phase 8B - Screenshots and GitHub Pages-style showcase
 
-## Phase 3A — Accounting Hybrid Retrieval (current) ✅
+- Capture tracked, small screenshots under `docs/assets/`.
+- Add a visual walkthrough section to the README.
+- Optionally add a static GitHub Pages-friendly showcase page generated from existing docs.
 
-- ✅ New `backend/app/retrieval/` package with `MetadataFilter`,
-      `ScoredChunk`, `ScoreBreakdown` Pydantic models.
-- ✅ Bilingual accounting tokenizer with curated query expansion
-      (`餐饮` → `meal/entertainment`, `打车` → `taxi`,
-      `小规模纳税人` → `small-scale taxpayer`, etc.).
-- ✅ `KeywordRetriever` — preserves Phase 2A scoring behavior
-      (client / type / stance / chunk-index stability) under the new
-      pluggable interface, exposes per-component score breakdown.
-- ✅ Pure-Python Okapi `BM25Retriever` — no external dependency,
-      `k1=1.5, b=0.75`, max-normalized to `[0, 1]`.
-- ✅ `HybridRetriever` — linear weighted fusion (0.45 keyword + 0.55
-      BM25), merge by chunk_id, stable sort by `(score desc, chunk_id
-      asc)`. Malicious chunks are quarantined behind a final-score
-      cap of 0.20 with the cap surfaced as an explicit
-      ``malicious_penalty`` so the score breakdown invariant
-      ``score == breakdown.total()`` still holds.
-- ✅ `RetrievalService` — single facade
-      (`backend/app/services/document_repository.py` only imports
-      this). Owns metadata-filter construction.
-- ✅ `DocumentRepository.search` routed through `RetrievalService`;
-      every evidence dict carries `score_breakdown` +
-      `retrieval_strategy`. Legacy `limit` + `client` kwargs honored
-      for back-compat. New optional kwargs: `top_k`, `question_type`,
-      `include_malicious`.
-- ✅ `support_retriever` / `counter_retriever` pass
-      `state["question_type"]` through to the retrieval layer for
-      stronger document_type inference.
-- ✅ Pydantic `Evidence` schema gained optional `score_breakdown` +
-      `retrieval_strategy` fields (non-breaking).
-- ✅ 29 new retrieval tests (tokenizer / filters / KeywordRetriever /
-      BM25Retriever / HybridRetriever / DocumentRepository). Total
-      pytest count: 69 passed.
-- ✅ Client-aware filtering still preserved at the chunk level
-      (Alpha query cannot surface Beta chunks and vice versa).
+### Real provider eval
 
-## Phase 3B — Embedding Provider + Vector Retrieval Seam (current) ✅
+- Run the same deterministic eval cases against real embedding, reranker, and LLM provider adapters.
+- Keep the mock-provider suite as the required CI floor.
+- Report provider-specific regressions separately from deterministic regressions.
 
-- ✅ `backend/app/embeddings/` package with `EmbeddingProvider`
-      Protocol + factory + `MockEmbeddingProvider`. Default provider
-      is the deterministic mock — local-only, no network, no API key,
-      no Docker, no real model.
-- ✅ `MockEmbeddingProvider` uses a feature-hashing trick over
-      `expand_query_terms` so a Chinese query like `餐饮发票` shares
-      vector mass with English chunks containing `meal/invoice`. L2
-      normalized, 64 dimensions by default. Same text → identical
-      vector (deterministic by construction).
-- ✅ `backend/app/vectorstore/` package with `VectorRecord`,
-      `VectorSearchResult`, `VectorStore` Protocol, the in-memory
-      cosine store, the optional Qdrant adapter, and the
-      `MetadataFilter → payload_filter` mapping.
-- ✅ `InMemoryVectorStore` — pure-Python cosine similarity with a
-      payload-filter DSL (`client_any_of`, `is_malicious`,
-      `document_type_any_of`, `policy_family_any_of`). Used by every
-      test and the local demo.
-- ✅ Optional `QdrantVectorStore` adapter behind the
-      `trust-rag[qdrant]` extras group. Operators opt in via
-      `VECTOR_STORE=qdrant` + `QDRANT_URL`. Tests never touch the
-      live network.
-- ✅ `VectorRetriever` — indexes chunks via the embedding provider,
-      searches with metadata-filter translation, applies the same
-      stance and malicious-quarantine rules as Keyword + BM25.
-      Strategy label is `vector_mock` or `vector_qdrant`.
-- ✅ `ScoreBreakdown.vector` field added. Invariant
-      `score == breakdown.total()` extended to seven components.
-- ✅ `HybridRetriever` upgraded to three-way fusion. When the vector
-      branch is wired, default weights are `0.35 / 0.40 / 0.25` and
-      the strategy is `hybrid_keyword_bm25_vector`. When disabled
-      via config, two-way fusion (`0.45 / 0.55`) is preserved
-      verbatim and the strategy stays `hybrid_keyword_bm25`.
-- ✅ `RetrievalService` owns embedder + vector store construction
-      and degrades gracefully (logs and falls back to Phase 3A
-      two-way fusion) if vector init fails.
-- ✅ `core/config.py` gains `retrieval_enable_vector`,
-      `embedding_dimension`, `vector_store`, `qdrant_url`,
-      `qdrant_api_key`, `qdrant_collection`.
-- ✅ `pyproject.toml` gains a `[project.optional-dependencies.qdrant]`
-      group containing `qdrant-client`. Default install footprint
-      unchanged.
-- ✅ `.env.example` documents the new vector-related env vars
-      without checking in real values.
-- ✅ 34 new tests across `test_embeddings.py`, `test_vectorstore.py`,
-      `test_vector_retrieval.py`. Existing `test_retrieval.py` and
-      `test_rag_workflow.py` updated for the new strategy label and
-      breakdown shape. Total pytest count: **103 passed**.
-- ✅ Alpha / Beta client isolation preserved end-to-end, including
-      through the vector branch.
+### Postgres persistence
 
-## Phase 3C — Reranker Seam (current) ✅
+- Add durable storage behind the existing review and document-store seams.
+- Preserve the local JSONL path for offline demos and tests.
+- Avoid changing review state-machine semantics.
 
-- ✅ `backend/app/rerankers/` package with `Reranker` Protocol +
-      `create_reranker` factory + `MockReranker` + `BGEReranker`
-      placeholder.
-- ✅ `MockReranker` — deterministic, dependency-free (no torch /
-      transformers / GPU). Computes query-document relevance via
-      bilingual token overlap + title hit + section hit + client
-      match + document_type bonuses. Same `(query, candidates)` →
-      identical output.
-- ✅ `ScoreBreakdown.reranker` field added. Invariant
-      `score == breakdown.total()` extended to eight components.
-- ✅ Malicious cap (0.20) **re-applied after rerank** by absorbing
-      the overshoot into `malicious_penalty`, so the invariant
-      survives. A high reranker score cannot lift a malicious chunk
-      out of quarantine.
-- ✅ `RetrievalService` owns reranker construction and the
-      post-hybrid pass. Lazy import via `_build_reranker()` keeps the
-      retrieval package free of a top-level dependency on the
-      rerankers package (avoids circular import via
-      `retrieval.tokenizer`).
-- ✅ Wide candidate pool — when reranker is enabled, hybrid is
-      called with `top_k = max(caller_top_k, settings.reranker_top_n)`
-      so the rerank pass has enough material to reorder.
-- ✅ Stable tiebreak `(score desc, chunk_id asc)` preserved through
-      rerank.
-- ✅ `core/config.py` gains `reranker_provider`, `reranker_top_n`,
-      `reranker_weight`. Default values: `mock`, `12`, `0.15`. Set
-      `RERANKER_PROVIDER=none` to disable the rerank pass entirely.
-- ✅ `RetrievalService` degrades gracefully — if reranker init
-      raises, log and continue without rerank (workflow boots).
-- ✅ `pyproject.toml` gains an empty
-      `[project.optional-dependencies.reranker]` group documenting
-      the Phase 3E adapter seam without pulling any heavy ML deps.
-- ✅ `.env.example` documents the new reranker env vars.
-- ✅ 24 new tests in `test_rerankers.py` covering determinism,
-      relevance ranking, malicious cap preservation, factory
-      dispatch, RetrievalService integration (default-on and
-      explicit-off via `RERANKER_PROVIDER=none`). Total pytest count:
-      **127 passed**.
-- ✅ Alpha / Beta client isolation preserved through the rerank
-      pass. Malicious quarantine preserved. Breakdown invariant
-      preserved.
+### Authentication and authorization
 
-## Phase 3D — Real Embedding Provider
+- Protect reviewer actions.
+- Distinguish reviewer identity from the current local free-text reviewer field.
+- Keep demo mode simple and explicit.
 
-- [ ] OpenAI / Bedrock embedding providers behind the same
-      `EmbeddingProvider` protocol.
-- [ ] Provider-level rate-limiting + retry budget.
-- [ ] Retrieval metrics: Current Policy Accuracy, Client-Specific
-      Rule Accuracy (now feasible since vector signal is in place).
+### Deployed dashboard
 
-## Phase 3E — Real Reranker Provider
+- Package the existing FastAPI-served dashboard for a hosted demo.
+- Avoid introducing a heavy frontend framework unless a real workflow needs it.
 
-- [ ] BGE / Cohere / cross-encoder reranker adapter behind the
-      `Reranker` Protocol.
-- [ ] `[reranker]` extras group populated with the chosen ML
-      dependencies (torch / transformers / sentence-transformers).
-- [ ] Per-pair score caching so reranker latency doesn't compound
-      under hybrid + rerank.
+## Deferred Ideas
 
-## Phase 4 — Real LangChain Retriever Plumbing
+- GitHub artifact history import for eval trends.
+- Branch-to-branch eval trend comparison.
+- Historical review analytics.
+- LLM-as-judge as an optional analysis layer, not the CI gate.
+- OCR and invoice image recognition.
+- External tax-bureau integrations.
 
-### Phase 4A — LangChain BaseRetriever Adapter + Runnable Retrieval Nodes ✅
+## Explicit Non-Goals
 
-- ✅ New `backend/app/langchain_adapters/` package:
-      `retrieval_context.py` (`RetrievalContext` Pydantic value
-      object), `document_mapping.py` (`scored_chunk_to_document` +
-      `document_to_evidence_dict`),
-      `trust_rag_retriever.py` (`TrustRAGLangChainRetriever`
-      subclass of `langchain_core.retrievers.BaseRetriever`),
-      `runnable_retrieval.py` (`build_retrieval_runnable` factory).
-- ✅ `TrustRAGLangChainRetriever` delegates straight to
-      `RetrievalService.search` — no duplicated scoring / fusion /
-      reranking. Pydantic v2 `model_config = ConfigDict(
-      arbitrary_types_allowed=True)` lets the retriever hold a
-      non-Pydantic `RetrievalService` reference directly.
-- ✅ `build_retrieval_runnable(...)` composes the retriever with a
-      `RunnableLambda` that maps `Document → evidence dict`, so
-      graph nodes still consume `list[dict]` and the workflow
-      response schema stays unchanged.
-- ✅ `support_retriever` and `counter_retriever` now construct the
-      runnable per call and invoke it. The workflow-level
-      "auto-detect injection-trigger query" safety policy is
-      re-applied at the node call site so malicious chunks still
-      surface for `safety_checker` on injection-pattern queries.
-- ✅ `DocumentRepository.get_retrieval_service()` — explicit
-      method seam for adapter construction. The legacy
-      `DocumentRepository.search()` stays available for tests and
-      diagnostics (and for any future code that wants direct
-      access without the LangChain hop).
-- ✅ Document metadata carries `adapter` + `retrieval_context` for
-      tracing / auditing. The evidence dict does **not** surface
-      these — they live only on `Document.metadata` so the FastAPI
-      response shape is unchanged.
-- ✅ `score == round(breakdown.total(), 4)` invariant preserved
-      through the adapter (regression test in
-      `test_langchain_adapters.py`).
-- ✅ 27 new tests across document mapping, BaseRetriever behavior,
-      runnable composition, `RetrievalContext` validation, and graph
-      node integration via `run_query`. Total pytest count: **154
-      passed**.
-- ✅ Alpha / Beta client isolation preserved through the adapter.
-      Malicious quarantine preserved (default off, explicit-on cap
-      stays). LangGraph workflow topology unchanged (still 9 linear
-      nodes).
-- ✅ No new dependency: `langchain-core` was already declared.
-
-### Phase 4B — Local Tracing Hooks + Runnable Metadata ✅
-
-- ✅ New `backend/app/tracing/` package:
-      `models.py` (`TraceEvent` Pydantic model + content-safe
-      `summarize_evidence_payload` helper), `local_collector.py`
-      (`LocalTraceCollector` thread-safe ring buffer +
-      `maybe_get_trace_collector` settings-aware factory),
-      `callbacks.py` (`LocalTraceCallbackHandler` subclass of
-      `langchain_core.callbacks.BaseCallbackHandler`).
-- ✅ `build_retrieval_runnable(...)` now accepts optional
-      `run_name`, `tags`, `metadata`, and `trace_collector`
-      parameters. `.with_config(run_name=..., tags=..., metadata=...)`
-      is applied unconditionally so a LangChain callback can attribute
-      events even when the explicit recording path is off. When a
-      collector is passed, the invoke is wrapped in a span-recording
-      shim that emits start / end / error events.
-- ✅ `support_retriever` and `counter_retriever` graph nodes now
-      annotate the runnable with `trustrag.support_retriever` /
-      `trustrag.counter_retriever` run names, a stable tag set
-      (`trustrag`, `accounting`, `retrieval`, `support|counter`,
-      `question_type:<type>`), and per-call metadata (`stance`,
-      `question_type`, `top_k`, `include_malicious`, `adapter`).
-- ✅ Trace events use content-safe summaries by default:
-      `evidence_count`, `chunk_ids`, `top_score`, `retrieval_strategy`,
-      `has_malicious`. `TRUSTRAG_TRACE_INCLUDE_CONTENT=true` opts in
-      to 200-char content previews per chunk.
-- ✅ Optional `GET /v1/debug/traces` + `DELETE /v1/debug/traces`
-      endpoints on FastAPI. Both return `{"enabled": false, ...}`
-      when the feature flag is off, so a client can probe state
-      without depending on a 404.
-- ✅ Settings: `TRUSTRAG_TRACE_ENABLED`, `TRUSTRAG_TRACE_MODE`,
-      `TRUSTRAG_TRACE_MAX_EVENTS`, `TRUSTRAG_TRACE_INCLUDE_CONTENT`.
-      `TRUSTRAG_TRACE_MODE=local` is the only supported value;
-      anything else logs a warning and falls back to disabled.
-- ✅ `.env.example` documents `LANGCHAIN_TRACING_V2=false`,
-      `LANGCHAIN_API_KEY=` (empty), `LANGCHAIN_PROJECT=` (empty)
-      as **deliberately unset defaults** so a misconfigured machine
-      cannot accidentally upload trace data to a remote service.
-- ✅ 28 new tests in `test_tracing.py`: collector behavior
-      (ring buffer / clear / errors), summarizer behavior
-      (content gating), settings + mode-fallback helper, runnable
-      tracing (disabled-vs-enabled output identity, start/end/error
-      events, no full content), workflow integration (4 events per
-      query, Alpha/Beta isolation + malicious quarantine preserved),
-      `/v1/debug/traces` endpoint, callback-handler smoke test.
-      Total pytest count: **182 passed**.
-- ✅ Tracing is **observe-only**: regression test
-      `test_runnable_traced_output_matches_untraced_output` verifies
-      `chunk_id` + `score` identity between traced and untraced
-      invocations.
-- ✅ No new dependency added.
-
-### Phase 4C — Remote tracing exporter (deferred)
-
-- [ ] LangSmith exporter behind a feature flag.
-- [ ] Phoenix / OpenTelemetry exporter.
-- [ ] Per-pair score caching for the reranker so rerank latency
-      doesn't compound under hybrid + rerank.
-- [ ] Push client-aware metadata routing down into the retriever (no
-      more post-filtering in Python).
-
-## Phase 5 — LangGraph Conditional Routing
-
-### Phase 5A — Unsafe Request Fast-Path ✅
-
-- ✅ ``backend/app/graph/state.py`` — added ``routing_decision`` /
-      ``routing_reason`` / ``visited_nodes`` (with
-      ``Annotated[list[str], operator.add]`` reducer) to
-      ``TrustRAGState``. ``initial_state`` initializes the routing
-      fields explicitly.
-- ✅ ``backend/app/graph/workflow.py`` — added
-      ``route_after_query_analysis(state) -> str`` as a pure reader
-      of ``state["routing_decision"]``. ``build_workflow`` switched
-      from a flat ``query_analyzer → claim_decomposer`` edge to
-      ``add_conditional_edges`` with two branches:
-      ``unsafe_fast_path → safety_checker`` and
-      ``standard_rag → claim_decomposer``. Standard-path edges
-      preserved verbatim. The tail
-      ``safety_checker → judge_agent → answer_generator → END`` is
-      shared by both branches.
-- ✅ ``query_analyzer`` writes ``routing_decision`` /
-      ``routing_reason`` in every return path and appends itself to
-      ``visited_nodes``. Other nodes append themselves too — that
-      list is the Phase 5A regression surface.
-- ✅ ``safety_checker`` / ``judge_agent`` / ``answer_generator``
-      already handle empty evidence safely (they use ``state.get(...)
-      or []``), so the unsafe fast-path produces an empty
-      ``support_evidence`` / ``counter_evidence`` / ``citations`` and
-      a ``refuse_unsafe`` judge verdict + ``confidence=0.0`` +
-      ``needs_human_review=true`` without crashing.
-- ✅ ``support_retriever`` / ``counter_retriever`` runnable trace
-      metadata now carries ``route:<routing_decision>`` in tags
-      plus ``routing_decision`` / ``routing_reason`` in metadata —
-      so a trace reader can confirm which branch fired without
-      reading the state graph.
-- ✅ ``backend/app/services/mock_knowledge_base.py`` — broadened
-      ``UNSAFE_INTENT_PATTERNS[invoice_fabrication]`` to include
-      ``伪造一张发票`` / ``伪造发票来`` / ``做假账`` so
-      ``safety_checker``'s intent detection aligns with
-      ``query_analyzer``'s broader ``伪造`` hint.
-- ✅ ``backend/tests/test_conditional_routing.py`` — 13 new tests
-      across 7 groups: unsafe fast-path identity, invoice fabrication
-      fast-path, standard-path full 9-node trace, prompt-injection
-      inspection stays standard, FastAPI unsafe-query response shape,
-      tracing-confirms-no-retrieval for unsafe, and unit-level tests
-      for ``route_after_query_analysis`` (mutation-free contract
-      enforced). Total pytest count: **195 passed**.
-- ✅ Phase 5A internal field deliberately NOT exposed in the
-      FastAPI response — ``routing_decision`` is internal state +
-      tests + traces only, regression-tested via
-      ``test_fastapi_unsafe_query_returns_refusal_shape``.
-- ✅ No FastAPI API change, no new dependency, no real LLM, no
-      Postgres checkpoint, no human-review handoff.
-
-### Phase 5B — Human Review Handoff + Local Checkpoint ✅
-
-- ✅ ``backend/app/review/`` — new package with:
-  - ``models.py`` — ``ReviewCheckpoint`` /
-    ``ReviewEvidenceSummary`` / ``ReviewQueueResponse`` /
-    ``ReviewClearResponse`` Pydantic models plus
-    ``summarize_evidence_for_review`` (content-safe by default).
-  - ``handoff_policy.py`` — ``should_handoff_for_review(state)``
-    pure function. Exclusion rules (refuse_unsafe /
-    unsafe_request) fire first; inclusion rules then accumulate
-    with reasons sorted + deduped. Catch-all
-    ``judge_requested_review`` fires only when ``needs_human_review``
-    is true with no specific reason.
-  - ``checkpoint_store.py`` — ``LocalReviewCheckpointStore``
-    JSONL append-only ring buffer, thread-safe, tolerant of
-    malformed lines, ``max_entries`` enforced, module-level
-    singleton with ``reset_review_checkpoint_store`` for tests.
-- ✅ ``backend/app/graph/nodes/human_review_handoff.py`` — new
-      LangGraph node. Generates ``review_<ms_timestamp>_<8_hex>``
-      queue ids, persists ``ReviewCheckpoint`` to the store, writes
-      ``human_review_required`` / ``review_queue_id`` /
-      ``review_status`` back into state. Handles store failure
-      with a clear ``state["errors"]`` entry rather than crashing
-      the workflow.
-- ✅ ``backend/app/graph/workflow.py`` — added
-      ``route_after_judge`` conditional function +
-      ``add_conditional_edges`` after ``judge_agent``. Both
-      branches converge on ``answer_generator``.
-- ✅ ``answer_generator`` — when ``review_queue_id`` is set,
-      appends a short audit pointer to the answer text. Unsafe
-      refusals never have a queue id, so the refusal answer
-      stays clean.
-- ✅ ``backend/app/schemas/rag.py`` — added ``HumanReviewSummary``
-      Pydantic model + ``RAGQueryResponse.human_review`` (always
-      present, never None). Internal
-      ``review_checkpoint_path`` deliberately not exposed.
-- ✅ ``backend/app/main.py`` — added ``GET /v1/review/queue``,
-      ``GET /v1/review/queue/{id}``, ``DELETE /v1/review/queue``.
-      Disabled-flag returns ``{"enabled": false, ...}`` for the
-      list endpoint and 404 for the per-id GET.
-- ✅ ``core/config.py`` + ``.env.example`` — added
-      ``TRUSTRAG_HUMAN_REVIEW_ENABLED`` (default true),
-      ``TRUSTRAG_REVIEW_STORE_PATH`` (default
-      ``data/review_queue.jsonl``),
-      ``TRUSTRAG_REVIEW_INCLUDE_CONTENT`` (default false),
-      ``TRUSTRAG_REVIEW_MAX_ENTRIES`` (default 1000),
-      ``TRUSTRAG_REVIEW_CONFIDENCE_THRESHOLD`` (default 0.6).
-- ✅ Hard exclusions defended by tests: ``refuse_unsafe`` and
-      ``unsafe_request`` *cannot* enter the review queue, even
-      when ``needs_human_review`` is true.
-- ✅ 36 new tests in ``test_human_review.py`` across 5 groups:
-      handoff policy unit tests, store behavior (append / list /
-      get / clear / malformed-line / max_entries), workflow
-      integration (tax / invoice / unsafe / standard / reimbursement
-      conflict / checkpoint actually persisted to disk), FastAPI
-      integration (response shape, ``/v1/review/queue`` GET/DELETE/
-      per-id), and ``route_after_judge`` unit tests. Total pytest
-      count: **231 passed**.
-- ✅ No Postgres / no real LLM / no frontend / no remote
-      LangSmith / no new dependency.
-
-### Phase 5C — Durable review persistence + reviewer actions (deferred)
-
-- [ ] Postgres backend behind the ``LocalReviewCheckpointStore``
-      interface.
-- [ ] Approve / reject / rewrite reviewer actions.
-- [ ] Answer replay from a reviewed checkpoint.
-
-## Phase 6 — Accounting RAG Eval Harness
-
-### Phase 6A — Deterministic local eval harness ✅
-
-- [x] Eval case schema (`backend/app/evals/models.py`) — Pydantic
-      v2 with optional fields; load-time validation; status =
-      `active` / `expected_gap` / `disabled`.
-- [x] Accounting eval cases (`backend/app/evals/cases/accounting_eval_cases.json`)
-      — 18 active cases across seven categories:
-      `current_policy`, `client_specific`, `invoice_review`,
-      `unsafe_intent`, `prompt_injection`, `review_trigger`,
-      `citation_faithfulness`.
-- [x] Deterministic metric functions (`backend/app/evals/metrics.py`)
-      — question_type, answer_terms, citation_documents,
-      forbidden_citations, support_counter_presence,
-      temporal_correctness, conflict_awareness, safety_behavior,
-      review_trigger, retrieval_skipped.
-- [x] CLI runner (`backend/app/evals/runner.py`) — invokes the
-      workflow in-process; supports `--only-status`, `--category`,
-      `--limit`, `--fail-on-regression`, `--clear-review-queue`,
-      `--no-isolated-review-store`.
-- [x] Markdown report generator (`backend/app/evals/report.py`) —
-      summary block, category table, failed-cases section,
-      expected-gaps section, per-case metric breakdown.
-- [x] Pytest coverage (`backend/tests/test_evals.py`) — 52 new
-      tests across case loading, every metric, runner CLI, full
-      active suite.
-- [x] Docs: `docs/eval_harness.md` (new); README, architecture,
-      demo_script, roadmap updated.
-
-### Phase 6B — GitHub Actions CI eval gate ✅
-
-- [x] GitHub Action runs ingestion, the accounting eval gate, and
-      `python -m pytest backend/tests` on every PR to `main` and push
-      to `main`.
-- [x] Eval runner supports `--min-score` for the active-suite score.
-- [x] Eval runner supports repeatable
-      `--category-threshold CATEGORY=FLOAT` checks; malformed values
-      and missing active categories exit `2`.
-- [x] CI uploads `data/eval_results.json` and `data/eval_report.md`
-      as the `accounting-eval-report` artifact.
-- [x] CI appends `data/eval_report.md` to the GitHub Step Summary.
-- [x] Local helper `bash scripts/run_eval_gate.sh` runs the same
-      ingestion + threshold policy.
-
-### Phase 6C — PR eval comment bot + regression delta (current) ✅
-
-- [x] PR comment renderer with stable
-      `<!-- trustrag-accounting-eval-comment -->` marker.
-- [x] Eval comparison utility for score/count/category deltas versus
-      `main` when a base summary is available.
-- [x] Stdlib GitHub API script creates or updates one GitHub Actions
-      bot comment instead of creating duplicates.
-- [x] CI posts PR eval comments only for same-repository PRs; fork
-      PRs skip the write path safely.
-- [x] CI artifact includes the eval JSON, Markdown report, PR comment,
-      and base summary when available.
-
-### Future eval reporting
-
-- [ ] Real provider eval.
-- [ ] LLM-as-judge optional analysis.
-- [ ] GitHub artifact history import.
-- [ ] Branch-to-branch trend comparison.
-
-## Phase 7 — Frontend Dashboard
-
-### Phase 7A — Minimal reviewer dashboard (current) ✅
-
-- [x] FastAPI-served static dashboard at `/dashboard`.
-- [x] Vanilla HTML / CSS / JavaScript only: no Node, npm, React,
-      Next.js, Vite, CDN, telemetry, or build step.
-- [x] Query console for TrustRAG accounting questions.
-- [x] Evidence, citation, safety, temporal, conflict, and review
-      metadata inspection.
-- [x] Documents/chunks overview, human review queue viewer, latest
-      eval report viewer, and local trace viewer.
-- [x] Read-only `GET /v1/evals/latest` diagnostic endpoint.
-
-### Phase 7B — Reviewer actions and local state transitions (current) ✅
-
-- [x] ``backend/app/review/models.py`` — added
-      :class:`ReviewActionType`, :class:`ReviewActionRequest`,
-      :class:`ReviewAction`, :class:`ReviewActionResponse`,
-      :class:`ReviewActionHistoryResponse`,
-      :class:`ReviewQueueEntry` (checkpoint + computed status +
-      action_count).
-- [x] ``backend/app/review/state_machine.py`` — declarative transition
-      table for ``approve`` / ``reject`` / ``request_changes`` /
-      ``rewrite_note`` / ``resolve`` / ``reopen``;
-      :class:`InvalidReviewTransitionError` carries the offending
-      pair for clear 400 bodies. ``rewrite_note`` is a self-transition
-      for every status so the FSM stays uniform.
-- [x] ``backend/app/review/checkpoint_store.py`` — added
-      :class:`LocalReviewActionStore`, an append-only JSONL log with
-      the same shape as :class:`LocalReviewCheckpointStore`
-      (thread-safe, malformed-line tolerant, ``max_entries``
-      truncation). Module-level singleton +
-      :func:`reset_review_action_store` test seam.
-- [x] ``backend/app/review/service.py`` — new :class:`ReviewService`
-      orchestrates checkpoint + action stores. Computes current
-      status by trusting the latest action's recorded ``new_status``,
-      so replaying old log lines stays safe across future FSM
-      changes.
-- [x] ``backend/app/core/config.py`` + ``.env.example`` — added
-      ``TRUSTRAG_REVIEW_ACTIONS_PATH`` (default
-      ``data/review_actions.jsonl``) and
-      ``TRUSTRAG_REVIEW_ACTIONS_MAX_ENTRIES`` (default 2000).
-- [x] ``backend/app/main.py`` — added
-      ``POST /v1/review/queue/{id}/actions`` and
-      ``GET /v1/review/queue/{id}/actions``; updated existing
-      ``GET /v1/review/queue``, ``GET /v1/review/queue/{id}``, and
-      ``DELETE /v1/review/queue`` to return computed status,
-      action_count, and ``cleared_actions``. 404 for missing id,
-      400 for invalid transition or disabled feature.
-- [x] ``frontend/index.html`` / ``app.js`` / ``styles.css`` — review
-      queue panel now renders six action buttons per checkpoint,
-      reviewer note textarea, optional rewritten-answer textarea, and
-      a per-checkpoint action history view. Event-delegated click
-      handler posts to the new API and refreshes both the queue and
-      the history.
-- [x] 54 new tests in ``test_review_actions.py`` across the state
-      machine, action store, ``ReviewService``, FastAPI endpoints,
-      and dashboard wiring. Existing ``test_human_review.py``
-      extended to isolate the new action store under tmp_path. Total
-      pytest count: **363 passed** (was 309).
-- [x] Eval gate behavior preserved: no eval thresholds change, no
-      LLM call, no real provider call, no new heavy dependency.
-- [x] Unsafe refusal still bypasses the review queue, so no reviewer
-      action can be applied to an unsafe request.
-
-### Phase 7C — Dashboard filtering, pagination, and export (current) ✅
-
-- [x] ``backend/app/review/service.py`` — added
-      :class:`ReviewQueueFilter` and :class:`ReviewActionFilter`
-      dataclasses, ``list_queue`` now returns ``(page, total)`` after
-      filter + sort + paginate, ``summary`` aggregates over the
-      filtered queue, ``list_actions_paginated`` mirrors the same
-      shape for action history.
-- [x] ``backend/app/review/models.py`` — additive
-      ``total`` / ``limit`` / ``offset`` / ``filters`` / ``sort``
-      fields on :class:`ReviewQueueResponse` /
-      :class:`ReviewActionHistoryResponse`; new
-      :class:`ReviewQueueSummaryResponse` and
-      :class:`ReviewQueueExportResponse`.
-- [x] ``backend/app/main.py`` — ``GET /v1/review/queue`` accepts
-      ``status`` / ``question_type`` / ``reason`` / ``reviewer`` /
-      ``has_actions`` / ``sort`` / ``limit`` / ``offset`` query
-      params. New endpoints: ``GET /v1/review/queue/summary``,
-      ``GET /v1/review/queue/export.json``,
-      ``GET /v1/review/queue/export.csv``. Static-path routes are
-      declared BEFORE the ``{review_queue_id}`` route so FastAPI
-      matches ``export.json`` / ``summary`` correctly.
-      ``GET /v1/review/queue/{id}/actions`` gains the same filter +
-      pagination knobs.
-- [x] ``frontend/{index.html,app.js,styles.css}`` — Review Queue
-      panel now renders a filter form (status dropdown, question
-      type input, reason input, reviewer input, has_actions
-      checkbox, sort selector, page-size selector, reset button),
-      six summary cards, Prev / Next pager, and Export JSON / CSV
-      buttons. Filter input is debounced (180ms) and resets offset
-      to 0 on every change.
-- [x] CSV export uses stdlib ``csv.DictWriter``; full document
-      content is excluded.
-- [x] 37 new tests in ``test_review_filters_export.py`` across
-      service filtering, action history filtering, summary,
-      FastAPI query params, JSON / CSV export, and dashboard
-      wiring. Total pytest count: **403 passed** (was 366).
-- [x] Eval gate behavior preserved. No new dependency, no real LLM,
-      no Postgres, no auth.
-
-### Phase 7D - Historical eval trend dashboard (current)
-
-- [x] ``backend/app/evals/history.py`` adds compact
-      ``EvalHistorySnapshot`` and ``EvalHistoryResponse`` models plus
-      local archive/list helpers.
-- [x] ``python -m backend.app.evals.history`` supports
-      ``--archive data/eval_results.json --history-dir
-      data/eval_history`` and ``--list``. Archive output is compact
-      and excludes full evidence content and per-case outputs.
-- [x] ``scripts/archive_eval_snapshot.sh`` archives the latest eval
-      gate result after ``bash scripts/run_eval_gate.sh``.
-- [x] ``GET /v1/evals/history`` is read-only and returns missing-
-      history empty state, latest snapshot, snapshot count, optional
-      limit, and latest-vs-previous score delta.
-- [x] ``frontend/{index.html,app.js,styles.css}`` renders an Eval
-      Trend panel with latest score, pass/fail/skipped counts, delta,
-      snapshot count, latest category table, and vanilla SVG/CSS
-      score trend.
-- [x] ``TRUSTRAG_EVAL_HISTORY_DIR`` and
-      ``TRUSTRAG_EVAL_HISTORY_LIMIT`` settings documented in
-      ``.env.example``.
-- [x] Tests cover service behavior, CLI archive/list/missing-source
-      paths, API responses, limit behavior, malformed snapshot skip,
-      content safety, and dashboard static wiring.
-- [x] No database, no GitHub API/artifact import, no real provider
-      eval, no frontend dependency, and no eval threshold policy
-      change.
-
-### Phase 7E - Durable review persistence + auth (deferred)
-
-- [ ] Postgres backend behind the
-      :class:`LocalReviewCheckpointStore` and
-      :class:`LocalReviewActionStore` interfaces.
-- [ ] Real authentication / authorization for reviewer actions.
-- [ ] GitHub artifact history import.
-- [ ] Trend comparison by branch.
-- [ ] Historical review analytics.
-- [ ] Real LLM rewrite + answer replay from a reviewed checkpoint.
-- [ ] Deployable UI.
-
-## Phase 8 — GitHub Page Showcase
-
-- [ ] Public landing page summarising the accounting use case.
-- [ ] Anonymised demo dataset hosted in this repository.
-- [ ] Loom / animated GIF showing the 6 demo scenarios.
-
-## Out of Scope (for now)
-
-- Automated tax filing.
-- Voucher OCR or invoice image recognition.
-- Real-time tax-bureau API integration.
-- Replacing the firm's qualified accountant or audit partner.
+- No production tax advice.
+- No real client data in this repository.
+- No default real LLM calls.
+- No default external API calls.
+- No authentication system in the local dashboard yet.
+- No database dependency for local demos.
