@@ -267,6 +267,14 @@ class RAGQueryResponse(BaseModel):
     # but ``required=False`` when the case did not enter the queue.
     human_review: HumanReviewSummary = Field(default_factory=HumanReviewSummary)
     errors: list[str] = Field(default_factory=list)
+    # Phase 8B — optional metadata from the LLM answer generator. ``None`` in
+    # the default template mode; when LLM_ANSWER_MODE=llm it carries
+    # ``llm_provider`` / ``llm_model`` / ``llm_used`` / ``citation_validation``
+    # / ``fallback_used``. Additive + optional (Pydantic v2 default is
+    # extra='ignore'), so existing clients are unaffected. Typed as a plain
+    # dict (like TracesResponse.events) to stay forward-compatible. It never
+    # contains secrets — only provider name, model name, and validation flags.
+    generation_metadata: dict | None = None
 
 
 # ---------------------------------------------------------------------------

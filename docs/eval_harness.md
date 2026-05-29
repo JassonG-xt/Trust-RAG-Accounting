@@ -173,9 +173,29 @@ Every metric is opt-in per case. Adding a new metric does not retroactively fail
 5. Run `bash scripts/run_eval_gate.sh`.
 6. Run `python -m pytest backend/tests`.
 
+## Optional Real-Provider Smoke (manual, not CI)
+
+Phase 8B adds a manual smoke command that runs a small subset of these cases
+against a configured real LLM provider and captures `generation_metadata`. It
+is **never** part of CI and exits with code `2` if no real provider is set:
+
+```bash
+LLM_ANSWER_MODE=llm LLM_PROVIDER=openai_compatible \
+LLM_BASE_URL=... LLM_API_KEY=... LLM_MODEL=... \
+python -m backend.app.evals.run_real_provider_smoke \
+  --cases backend/app/evals/cases/accounting_eval_cases.json \
+  --limit 3 --category current_policy \
+  --out data/real_provider_smoke_results.json
+```
+
+It deliberately does not enforce the regression gate — a real LLM rewords
+answers, so text-match / citation-order metrics may vary while structural
+metrics still hold. The required CI gate stays deterministic and mock-only.
+See [`real_llm_provider.md`](real_llm_provider.md).
+
 ## Not Covered Yet
 
-- Real provider eval.
+- Real-provider benchmark report (the manual smoke command exists; an automated cross-provider report does not).
 - LLM-as-judge as an optional analysis layer.
 - GitHub artifact history import.
 - Branch-to-branch trend comparison.

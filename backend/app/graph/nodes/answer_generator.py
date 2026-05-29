@@ -20,8 +20,9 @@ generator that produces inline citations.
 
 from __future__ import annotations
 
+from ...core.config import get_settings
+from ...llm import CitationAwareLLMAnswerGenerator, create_llm_provider
 from ..state import TrustRAGState
-
 
 _COMPLIANT_ALTERNATIVES = {
     "tax_evasion": (
@@ -51,6 +52,15 @@ _RISK_NOTE = (
     "TrustRAG is an evidence-assistance prototype. It does not provide "
     "legal, tax, or accounting advice. A qualified accountant must review "
     "any final conclusion before it is applied to a client engagement."
+)
+
+
+# Shared by the deterministic evidence path and the Phase 8B LLM-wrapping
+# path so the prompt-injection-ignored note is byte-identical either way.
+_INJECTION_NOTE_EVIDENCE = (
+    "Safety note: a prompt-injection attempt was detected in the "
+    "retrieved corpus. Those instructions have been ignored; the "
+    "offending document(s) are listed in safety_analysis."
 )
 
 
@@ -175,35 +185,23 @@ def _insufficient_evidence(state: TrustRAGState) -> dict:
     }
 
 
-def _answer_from_evidence(state: TrustRAGState) -> dict:
+def _answer_envelope(state: TrustRAGState) -> list[str]:
+    """Deterministic notes appended after the evidence body on the answerable
+    path: temporal validity, outdated-versions, conflict, question-type
+    compliance, the prompt-injection-ignored note, and the closing risk note.
+
+    Shared by the template generator (:func:`_answer_from_evidence`) and the
+    LLM wrapper (:func:`_wrap_llm_answer`) so these compliance-critical
+    disclaimers are guaranteed regardless of which path produced the answer
+    body. In particular the "currently effective version" disambiguation is
+    never left to the model — an LLM that cited a superseded version would
+    otherwise present an outdated rule as current.
+    """
+
     safety = state.get("safety_analysis") or {}
     temporal = state.get("temporal_analysis") or {}
     conflict = state.get("conflict_analysis") or {}
-
-    primary = _pick_active_evidence(state)
-    citations = _build_citations(state, primary)
-
     parts: list[str] = []
-
-    # Evidence summary
-    if primary:
-        client_prefix = ""
-        if primary.get("client"):
-            client_prefix = f"For {primary['client']}, "
-        version_note = ""
-        if primary.get("version"):
-            version_note = f" (version {primary['version']}"
-            if primary.get("valid_from"):
-                version_note += f", effective from {primary['valid_from']}"
-            version_note += ")"
-        parts.append(
-            f"{client_prefix}based on {primary.get('title')}{version_note}: "
-            f"{primary.get('content')}"
-        )
-    else:
-        parts.append(
-            "No primary supporting evidence was identified for this question."
-        )
 
     # Temporal note
     if temporal.get("has_active_version"):
@@ -248,18 +246,109 @@ def _answer_from_evidence(state: TrustRAGState) -> dict:
 
     # Safety footnote
     if safety.get("prompt_injection_detected"):
-        parts.append(
-            "Safety note: a prompt-injection attempt was detected in the "
-            "retrieved corpus. Those instructions have been ignored; the "
-            "offending document(s) are listed in safety_analysis."
-        )
+        parts.append(_INJECTION_NOTE_EVIDENCE)
 
     parts.append(_RISK_NOTE)
+    return parts
+
+
+def _answer_from_evidence(state: TrustRAGState) -> dict:
+    primary = _pick_active_evidence(state)
+    citations = _build_citations(state, primary)
+
+    parts: list[str] = []
+
+    # Evidence summary
+    if primary:
+        client_prefix = ""
+        if primary.get("client"):
+            client_prefix = f"For {primary['client']}, "
+        version_note = ""
+        if primary.get("version"):
+            version_note = f" (version {primary['version']}"
+            if primary.get("valid_from"):
+                version_note += f", effective from {primary['valid_from']}"
+            version_note += ")"
+        parts.append(
+            f"{client_prefix}based on {primary.get('title')}{version_note}: "
+            f"{primary.get('content')}"
+        )
+    else:
+        parts.append(
+            "No primary supporting evidence was identified for this question."
+        )
+
+    parts.extend(_answer_envelope(state))
 
     return {
         "answer": " ".join(parts),
         "citations": citations,
     }
+
+
+def _wrap_llm_answer(body: str, state: TrustRAGState) -> str:
+    """Append the deterministic note envelope to an LLM-generated body.
+
+    The envelope (temporal validity, conflict, question-type compliance,
+    prompt-injection-ignored note, and risk note) is the SAME
+    :func:`_answer_envelope` the template path emits, so these
+    compliance-critical disclaimers — especially the active-version
+    disambiguation — are guaranteed regardless of which evidence chunk the
+    model chose to cite. The review-queue pointer is appended later by
+    :func:`answer_generator`.
+    """
+
+    return " ".join([body, *_answer_envelope(state)])
+
+
+def _maybe_generate_with_llm(
+    state: TrustRAGState, result: dict, conclusion: str
+) -> dict | None:
+    """Optionally replace the evidence answer body with an LLM generation.
+
+    Returns ``None`` in template mode (the default) so the deterministic path
+    is preserved byte-for-byte. In LLM mode it returns the generation metadata
+    and, on a validated success, mutates ``result["answer"]`` in place. Any
+    provider failure or citation-contract violation leaves the deterministic
+    ``result`` untouched (fallback) and records the reason in the metadata.
+
+    Refusal / insufficient-evidence verdicts stay deterministic even in LLM
+    mode — that text is compliance output, not model output.
+    """
+
+    settings = get_settings()
+    mode = (getattr(settings, "llm_answer_mode", "template") or "template").strip().lower()
+    if mode != "llm":
+        return None
+
+    model_hint = settings.llm_model or settings.anthropic_model
+    if conclusion not in {"answerable", "answerable_with_review"}:
+        return {
+            "llm_provider": settings.llm_provider,
+            "llm_model": model_hint,
+            "llm_used": False,
+            "citation_validation": None,
+            "fallback_used": False,
+            "deterministic_reason": f"{conclusion} path is always deterministic",
+        }
+
+    try:
+        provider = create_llm_provider(settings)
+    except Exception as exc:  # noqa: BLE001 — any construction error -> fallback
+        return {
+            "llm_provider": settings.llm_provider,
+            "llm_model": model_hint,
+            "llm_used": False,
+            "citation_validation": None,
+            "fallback_used": True,
+            "fallback_reason": f"provider not available: {type(exc).__name__}",
+        }
+
+    generator = CitationAwareLLMAnswerGenerator(provider)
+    llm_text, metadata = generator.generate_answer(state)
+    if not metadata.get("fallback_used") and llm_text:
+        result["answer"] = _wrap_llm_answer(llm_text, state)
+    return metadata
 
 
 def answer_generator(state: TrustRAGState) -> dict:
@@ -273,10 +362,16 @@ def answer_generator(state: TrustRAGState) -> dict:
     else:
         result = _answer_from_evidence(state)
 
+    # Phase 8B — optionally replace the evidence-based answer body with a
+    # citation-validated LLM generation. Returns None in template mode (the
+    # default) so the deterministic behavior above is preserved exactly.
+    generation_metadata = _maybe_generate_with_llm(state, result, conclusion)
+
     # Phase 5B — if the case entered the review queue, append a short
     # audit pointer so the API client sees the queue id without
     # parsing a separate field. The unsafe refusal path never enters
     # the queue (review_queue_id stays None) so it remains untouched.
+    # Applied AFTER any LLM generation so the pointer is never model output.
     queue_id = state.get("review_queue_id")
     if queue_id:
         review_note = (
@@ -286,4 +381,6 @@ def answer_generator(state: TrustRAGState) -> dict:
         result["answer"] = (result.get("answer") or "") + review_note
 
     result["visited_nodes"] = ["answer_generator"]
+    if generation_metadata is not None:
+        result["generation_metadata"] = generation_metadata
     return result

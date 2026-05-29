@@ -127,6 +127,27 @@ flowchart LR
 
 The local review store is a demo mechanism, not a production audit system. It has no authentication, authorization, database, or workflow replay.
 
+## Answer Generation
+
+`answer_generator` is deterministic and template-based by default. Phase 8B adds an *optional* real-LLM path, off unless `LLM_ANSWER_MODE=llm`:
+
+```mermaid
+flowchart LR
+    AG[answer_generator] --> DET["deterministic answer<br/>(default + fallback)"]
+    DET --> MODE{LLM_ANSWER_MODE}
+    MODE -->|template| OUT["answer + citations"]
+    MODE -->|llm + answerable| GEN["citation-aware LLM"]
+    GEN --> VAL{citations valid?}
+    VAL -->|yes| WRAP["LLM body + safety envelope"]
+    VAL -->|no / error| DET
+    WRAP --> OUT
+```
+
+- Only `answerable` / `answerable_with_review` verdicts reach the LLM; refusal and insufficient-evidence text stays deterministic.
+- The LLM may cite only `chunk_id`s from clean (non-malicious) retrieved evidence; the citation contract is validated and any violation, provider error, timeout, or empty output falls back to the deterministic answer.
+- The temporal-validity / conflict / compliance notes, the risk note, the prompt-injection-ignored note, and the human-review pointer are appended deterministically after generation (the same envelope the template path emits) — so a model that cited a superseded version can never present an outdated rule as current.
+- Provider seam mirrors the embeddings/reranker seams: `mock` (default, offline) plus optional `openai_compatible` / `anthropic_compatible` adapters. CI never needs a real key. See [`real_llm_provider.md`](real_llm_provider.md).
+
 ## Eval and CI Flow
 
 ```mermaid

@@ -75,6 +75,11 @@ class TrustRAGState(TypedDict, total=False):
     answer: str | None
     citations: list[dict]
     needs_human_review: bool
+    # Phase 8B — optional LLM answer-generation metadata. None in the default
+    # template mode; populated (llm_used / citation_validation / fallback_used)
+    # when LLM_ANSWER_MODE=llm. Declared as a channel so LangGraph propagates
+    # the answer_generator node's return key.
+    generation_metadata: dict | None
 
     # Phase 5B — human review handoff.
     # ``human_review_required`` mirrors ``needs_human_review`` semantically
@@ -117,6 +122,7 @@ def initial_state(question: str) -> TrustRAGState:
         answer=None,
         citations=[],
         needs_human_review=False,
+        generation_metadata=None,
         human_review_required=False,
         human_review_reasons=[],
         review_queue_id=None,

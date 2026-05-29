@@ -666,6 +666,9 @@ def _state_to_response(state: dict[str, Any]) -> RAGQueryResponse:
             reasons=list(state.get("human_review_reasons") or []),
         ),
         errors=state.get("errors") or [],
+        # Phase 8B — bare .get (not `or {}`) so template mode maps to None,
+        # keeping "off" distinguishable from an empty-but-present object.
+        generation_metadata=state.get("generation_metadata"),
     )
 
 

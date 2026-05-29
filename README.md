@@ -45,6 +45,7 @@ This repository demonstrates those constraints in a small, local, inspectable sy
 - Local human review queue, reviewer actions, filtering, pagination, and CSV/JSON export.
 - Vanilla FastAPI-served dashboard with no Node, npm, React, Vite, CDN, or build step.
 - Deterministic accounting eval harness with CI gate, PR comment bot, and local eval trend snapshots.
+- Optional real-LLM answer generator (off by default) bounded by a citation contract with deterministic fallback.
 
 ## Architecture
 
@@ -88,6 +89,7 @@ Detailed design notes live in:
 - [`docs/langgraph_workflow.md`](docs/langgraph_workflow.md)
 - [`docs/eval_harness.md`](docs/eval_harness.md)
 - [`docs/dashboard.md`](docs/dashboard.md)
+- [`docs/real_llm_provider.md`](docs/real_llm_provider.md)
 
 ## Quickstart Demo
 
@@ -221,7 +223,7 @@ See [`docs/dashboard.md`](docs/dashboard.md) and [`docs/demo_walkthrough.md`](do
 
 ## Roadmap
 
-Completed through Phase 8A:
+Completed through Phase 8B:
 
 - Accounting verticalization.
 - Multi-format ingestion and chunking.
@@ -231,11 +233,11 @@ Completed through Phase 8A:
 - Deterministic eval harness, CI eval gate, PR eval comment bot.
 - Reviewer dashboard with actions, filtering, export, and eval trends.
 - GitHub showcase documentation polish.
+- Optional citation-aware real-LLM answer generator (off by default) with deterministic fallback.
 
 Next realistic phases:
 
-- Phase 8B: tracked screenshots and GitHub Pages-style showcase.
-- Real provider eval against live embedding/reranker/LLM adapters.
+- Real-provider benchmark report (citation faithfulness across providers), separate from the deterministic CI gate.
 - Postgres persistence for review and document metadata.
 - Authentication and authorization for reviewer actions.
 - Deployed dashboard.
@@ -247,7 +249,7 @@ Full roadmap: [`docs/roadmap.md`](docs/roadmap.md).
 - Not a tax authority.
 - Not production accounting software.
 - Not OCR or invoice image recognition.
-- Not a real LLM integration by default.
+- Not a real LLM integration by default (the optional LLM generator is off unless `LLM_ANSWER_MODE=llm`, and its output is citation-validated).
 - Not a hosted SaaS dashboard.
 - Not a replacement for qualified accountant or audit-partner review.
 - Not trained or tested on real client data.
