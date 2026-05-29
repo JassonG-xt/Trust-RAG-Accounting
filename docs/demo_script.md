@@ -578,6 +578,8 @@ python -m backend.app.ingestion.ingest_sample_docs \
 
 bash scripts/run_eval_gate.sh
 
+bash scripts/archive_eval_snapshot.sh
+
 bash scripts/run_dev.sh
 ```
 
@@ -590,8 +592,33 @@ http://localhost:8000/dashboard
 The dashboard is served directly by FastAPI with no Node, npm, or
 frontend build step. It provides a query console, evidence and citation
 inspection, document/chunk overview, human review queue viewer, latest
-eval report viewer, and local trace viewer. If tracing is disabled or
-eval artifacts are missing, the relevant panel renders a placeholder.
+eval report viewer, Eval Trend panel, and local trace viewer. If
+tracing is disabled, eval artifacts are missing, or no history
+snapshots exist, the relevant panel renders a placeholder.
+
+## Eval trend mini demo (Phase 7D)
+
+```bash
+bash scripts/run_eval_gate.sh
+bash scripts/archive_eval_snapshot.sh
+bash scripts/run_dev.sh
+```
+
+Open `/dashboard` and inspect the **Eval Trend** panel. It reads only
+local files:
+
+```text
+data/eval_results.json
+-> archive snapshot
+-> data/eval_history/*.json
+-> GET /v1/evals/history
+-> dashboard trend panel
+```
+
+The trend panel shows the latest score, pass/fail/skipped counts,
+latest-vs-previous score delta, snapshot count, latest category table,
+and a small SVG score trend. On a fresh checkout with no archived
+snapshots it shows an empty state instead of failing.
 
 ## Running reviewer actions (Phase 7B)
 
@@ -708,7 +735,8 @@ python -m backend.app.evals.runner \
   run starts — useful when the dev queue is full of stale test
   artifacts.
 - Generated eval outputs (`data/eval_results.json`,
-  `data/eval_report.md`) are gitignored. Do not commit them.
+  `data/eval_report.md`) and archived history snapshots
+  (`data/eval_history/*.json`) are gitignored. Do not commit them.
 
 See [`docs/eval_harness.md`](eval_harness.md) for the case schema,
 metric catalogue, and "how to add a case" guide.

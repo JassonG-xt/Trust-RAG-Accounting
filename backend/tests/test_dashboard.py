@@ -31,6 +31,18 @@ def test_dashboard_carries_review_action_disclaimer() -> None:
     assert "Local demo workflow" in body
 
 
+def test_dashboard_contains_eval_trend_panel() -> None:
+    client = TestClient(app)
+
+    response = client.get("/dashboard")
+
+    assert response.status_code == 200
+    body = response.text
+    assert "Eval Trend" in body
+    assert "eval-trend-summary" in body
+    assert "eval-sparkline" in body
+
+
 def test_dashboard_app_js_contains_review_action_wiring() -> None:
     client = TestClient(app)
 
@@ -43,6 +55,18 @@ def test_dashboard_app_js_contains_review_action_wiring() -> None:
     assert "rewrite_note" in body
 
 
+def test_dashboard_app_js_contains_eval_history_wiring() -> None:
+    client = TestClient(app)
+
+    response = client.get("/dashboard/static/app.js")
+
+    assert response.status_code == 200
+    body = response.text
+    assert "refreshEvalHistory" in body
+    assert "/v1/evals/history" in body
+    assert "renderEvalHistory" in body
+
+
 def test_dashboard_styles_contains_review_action_styles() -> None:
     client = TestClient(app)
 
@@ -52,6 +76,17 @@ def test_dashboard_styles_contains_review_action_styles() -> None:
     body = response.text
     assert ".review-action" in body
     assert ".history-list" in body
+
+
+def test_dashboard_styles_contains_eval_history_styles() -> None:
+    client = TestClient(app)
+
+    response = client.get("/dashboard/static/styles.css")
+
+    assert response.status_code == 200
+    body = response.text
+    assert ".eval-trend-grid" in body
+    assert ".eval-sparkline" in body
 
 
 def test_dashboard_app_js_static_route_returns_js() -> None:

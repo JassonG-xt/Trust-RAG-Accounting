@@ -527,7 +527,8 @@ docs. **Completed.**
 
 - [ ] Real provider eval.
 - [ ] LLM-as-judge optional analysis.
-- [ ] Historical eval trend dashboard.
+- [ ] GitHub artifact history import.
+- [ ] Branch-to-branch trend comparison.
 
 ## Phase 7 — Frontend Dashboard
 
@@ -635,13 +636,43 @@ docs. **Completed.**
 - [x] Eval gate behavior preserved. No new dependency, no real LLM,
       no Postgres, no auth.
 
-### Phase 7D — Durable review persistence + auth (deferred)
+### Phase 7D - Historical eval trend dashboard (current)
+
+- [x] ``backend/app/evals/history.py`` adds compact
+      ``EvalHistorySnapshot`` and ``EvalHistoryResponse`` models plus
+      local archive/list helpers.
+- [x] ``python -m backend.app.evals.history`` supports
+      ``--archive data/eval_results.json --history-dir
+      data/eval_history`` and ``--list``. Archive output is compact
+      and excludes full evidence content and per-case outputs.
+- [x] ``scripts/archive_eval_snapshot.sh`` archives the latest eval
+      gate result after ``bash scripts/run_eval_gate.sh``.
+- [x] ``GET /v1/evals/history`` is read-only and returns missing-
+      history empty state, latest snapshot, snapshot count, optional
+      limit, and latest-vs-previous score delta.
+- [x] ``frontend/{index.html,app.js,styles.css}`` renders an Eval
+      Trend panel with latest score, pass/fail/skipped counts, delta,
+      snapshot count, latest category table, and vanilla SVG/CSS
+      score trend.
+- [x] ``TRUSTRAG_EVAL_HISTORY_DIR`` and
+      ``TRUSTRAG_EVAL_HISTORY_LIMIT`` settings documented in
+      ``.env.example``.
+- [x] Tests cover service behavior, CLI archive/list/missing-source
+      paths, API responses, limit behavior, malformed snapshot skip,
+      content safety, and dashboard static wiring.
+- [x] No database, no GitHub API/artifact import, no real provider
+      eval, no frontend dependency, and no eval threshold policy
+      change.
+
+### Phase 7E - Durable review persistence + auth (deferred)
 
 - [ ] Postgres backend behind the
       :class:`LocalReviewCheckpointStore` and
       :class:`LocalReviewActionStore` interfaces.
 - [ ] Real authentication / authorization for reviewer actions.
-- [ ] Historical eval trend dashboard.
+- [ ] GitHub artifact history import.
+- [ ] Trend comparison by branch.
+- [ ] Historical review analytics.
 - [ ] Real LLM rewrite + answer replay from a reviewed checkpoint.
 - [ ] Deployable UI.
 

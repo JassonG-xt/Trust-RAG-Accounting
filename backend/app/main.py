@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .core.config import get_settings
+from .evals.history import EvalHistoryResponse, list_eval_history
 from .evals.models import EvalRunSummary
 from .graph.workflow import run_query
 from .review import (
@@ -186,6 +187,27 @@ def create_app() -> FastAPI:
             ),
             by_category=summary.by_category if summary is not None else {},
             markdown_report=markdown_report,
+        )
+
+    @app.get(
+        "/v1/evals/history",
+        response_model=EvalHistoryResponse,
+        tags=["evals"],
+    )
+    def eval_history(
+        limit: int | None = Query(default=None, ge=1),
+    ) -> EvalHistoryResponse:
+        """Read local eval history snapshots for the dashboard.
+
+        The endpoint is intentionally passive: it never runs evals,
+        archives snapshots, or reaches out to GitHub artifacts.
+        """
+
+        current_settings = get_settings()
+        effective_limit = limit or max(1, current_settings.trustrag_eval_history_limit)
+        return list_eval_history(
+            Path(current_settings.trustrag_eval_history_dir),
+            limit=effective_limit,
         )
 
     @app.get("/v1/debug/traces", response_model=TracesResponse, tags=["debug"])

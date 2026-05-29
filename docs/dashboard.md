@@ -40,6 +40,8 @@ python -m backend.app.ingestion.ingest_sample_docs \
 
 bash scripts/run_eval_gate.sh
 
+bash scripts/archive_eval_snapshot.sh
+
 bash scripts/run_dev.sh
 ```
 
@@ -54,6 +56,46 @@ Then open `/dashboard`.
 
 It returns `available=false` when those files are missing. It never
 runs evals and never writes files.
+
+## Eval Trends
+
+Phase 7D adds a local-file-driven trend panel. It reads compact
+snapshots from:
+
+```text
+data/eval_history/*.json
+```
+
+Run:
+
+```bash
+bash scripts/run_eval_gate.sh
+bash scripts/archive_eval_snapshot.sh
+```
+
+Then open:
+
+```text
+http://localhost:8000/dashboard
+```
+
+The dashboard fetches `GET /v1/evals/history` and renders:
+
+- latest eval score,
+- latest pass / fail / skipped counts,
+- score delta versus the previous snapshot,
+- snapshot count,
+- category score table for the latest snapshot,
+- a lightweight SVG score trend.
+
+If no snapshots exist, the panel shows:
+
+```text
+No eval history snapshots found. Run eval gate and archive a snapshot.
+```
+
+The API is read-only. It never runs evals, archives snapshots, pulls
+GitHub artifacts, or writes files from the dashboard request path.
 
 ## Filtering and Export (Phase 7C)
 
@@ -187,4 +229,3 @@ This is a **local demo workflow**, not a production audit system:
 - No LLM-generated rewrite. `rewritten_answer` is a free-text
   reviewer field the system stores verbatim; nothing replays it back
   into the workflow.
-

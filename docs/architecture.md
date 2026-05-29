@@ -107,11 +107,33 @@ The dashboard is a thin client over existing diagnostic APIs:
 - `GET /v1/review/queue`
 - `GET /v1/debug/traces`
 - `GET /v1/evals/latest`
+- `GET /v1/evals/history`
 
 `GET /v1/evals/latest` is read-only. It reads
 `data/eval_results.json` and `data/eval_report.md` when present and
 returns `available=false` when a fresh checkout has no generated eval
 artifacts. It never runs evals and never writes files.
+
+`GET /v1/evals/history` is also read-only. It reads compact local
+snapshots from `data/eval_history/*.json`, applies the configured
+limit, skips malformed files with a warning, and returns
+`available=false` when the directory is missing or empty. The API
+never archives snapshots, never runs evals, and never imports GitHub
+artifacts.
+
+Phase 7D eval trend flow:
+
+```text
+data/eval_results.json
+  -> python -m backend.app.evals.history --archive ...
+  -> data/eval_history/<snapshot_id>.json
+  -> GET /v1/evals/history
+  -> dashboard Eval Trend panel
+```
+
+History snapshots store totals, score, category summaries, created
+time, and optional git commit / branch metadata. They intentionally
+exclude full evidence content and per-case outputs.
 
 ```
 backend/app/
@@ -163,6 +185,8 @@ backend/app/
 │   ├── models.py            # TraceEvent + summarize_evidence_payload
 │   ├── local_collector.py   # LocalTraceCollector + maybe_get_trace_collector
 │   └── callbacks.py         # LocalTraceCallbackHandler(BaseCallbackHandler)
+├── evals/             # Phase 6/7D: eval cases, runner, reports, history
+│   └── history.py           # Compact local eval trend archive helpers + CLI
 ├── graph/
 │   ├── state.py       # TrustRAGState (TypedDict) — accounting fields
 │   ├── workflow.py    # build_workflow() / get_workflow() / run_query()
