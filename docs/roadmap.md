@@ -26,6 +26,7 @@ TrustRAG Accounting is phase-gated by tests and evals, not dates. Each phase is 
 | 7D | Complete | Historical eval trend dashboard from local snapshots. |
 | 8A | Complete | GitHub showcase polish: README, architecture, demo, screenshots guide, API examples. |
 | 8B | Complete | Optional citation-aware real-LLM answer generator (off by default) with deterministic fallback. |
+| 8C | Complete | Manual provider benchmark report (template / mock / optional real providers) over fallback, citation, safety, and latency — separate from the deterministic CI gate. |
 
 Current `main` baseline this phase built on (Phase 8A):
 
@@ -36,6 +37,8 @@ Current `main` baseline this phase built on (Phase 8A):
 - Tag `trustrag-accounting-phase-8a-showcase-v1`.
 
 After Phase 8B: 462 backend tests passing; eval gate unchanged at 18/18, score `1.000` (the LLM seam is off by default).
+
+After Phase 8C: 496 backend tests passing; eval gate unchanged at 18/18, score `1.000` (the provider benchmark is a manual tool and never gates CI).
 
 ## Current Capabilities
 
@@ -49,13 +52,15 @@ After Phase 8B: 462 backend tests passing; eval gate unchanged at 18/18, score `
 - Latest eval report viewer and local eval trend panel.
 - Deterministic eval suite in CI with PR comments and artifacts.
 - Optional real-LLM answer generator (off by default) with citation-contract validation and deterministic fallback. See [real_llm_provider.md](real_llm_provider.md).
+- Manual provider benchmark report (template / mock / optional real providers) over fallback, citation, safety, and latency — never a CI gate. See [provider_benchmark.md](provider_benchmark.md).
 
 ## Near-Term Next Steps
 
 ### Real provider eval
 
 - Phase 8B delivered the optional LLM provider seam (mock / OpenAI-compatible / Anthropic-compatible) and a manual smoke command.
-- Next: a real-provider benchmark report comparing citation-faithfulness across providers, kept separate from the deterministic CI gate.
+- Phase 8C delivered the manual provider benchmark report (fallback / citation / safety / latency), kept separate from the deterministic CI gate. See [provider_benchmark.md](provider_benchmark.md).
+- Next: an optional provider-comparison panel in the dashboard that reads benchmark JSON — still never a required CI gate.
 - Keep the mock-provider suite as the required CI floor.
 - Report provider-specific regressions separately from deterministic regressions.
 
@@ -82,6 +87,10 @@ After Phase 8B: 462 backend tests passing; eval gate unchanged at 18/18, score `
 - Branch-to-branch eval trend comparison.
 - Historical review analytics.
 - LLM-as-judge as an optional analysis layer, not the CI gate.
+- Streaming generation for the optional LLM answer path.
+- Tool calling in the optional LLM answer path.
+- Provider-comparison panel in the dashboard, reading benchmark JSON.
+- Optional, opt-in real-provider eval artifact upload (never a required CI gate).
 - OCR and invoice image recognition.
 - External tax-bureau integrations.
 

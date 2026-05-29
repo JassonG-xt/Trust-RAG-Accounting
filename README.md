@@ -46,6 +46,7 @@ This repository demonstrates those constraints in a small, local, inspectable sy
 - Vanilla FastAPI-served dashboard with no Node, npm, React, Vite, CDN, or build step.
 - Deterministic accounting eval harness with CI gate, PR comment bot, and local eval trend snapshots.
 - Optional real-LLM answer generator (off by default) bounded by a citation contract with deterministic fallback.
+- Optional manual provider benchmark report comparing template, mock, and real providers on fallback rate, citation validation, safety preservation, and latency — kept separate from the deterministic, mock-only CI gate.
 
 ## Architecture
 
@@ -223,7 +224,7 @@ See [`docs/dashboard.md`](docs/dashboard.md) and [`docs/demo_walkthrough.md`](do
 
 ## Roadmap
 
-Completed through Phase 8B:
+Completed through Phase 8C:
 
 - Accounting verticalization.
 - Multi-format ingestion and chunking.
@@ -234,10 +235,10 @@ Completed through Phase 8B:
 - Reviewer dashboard with actions, filtering, export, and eval trends.
 - GitHub showcase documentation polish.
 - Optional citation-aware real-LLM answer generator (off by default) with deterministic fallback.
+- Manual provider benchmark report (fallback / citation / safety / latency), separate from the deterministic CI gate.
 
 Next realistic phases:
 
-- Real-provider benchmark report (citation faithfulness across providers), separate from the deterministic CI gate.
 - Postgres persistence for review and document metadata.
 - Authentication and authorization for reviewer actions.
 - Deployed dashboard.
