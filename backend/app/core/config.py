@@ -195,6 +195,40 @@ class Settings:
         default_factory=lambda: _int_env("TRUSTRAG_EVAL_HISTORY_LIMIT", 50)
     )
 
+    # Phase 8B — optional real LLM answer generation. Default OFF: the
+    # deterministic template generator runs unless LLM_ANSWER_MODE=llm. The
+    # existing ``llm_provider`` field (above, default "mock") selects the
+    # backend. Real providers (openai_compatible / anthropic_compatible) read
+    # the *base_url / *api_key / *model fields below; they are validated at
+    # construction (a missing key fails loud) and any provider failure or
+    # citation-contract violation falls back to the template answer. Secrets
+    # use _optional_str_env (str | None) like qdrant_api_key and never appear
+    # in logs or error strings.
+    llm_answer_mode: str = field(
+        default_factory=lambda: os.getenv("LLM_ANSWER_MODE", "template")
+    )
+    llm_base_url: str | None = field(
+        default_factory=lambda: _optional_str_env("LLM_BASE_URL")
+    )
+    llm_api_key: str | None = field(
+        default_factory=lambda: _optional_str_env("LLM_API_KEY")
+    )
+    llm_model: str | None = field(
+        default_factory=lambda: _optional_str_env("LLM_MODEL")
+    )
+    llm_timeout_seconds: float = field(
+        default_factory=lambda: _float_env("LLM_TIMEOUT_SECONDS", 30.0)
+    )
+    anthropic_base_url: str | None = field(
+        default_factory=lambda: _optional_str_env("ANTHROPIC_BASE_URL")
+    )
+    anthropic_api_key: str | None = field(
+        default_factory=lambda: _optional_str_env("ANTHROPIC_API_KEY")
+    )
+    anthropic_model: str | None = field(
+        default_factory=lambda: _optional_str_env("ANTHROPIC_MODEL")
+    )
+
 
 def get_settings() -> Settings:
     """Return application settings.

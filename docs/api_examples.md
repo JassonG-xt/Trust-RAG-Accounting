@@ -48,6 +48,20 @@ Useful fields to inspect:
 - `judge_verdict`
 - `human_review`
 - `citations`
+- `generation_metadata` — `null` in the default template mode; populated with `llm_provider` / `llm_model` / `llm_used` / `citation_validation` / `fallback_used` when `LLM_ANSWER_MODE=llm`.
+
+### Optional LLM mode (off by default)
+
+The same endpoint can generate the answer with a real LLM behind a citation
+contract. With the deterministic mock provider (no key, offline):
+
+```bash
+LLM_ANSWER_MODE=llm LLM_PROVIDER=mock uvicorn backend.app.main:app --reload
+```
+
+The answer then carries inline `[source:<chunk_id>]` citations and a populated
+`generation_metadata`. Invalid citations or provider errors fall back to the
+deterministic answer. See [`real_llm_provider.md`](real_llm_provider.md).
 
 ## Review Queue
 

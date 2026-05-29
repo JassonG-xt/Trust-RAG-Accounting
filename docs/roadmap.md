@@ -25,14 +25,17 @@ TrustRAG Accounting is phase-gated by tests and evals, not dates. Each phase is 
 | 7C | Complete | Dashboard filtering, pagination, and export. |
 | 7D | Complete | Historical eval trend dashboard from local snapshots. |
 | 8A | Complete | GitHub showcase polish: README, architecture, demo, screenshots guide, API examples. |
+| 8B | Complete | Optional citation-aware real-LLM answer generator (off by default) with deterministic fallback. |
 
-Current `main` baseline before Phase 8A:
+Current `main` baseline this phase built on (Phase 8A):
 
 - 419 backend tests passing.
 - 18/18 active eval cases passing.
 - Eval score `1.000`.
 - CI green.
-- Tag `trustrag-accounting-phase-7d-eval-trends-v1`.
+- Tag `trustrag-accounting-phase-8a-showcase-v1`.
+
+After Phase 8B: 462 backend tests passing; eval gate unchanged at 18/18, score `1.000` (the LLM seam is off by default).
 
 ## Current Capabilities
 
@@ -45,18 +48,14 @@ Current `main` baseline before Phase 8A:
 - Local reviewer dashboard with actions, filters, pagination, and export.
 - Latest eval report viewer and local eval trend panel.
 - Deterministic eval suite in CI with PR comments and artifacts.
+- Optional real-LLM answer generator (off by default) with citation-contract validation and deterministic fallback. See [real_llm_provider.md](real_llm_provider.md).
 
 ## Near-Term Next Steps
 
-### Phase 8B - Screenshots and GitHub Pages-style showcase
-
-- Capture tracked, small screenshots under `docs/assets/`.
-- Add a visual walkthrough section to the README.
-- Optionally add a static GitHub Pages-friendly showcase page generated from existing docs.
-
 ### Real provider eval
 
-- Run the same deterministic eval cases against real embedding, reranker, and LLM provider adapters.
+- Phase 8B delivered the optional LLM provider seam (mock / OpenAI-compatible / Anthropic-compatible) and a manual smoke command.
+- Next: a real-provider benchmark report comparing citation-faithfulness across providers, kept separate from the deterministic CI gate.
 - Keep the mock-provider suite as the required CI floor.
 - Report provider-specific regressions separately from deterministic regressions.
 
