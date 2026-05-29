@@ -206,6 +206,32 @@ Point out:
 - The risk note and (when applicable) the review pointer are still appended deterministically.
 - Switching back to `LLM_ANSWER_MODE=template` returns the deterministic answer and `generation_metadata: null`. Invalid citations or a provider error fall back to the template automatically. See [`real_llm_provider.md`](real_llm_provider.md).
 
+## Scenario 11: Provider Benchmark (manual, not CI)
+
+Compare providers on quality, safety, and latency without touching the
+deterministic gate. The mock run stays fully offline:
+
+```bash
+bash scripts/run_provider_benchmark.sh mock
+```
+
+Inspect the report:
+
+```bash
+cat data/provider_benchmark_report.md
+```
+
+Point out:
+
+- `template` scores `1.000`; the `mock` provider scores lower, and every miss is
+  an `answer_terms` (wording) difference — `fallback_rate` is `0`,
+  `citation_validation_rate` is `100%`, and unsafe refusal + human review are
+  preserved on every case.
+- That gap is the whole point: the benchmark separates "the model reworded the
+  answer" from "the model broke a citation or a safety gate."
+- A real provider needs `LLM_*` env; without it the command is a clean no-op
+  (exit 0) and never runs in CI. See [`provider_benchmark.md`](provider_benchmark.md).
+
 ## Demo Close
 
 The story to emphasize:

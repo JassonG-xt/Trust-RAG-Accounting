@@ -195,7 +195,7 @@ See [`real_llm_provider.md`](real_llm_provider.md).
 
 ## Not Covered Yet
 
-- Real-provider benchmark report (the manual smoke command exists; an automated cross-provider report does not).
+- Cross-provider benchmark *leaderboard* in the dashboard (the manual per-provider [provider benchmark report](provider_benchmark.md) exists; a dashboard panel does not).
 - LLM-as-judge as an optional analysis layer.
 - GitHub artifact history import.
 - Branch-to-branch trend comparison.

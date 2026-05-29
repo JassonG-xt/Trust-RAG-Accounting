@@ -63,6 +63,12 @@ The answer then carries inline `[source:<chunk_id>]` citations and a populated
 `generation_metadata`. Invalid citations or provider errors fall back to the
 deterministic answer. See [`real_llm_provider.md`](real_llm_provider.md).
 
+> **Provider benchmark (CLI, not an API).** To compare providers on fallback
+> rate, citation validation, safety preservation, and latency, run
+> `bash scripts/run_provider_benchmark.sh mock` (offline) and read
+> `data/provider_benchmark_report.md`. It is a manual tool, never a route, and
+> never part of CI. See [`provider_benchmark.md`](provider_benchmark.md).
+
 ## Review Queue
 
 ```bash
