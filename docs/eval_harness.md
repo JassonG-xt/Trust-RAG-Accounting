@@ -220,6 +220,26 @@ Local CI-equivalent command:
 bash scripts/run_eval_gate.sh
 ```
 
+Archive the latest local result for the Phase 7D dashboard trend:
+
+```bash
+bash scripts/archive_eval_snapshot.sh
+```
+
+The script wraps:
+
+```bash
+python -m backend.app.evals.history \
+  --archive data/eval_results.json \
+  --history-dir data/eval_history
+```
+
+Snapshots are compact summaries only: total / passed / failed /
+skipped, score, category breakdown, creation time, and optional git
+commit / branch metadata. They do not store per-case outputs or full
+evidence content. `data/eval_history/*.json` lives under `data/`, so
+it is gitignored and local-only.
+
 Local PR-comment rendering command:
 
 ```bash
@@ -282,8 +302,9 @@ without leaking the corpus.
 - **Real-provider eval.** The suite runs against mock embedding +
   mock reranker. A future provider eval can repeat the suite against
   Qdrant + a real reranker to detect provider-specific regressions.
-- **Historical eval trend dashboard.** Phase 6C compares one PR to
-  one `main` run; it does not persist trend data over time.
+- **Remote history import.** Phase 7D stores local snapshots only. It
+  does not download GitHub artifacts or compare trends across
+  branches.
 - **Reviewer write-side.** Phase 5C will add reviewer actions
   (approve/reject/rewrite); the eval will then assert that the
   rewritten answer flows back into the response correctly.

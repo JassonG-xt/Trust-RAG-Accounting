@@ -12,6 +12,7 @@ const state = {
   review: null,
   reviewSummary: null,
   eval: null,
+  evalHistory: null,
   traces: null,
   query: null,
   actionHistory: {},
@@ -156,6 +157,7 @@ async function refreshAll() {
     refreshDocuments(),
     refreshReview(),
     refreshEval(),
+    refreshEvalHistory(),
     refreshTraces(),
   ]);
 }
@@ -164,6 +166,7 @@ async function refreshPanel(name) {
   if (name === "documents") return refreshDocuments();
   if (name === "review") return refreshReview();
   if (name === "eval") return refreshEval();
+  if (name === "eval-history") return refreshEvalHistory();
   if (name === "traces") return refreshTraces();
 }
 
@@ -220,6 +223,18 @@ async function refreshEval() {
     $("eval-summary").innerHTML = badge("Missing eval report", "warn");
     $("eval-categories").innerHTML = "";
     $("eval-markdown").textContent = `Eval endpoint unavailable: ${messageOf(error)}`;
+  }
+}
+
+async function refreshEvalHistory() {
+  try {
+    state.evalHistory = await fetchJson("/v1/evals/history");
+    renderEvalHistory(state.evalHistory);
+  } catch (error) {
+    $("eval-trend-summary").innerHTML = badge("Eval history unavailable", "warn");
+    $("eval-trend-metrics").innerHTML = "";
+    $("eval-sparkline").innerHTML = "";
+    $("eval-trend-categories").innerHTML = emptyHtml(`History endpoint unavailable: ${messageOf(error)}`);
   }
 }
 
@@ -479,6 +494,70 @@ function renderEval(data) {
   $("eval-markdown").textContent = data.markdown_report || "No Markdown report available.";
 }
 
+function renderEvalHistory(data) {
+  const snapshots = data.snapshots || [];
+  if (!data.available || !snapshots.length) {
+    $("eval-trend-summary").textContent =
+      "No eval history snapshots found. Run eval gate and archive a snapshot.";
+    $("eval-trend-metrics").innerHTML = "";
+    $("eval-sparkline").innerHTML = "";
+    $("eval-trend-categories").innerHTML = "";
+    return;
+  }
+
+  const latest = data.latest || snapshots[snapshots.length - 1];
+  const passed = Number(latest.failed || 0) === 0;
+  $("eval-trend-summary").innerHTML = [
+    badge(passed ? "Latest pass" : "Latest fail", passed ? "pass" : "fail"),
+    `<span class="summary-text">${escapeHtml(latest.snapshot_id)} / ${escapeHtml(latest.created_at)}</span>`,
+  ].join(" ");
+  $("eval-trend-metrics").innerHTML = renderEvalTrendMetrics(latest, data);
+  $("eval-sparkline").innerHTML = renderScoreSparkline(snapshots);
+  $("eval-trend-categories").innerHTML = renderCategoryTable(latest.by_category || {});
+}
+
+function renderEvalTrendMetrics(latest, data) {
+  const delta = data.score_delta_latest;
+  const deltaTone = delta == null ? "neutral" : (Number(delta) < 0 ? "fail" : (Number(delta) > 0 ? "pass" : "neutral"));
+  const metrics = [
+    {label: "Latest score", value: formatScore(latest.score), tone: Number(latest.failed || 0) === 0 ? "pass" : "fail"},
+    {label: "Passed", value: latest.passed ?? 0, tone: "pass"},
+    {label: "Failed", value: latest.failed ?? 0, tone: Number(latest.failed || 0) ? "fail" : "neutral"},
+    {label: "Skipped", value: latest.skipped ?? 0, tone: Number(latest.skipped || 0) ? "warn" : "neutral"},
+    {label: "Delta", value: formatDelta(delta), tone: deltaTone},
+    {label: "Snapshots", value: data.count ?? 0, tone: "neutral"},
+  ];
+  return metrics.map((metric) => `<div class="trend-metric ${escapeHtml(metric.tone)}">
+    <span class="trend-metric-label">${escapeHtml(metric.label)}</span>
+    <span class="trend-metric-value">${escapeHtml(metric.value)}</span>
+  </div>`).join("");
+}
+
+function renderScoreSparkline(snapshots) {
+  const width = 320;
+  const height = 84;
+  const pad = 10;
+  const usableWidth = width - pad * 2;
+  const usableHeight = height - pad * 2;
+  const points = snapshots.map((snapshot, index) => {
+    const x = snapshots.length === 1
+      ? width / 2
+      : pad + (index / (snapshots.length - 1)) * usableWidth;
+    const score = Math.max(0, Math.min(1, Number(snapshot.score) || 0));
+    const y = pad + (1 - score) * usableHeight;
+    return {x, y, score, id: snapshot.snapshot_id};
+  });
+  const line = points.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
+  const dots = points.map((point) => `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="3.5">
+    <title>${escapeHtml(point.id)} score ${escapeHtml(formatScore(point.score))}</title>
+  </circle>`).join("");
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Eval score sparkline">
+    <line class="sparkline-axis" x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}"></line>
+    <polyline points="${line}"></polyline>
+    ${dots}
+  </svg>`;
+}
+
 function renderTraces(data) {
   if (!data.enabled) {
     $("trace-summary").innerHTML = badge("Tracing disabled", "warn");
@@ -562,6 +641,13 @@ function formatScore(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "N/A";
   return number.toFixed(3);
+}
+
+function formatDelta(value) {
+  if (value === null || value === undefined) return "N/A";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "N/A";
+  return `${number > 0 ? "+" : ""}${number.toFixed(3)}`;
 }
 
 function truncate(text, limit) {

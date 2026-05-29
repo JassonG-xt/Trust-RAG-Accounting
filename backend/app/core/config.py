@@ -186,6 +186,14 @@ class Settings:
             "TRUSTRAG_EVAL_REPORT_PATH", "data/eval_report.md"
         )
     )
+    trustrag_eval_history_dir: str = field(
+        default_factory=lambda: os.getenv(
+            "TRUSTRAG_EVAL_HISTORY_DIR", "data/eval_history"
+        )
+    )
+    trustrag_eval_history_limit: int = field(
+        default_factory=lambda: _int_env("TRUSTRAG_EVAL_HISTORY_LIMIT", 50)
+    )
 
 
 def get_settings() -> Settings:

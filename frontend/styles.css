@@ -421,6 +421,97 @@ pre {
   font-style: italic;
 }
 
+.eval-trend-panel {
+  overflow: hidden;
+}
+
+.eval-trend-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.trend-metric {
+  display: grid;
+  gap: 4px;
+  min-height: 64px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.trend-metric.pass {
+  border-color: var(--green);
+  background: var(--green-soft);
+}
+
+.trend-metric.warn {
+  border-color: var(--amber);
+  background: var(--amber-soft);
+}
+
+.trend-metric.fail {
+  border-color: var(--red);
+  background: var(--red-soft);
+}
+
+.trend-metric-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.trend-metric-value {
+  align-self: end;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.eval-sparkline {
+  min-height: 96px;
+  margin: 10px 0 4px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background:
+    linear-gradient(180deg, rgba(17, 115, 108, 0.08), rgba(17, 115, 108, 0)),
+    #fff;
+}
+
+.eval-sparkline:empty {
+  display: none;
+}
+
+.eval-sparkline svg {
+  display: block;
+  width: 100%;
+  height: 96px;
+}
+
+.eval-sparkline polyline {
+  fill: none;
+  stroke: var(--teal);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+
+.eval-sparkline circle {
+  fill: #fff;
+  stroke: var(--teal);
+  stroke-width: 2;
+}
+
+.eval-sparkline .sparkline-axis {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
 .review-disclaimer {
   margin: 0 0 12px;
   padding: 8px 10px;

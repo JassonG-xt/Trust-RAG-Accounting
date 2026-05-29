@@ -9,7 +9,7 @@
 
 <p align="left">
   <img alt="status" src="https://img.shields.io/badge/status-alpha-orange.svg">
-  <img alt="phase" src="https://img.shields.io/badge/phase-7C%20filters%20%26%20export-blue.svg">
+  <img alt="phase" src="https://img.shields.io/badge/phase-7D%20eval%20trends-blue.svg">
   <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-blue.svg">
   <img alt="framework" src="https://img.shields.io/badge/built%20with-LangGraph-7c3aed.svg">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-green.svg">
@@ -484,6 +484,17 @@ What the workflow can do today, end-to-end:
     action-history endpoint gains `action_type` / `reviewer` /
     `limit` / `offset` query parameters and a new `GET
     /v1/review/queue/summary` aggregate endpoint backs the cards.
+50. **Local eval history snapshots (Phase 7D)** - the eval runner's
+    `data/eval_results.json` can be archived into compact local
+    snapshots under `data/eval_history/*.json` via
+    `bash scripts/archive_eval_snapshot.sh`. The read-only
+    `GET /v1/evals/history` endpoint returns the latest score,
+    pass/fail/skipped counts, category scores, snapshot count, and
+    latest-vs-previous score delta. The dashboard renders those
+    snapshots in an Eval Trend panel with vanilla SVG / CSS score
+    trend visualization. Missing history files produce an empty
+    state; no database, GitHub artifact import, remote API, or
+    frontend build step is involved.
 
 ## Planned Features
 
@@ -542,6 +553,9 @@ python -m backend.app.evals.runner \
 # Equivalent helper:
 bash scripts/run_eval_gate.sh
 
+# Optional: archive the latest eval result for the dashboard trend panel.
+bash scripts/archive_eval_snapshot.sh
+
 # Optional: render the compact PR-comment Markdown locally.
 python -m backend.app.evals.compare \
     --head data/eval_results.json \
@@ -552,11 +566,12 @@ python -m backend.app.evals.compare \
     --category-threshold client_specific=0.95 \
     --category-threshold citation_faithfulness=0.95
 
-# 7. Open the local reviewer dashboard (Phase 7A/7B)
+# 7. Open the local reviewer dashboard (Phase 7A-7D)
 # http://localhost:8000/dashboard
 # - run a query that triggers human review (e.g. tax_policy)
 # - click approve / reject / request_changes / rewrite_note / resolve / reopen
 # - inspect the append-only action history per checkpoint
+# - inspect the Eval Trend panel after archiving one or more snapshots
 ```
 
 No API keys are required — all LLM and retrieval calls are
