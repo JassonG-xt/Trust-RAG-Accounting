@@ -34,6 +34,9 @@ TrustRAG Accounting is phase-gated by tests and evals, not dates. Each phase is 
 
 Recent validated baselines:
 
+These are historical snapshots for the named phase tags; the eval counts below
+are intentionally preserved rather than rewritten to the current gate size.
+
 - Phase 8A: 419 backend tests passing; eval gate 18/18, score `1.000`; tag `trustrag-accounting-phase-8a-showcase-v1`.
 - Phase 8B: 462 backend tests passing; eval gate unchanged at 18/18, score `1.000` (the LLM seam is off by default).
 - Phase 8C: 496 backend tests passing; eval gate unchanged at 18/18, score `1.000` (the provider benchmark is a manual tool and never gates CI).

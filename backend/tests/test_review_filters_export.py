@@ -727,6 +727,32 @@ def test_api_export_filters_apply_to_csv(client: TestClient) -> None:
 # ===========================================================================
 
 
+def test_csv_export_formula_neutralized(
+    client: TestClient,
+    queue_path: Path,
+    actions_path: Path,
+) -> None:
+    service = _service(queue_path, actions_path)
+    service._checkpoints.append(
+        _make_checkpoint(
+            "+queue",
+            question_type="@type",
+            reasons=["-reason"],
+            question='=HYPERLINK("http://exfil","click")',
+        )
+    )
+
+    response = client.get("/v1/review/queue/export.csv")
+    assert response.status_code == 200
+    rows = list(csv.DictReader(io.StringIO(response.text)))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["review_queue_id"] == "'+queue"
+    assert row["question_type"] == "'@type"
+    assert row["human_review_reasons"] == "'-reason"
+    assert row["question"] == '\'=HYPERLINK("http://exfil","click")'
+
+
 def test_dashboard_html_has_filter_controls(client: TestClient) -> None:
     response = client.get("/dashboard")
     assert response.status_code == 200

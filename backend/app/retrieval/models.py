@@ -28,8 +28,9 @@ from pydantic import BaseModel, Field
 class MetadataFilter(BaseModel):
     """Declarative, structured retrieval filter.
 
-    All filter dimensions are *optional and additive*. An empty
-    ``MetadataFilter()`` is the identity filter (admits every chunk).
+    All filter dimensions are *optional and additive*, except that a
+    missing client means "firm-wide only" so generic questions cannot
+    retrieve client-specific SOP chunks.
     """
 
     client: str | None = Field(

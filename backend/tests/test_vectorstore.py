@@ -20,6 +20,7 @@ import math
 import pytest
 
 from backend.app.retrieval.models import MetadataFilter
+from backend.app.retrieval import build_metadata_filter
 from backend.app.vectorstore import (
     InMemoryVectorStore,
     VectorRecord,
@@ -159,11 +160,11 @@ def test_in_memory_store_stable_sort_by_score_then_id():
 # ---------------------------------------------------------------------------
 
 
-def test_metadata_filter_to_payload_filter_empty_filter_yields_empty_dict():
+def test_metadata_filter_to_payload_filter_empty_filter_blocks_private_clients():
     pf = metadata_filter_to_payload_filter(MetadataFilter())
     # include_malicious=False is the default, so the safety constraint
-    # must be emitted even when nothing else is set.
-    assert pf == {"is_malicious": False}
+    # must be emitted; clientless queries only admit firm-wide chunks.
+    assert pf == {"client_any_of": [None], "is_malicious": False}
 
 
 def test_metadata_filter_to_payload_filter_client_admits_firm_wide():
@@ -171,6 +172,11 @@ def test_metadata_filter_to_payload_filter_client_admits_firm_wide():
         MetadataFilter(client="Alpha Trading Co.")
     )
     assert pf["client_any_of"] == ["Alpha Trading Co.", None]
+
+
+def test_metadata_filter_to_payload_filter_clientless_alpha_query_blocks_private_docs():
+    pf = metadata_filter_to_payload_filter(build_metadata_filter("alpha numeric field"))
+    assert pf == {"client_any_of": [None], "is_malicious": False}
 
 
 def test_metadata_filter_to_payload_filter_document_types_passthrough():

@@ -13,7 +13,11 @@ talks to it through ``retrieve_evidence`` / ``retrieve_counter_evidence``.
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import asdict, dataclass
+
+from ..retrieval.filters import infer_client_from_query
 
 
 @dataclass(frozen=True)
@@ -258,32 +262,72 @@ UNSAFE_INTENT_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+_UNSAFE_REGEX_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
+    "tax_evasion": (
+        re.compile(r"\bavoid(?:ing)?\s+pay(?:ing)?\s+tax(?:es)?\b"),
+        re.compile(r"\bnot\s+pay\s+tax(?:es)?\b"),
+        re.compile(r"\bno\s+tax(?:es)?\b"),
+        re.compile(r"\btax\s+evasion\b"),
+        re.compile(r"\bhide\s+income\b"),
+        re.compile(r"\bhide(?:\s+\w+){0,3}\s+(?:income|revenue)\b"),
+        re.compile(r"\bsplit\s+income\b"),
+        re.compile(r"\bsplit(?:\s+\w+){0,3}\s+income\b"),
+        re.compile(r"\bnot\s+discovered\b"),
+        re.compile(r"\bavoid\s+detection\b"),
+        re.compile(r"\bnot\s+discovered?\s+by\s+(?:the\s+)?tax\s+authorit(?:y|ies)\b"),
+        re.compile(r"\bavoid\s+tax(?:es)?\b"),
+        re.compile(r"\bevade\s+tax(?:es)?\b"),
+        re.compile(r"\bpay\s+less\s+tax\b"),
+        re.compile("\u4e0d\u7528\u7f34\u7a0e"),
+        re.compile("\u5c11\u4ea4.*\u7a0e"),
+        re.compile("\u5c11\u7f34.*\u7a0e"),
+        re.compile("\u89c4\u907f\u7a0e\u52a1"),
+        re.compile("\u7a0e\u52a1.*\u89c4\u907f"),
+        re.compile("\u9003\u7a0e"),
+        re.compile("\u522b\u8ba9\u7a0e\u52a1\u53d1\u73b0"),
+        re.compile("\u6536\u5165.*\u62c6\u5f00"),
+        re.compile("\u62c6\u5f00.*\u6536\u5165"),
+        re.compile("\u9690\u85cf\u6536\u5165"),
+    ),
+    "invoice_fabrication": (
+        re.compile(r"\bfabricate\s+invoice\b"),
+        re.compile(r"\bfake\s+invoice\b"),
+        re.compile("\u865a\u5f00\u53d1\u7968"),
+        re.compile("\u5047\u53d1\u7968"),
+        re.compile("\u4f2a\u9020.*\u53d1\u7968"),
+    ),
+}
+
+_BARE_TAX_AVOIDANCE_TERM = "\u907f\u7a0e"
+_LEGAL_TAX_PLANNING_HINTS = (
+    "\u5408\u6cd5",
+    "\u5408\u89c4",
+    "\u7a0e\u52a1\u7b79\u5212",
+    "tax planning",
+    "legal",
+    "lawful",
+    "compliant",
+)
+
+
+def _normalize_unsafe_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text or "").lower()
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _has_legal_tax_planning_hint(text: str) -> bool:
+    return any(hint in text for hint in _LEGAL_TAX_PLANNING_HINTS)
+
+
 # ---------------------------------------------------------------------------
 # Retrieval API
 # ---------------------------------------------------------------------------
 
 
-# Map a client-mention substring (lowercased) to the canonical client name
-# stored on records. The retriever uses this to filter out other clients'
-# records when a specific client is named in the question.
-_CLIENT_ALIASES: tuple[tuple[str, str], ...] = (
-    ("alpha trading", "Alpha Trading Co."),
-    ("alpha", "Alpha Trading Co."),
-    ("beta catering", "Beta Catering Ltd."),
-    ("beta", "Beta Catering Ltd."),
-    ("gamma tech", "Gamma Tech Studio"),
-    ("gamma", "Gamma Tech Studio"),
-)
-
-
 def _question_client(question: str) -> str | None:
     """Return the canonical client name if the question names one."""
 
-    q = (question or "").lower()
-    for alias, canonical in _CLIENT_ALIASES:
-        if alias in q:
-            return canonical
-    return None
+    return infer_client_from_query(question)
 
 
 def _matches(question: str, record: MockEvidenceRecord) -> bool:
@@ -373,9 +417,20 @@ def detect_unsafe_intent(question: str) -> list[str]:
     safety_checker combines this with prompt-injection detection.
     """
 
-    q = (question or "").lower()
+    q = _normalize_unsafe_text(question)
     matched: list[str] = []
     for category, patterns in UNSAFE_INTENT_PATTERNS:
-        if any(p.lower() in q for p in patterns):
+        if any(_normalize_unsafe_text(p) in q for p in patterns):
             matched.append(category)
+
+    for category, patterns in _UNSAFE_REGEX_PATTERNS.items():
+        if category in matched:
+            continue
+        if any(pattern.search(q) for pattern in patterns):
+            matched.append(category)
+
+    if _BARE_TAX_AVOIDANCE_TERM in q and not _has_legal_tax_planning_hint(q):
+        if "tax_evasion" not in matched:
+            matched.append("tax_evasion")
+
     return matched

@@ -145,7 +145,16 @@ def test_tokenize_empty_string_returns_empty_list():
 
 def test_infer_client_resolves_alpha_alias():
     assert infer_client_from_query("Alpha Trading Co. 的发票") == "Alpha Trading Co."
-    assert infer_client_from_query("just alpha by itself") == "Alpha Trading Co."
+    assert (
+        infer_client_from_query("Alpha Trading Co. meal invoice policy")
+        == "Alpha Trading Co."
+    )
+    assert (
+        infer_client_from_query(
+            "Alpha Trading Co. \u7684\u9910\u996e\u53d1\u7968\u600e\u4e48\u5904\u7406"
+        )
+        == "Alpha Trading Co."
+    )
 
 
 def test_infer_client_resolves_beta_alias():
@@ -157,6 +166,34 @@ def test_infer_client_resolves_beta_alias():
 
 def test_infer_client_returns_none_for_firm_wide_query():
     assert infer_client_from_query("现在打车超过 100 元需要审批吗？") is None
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "alpha numeric field",
+        "alpha version release",
+        "alpha release notes",
+        "just alpha by itself",
+        "alphabet soup question",
+        "I like beta testing",
+        "gamma rays",
+    ],
+)
+def test_client_alias_word_boundary_false_positives(query: str) -> None:
+    assert infer_client_from_query(query) is None
+
+
+def test_client_alias_alpha_numeric_false_positive() -> None:
+    assert infer_client_from_query("alpha numeric field") is None
+
+
+def test_client_alias_alpha_version_false_positive() -> None:
+    assert infer_client_from_query("alpha version release") is None
+
+
+def test_client_alias_alpha_release_notes_false_positive() -> None:
+    assert infer_client_from_query("alpha release notes") is None
 
 
 def test_infer_document_types_uses_question_type_when_set():
@@ -184,6 +221,18 @@ def test_metadata_filter_alpha_admits_alpha_and_firm_wide(chunks):
     assert beta_chunks
     assert not any(passes_metadata_filter(c, f) for c in beta_chunks)
     # Firm-wide chunks (client=None) pass.
+    firm_wide = [c for c in chunks if c.client is None and not c.is_malicious]
+    assert firm_wide
+    assert all(passes_metadata_filter(c, f) for c in firm_wide)
+
+
+def test_client_none_blocks_private_docs(chunks):
+    f = MetadataFilter(client=None)
+
+    private_chunks = [c for c in chunks if c.client is not None]
+    assert private_chunks
+    assert not any(passes_metadata_filter(c, f) for c in private_chunks)
+
     firm_wide = [c for c in chunks if c.client is None and not c.is_malicious]
     assert firm_wide
     assert all(passes_metadata_filter(c, f) for c in firm_wide)
