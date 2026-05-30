@@ -48,6 +48,7 @@ http://localhost:8000/dashboard
 | Latest eval report | `GET /v1/evals/latest` |
 | Eval trend panel | `GET /v1/evals/history` |
 | Provider benchmark panel | `GET /v1/provider-benchmarks/latest` and `GET /v1/provider-benchmarks` |
+| Provider benchmark trend panel | `GET /v1/provider-benchmarks/history` |
 | Local traces | `GET /v1/debug/traces` |
 
 ## Demo Flow
@@ -133,6 +134,44 @@ No provider benchmark artifact found. Run: bash scripts/run_provider_benchmark.s
 `GET /v1/provider-benchmarks/latest` and `GET /v1/provider-benchmarks` are
 read-only. They never run a benchmark, call a real provider, require a key, or
 write files. See [`provider_benchmark_dashboard.md`](provider_benchmark_dashboard.md).
+
+## Provider Benchmark Trends
+
+The Provider Benchmark Trends panel reads compact local summary snapshots:
+
+```text
+data/provider_benchmark_history/*.json
+```
+
+Archive one (manual, offline):
+
+```bash
+bash scripts/run_provider_benchmark.sh mock
+bash scripts/archive_provider_benchmark_snapshot.sh
+```
+
+The panel displays:
+
+- Snapshot count, latest provider, and latest score.
+- Latest-vs-previous deltas for score, fallback rate, and citation validation
+  rate (computed against the previous snapshot of the same provider).
+- Lightweight SVG sparklines for score, fallback rate, and citation validation
+  rate over the snapshots.
+- A history table (created at, provider, model, score, fallback rate, citation
+  validation rate, invalid citations, provider errors, avg/p95 latency, commit).
+
+Empty state:
+
+```text
+No provider benchmark history found. Run: bash scripts/run_provider_benchmark.sh mock
+then bash scripts/archive_provider_benchmark_snapshot.sh
+```
+
+`GET /v1/provider-benchmarks/history` is read-only. Snapshots are compact
+summaries only — no per-case rows, answer prose, or evidence content. It never
+runs a benchmark, calls a real provider, requires a key, imports GitHub
+artifacts, or writes files. See
+[`provider_benchmark_history.md`](provider_benchmark_history.md).
 
 ## Review Filtering and Export
 

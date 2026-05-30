@@ -113,3 +113,11 @@ TRUSTRAG_PROVIDER_BENCHMARK_LIMIT=20
 The dashboard reads local artifacts only. CI never runs real provider benchmarks
 and never requires a secret. See [`provider_benchmark.md`](provider_benchmark.md)
 and [`real_llm_provider.md`](real_llm_provider.md).
+
+## Trend over time
+
+Phase 8E adds a read-only **Provider Benchmark Trends** panel and a
+`GET /v1/provider-benchmarks/history` endpoint backed by compact summary
+snapshots archived locally with
+`bash scripts/archive_provider_benchmark_snapshot.sh`. See
+[`provider_benchmark_history.md`](provider_benchmark_history.md).

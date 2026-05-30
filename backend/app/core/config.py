@@ -219,6 +219,23 @@ class Settings:
         default_factory=lambda: _int_env("TRUSTRAG_PROVIDER_BENCHMARK_LIMIT", 20)
     )
 
+    # Phase 8E — provider benchmark trend history. Read-only inputs used by
+    # ``GET /v1/provider-benchmarks/history``; the API never runs a benchmark,
+    # archives snapshots, or writes files. Compact summary snapshots are archived
+    # manually via ``scripts/archive_provider_benchmark_snapshot.sh`` under the
+    # gitignored ``data/`` tree.
+    trustrag_provider_benchmark_history_dir: str = field(
+        default_factory=lambda: os.getenv(
+            "TRUSTRAG_PROVIDER_BENCHMARK_HISTORY_DIR",
+            "data/provider_benchmark_history",
+        )
+    )
+    trustrag_provider_benchmark_history_limit: int = field(
+        default_factory=lambda: _int_env(
+            "TRUSTRAG_PROVIDER_BENCHMARK_HISTORY_LIMIT", 50
+        )
+    )
+
     # Phase 8B — optional real LLM answer generation. Default OFF: the
     # deterministic template generator runs unless LLM_ANSWER_MODE=llm. The
     # existing ``llm_provider`` field (above, default "mock") selects the

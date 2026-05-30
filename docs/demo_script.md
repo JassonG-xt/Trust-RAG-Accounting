@@ -235,6 +235,32 @@ Point out:
   read-only (summary cards, category + case tables, template-vs-mock comparison).
   See [`provider_benchmark_dashboard.md`](provider_benchmark_dashboard.md).
 
+## Scenario 12: Provider Benchmark Trends (manual, not CI)
+
+Archive a compact summary of the benchmark run, then view the trend read-only:
+
+```bash
+bash scripts/run_provider_benchmark.sh mock
+bash scripts/archive_provider_benchmark_snapshot.sh
+```
+
+Inspect the history:
+
+```bash
+curl -s http://localhost:8000/v1/provider-benchmarks/history | jq .
+```
+
+Point out:
+
+- Snapshots are compact summaries only — provider / model / score / fallback
+  rate / citation validation rate / latency + a compact `by_category`. No
+  per-case rows, answer prose, or evidence content.
+- The latest-vs-previous deltas compare the same provider, so a `template` run
+  archived between two `mock` runs does not distort the mock trend.
+- Open `/dashboard` → **Provider Benchmark Trends** panel for the sparklines and
+  history table. It never runs a benchmark and never reaches a real provider.
+  See [`provider_benchmark_history.md`](provider_benchmark_history.md).
+
 ## Demo Close
 
 The story to emphasize:

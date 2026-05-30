@@ -189,7 +189,10 @@ aggregates fallback rate, citation-validation rate, safety preservation, and
 latency into JSON + Markdown — still manual, still never in CI. See
 [`provider_benchmark.md`](provider_benchmark.md). Phase 8D surfaces those
 artifacts read-only in the dashboard
-([`provider_benchmark_dashboard.md`](provider_benchmark_dashboard.md)).
+([`provider_benchmark_dashboard.md`](provider_benchmark_dashboard.md)). Phase 8E
+adds local trend snapshots of those benchmark summaries with a read-only history
+API + dashboard trend panel
+([`provider_benchmark_history.md`](provider_benchmark_history.md)).
 
 ## CI boundary
 

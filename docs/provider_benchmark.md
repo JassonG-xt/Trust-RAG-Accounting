@@ -163,3 +163,6 @@ pytest, all offline. See [`eval_harness.md`](eval_harness.md) and
 
 The artifacts this command writes can be browsed read-only from the local
 dashboard — see [`provider_benchmark_dashboard.md`](provider_benchmark_dashboard.md).
+Archive a compact summary of each run for the dashboard trend panel with
+`bash scripts/archive_provider_benchmark_snapshot.sh` — see
+[`provider_benchmark_history.md`](provider_benchmark_history.md).
