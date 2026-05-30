@@ -127,7 +127,7 @@ def create_app() -> FastAPI:
             state: dict[str, Any] = run_query(request.question)
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("workflow failed")
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail="workflow failed") from exc
 
         return _state_to_response(state)
 
@@ -685,6 +685,15 @@ _CSV_COLUMNS = [
     "question",
 ]
 
+DANGEROUS_CSV_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def csv_safe_cell(value: object) -> str:
+    text = "" if value is None else str(value)
+    if text.startswith(DANGEROUS_CSV_PREFIXES):
+        return "'" + text
+    return text
+
 
 def _render_queue_csv(entries) -> str:
     """Build a deterministic CSV body from :class:`ReviewQueueEntry` rows.
@@ -700,25 +709,22 @@ def _render_queue_csv(entries) -> str:
     )
     writer.writeheader()
     for entry in entries:
-        writer.writerow(
-            {
-                "review_queue_id": entry.review_queue_id,
-                "status": entry.status,
-                "initial_status": entry.initial_status,
-                "question_type": entry.question_type or "",
-                "confidence": (
-                    f"{entry.confidence:.3f}"
-                    if entry.confidence is not None
-                    else ""
-                ),
-                "needs_human_review": "true" if entry.needs_human_review else "false",
-                "human_review_reasons": "|".join(entry.human_review_reasons or []),
-                "created_at": entry.created_at,
-                "action_count": entry.action_count,
-                "last_action_at": entry.last_action_at or "",
-                "question": entry.question or "",
-            }
-        )
+        row = {
+            "review_queue_id": entry.review_queue_id,
+            "status": entry.status,
+            "initial_status": entry.initial_status,
+            "question_type": entry.question_type or "",
+            "confidence": (
+                f"{entry.confidence:.3f}" if entry.confidence is not None else ""
+            ),
+            "needs_human_review": "true" if entry.needs_human_review else "false",
+            "human_review_reasons": "|".join(entry.human_review_reasons or []),
+            "created_at": entry.created_at,
+            "action_count": entry.action_count,
+            "last_action_at": entry.last_action_at or "",
+            "question": entry.question or "",
+        }
+        writer.writerow({key: csv_safe_cell(value) for key, value in row.items()})
     return buffer.getvalue()
 
 

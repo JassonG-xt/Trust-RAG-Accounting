@@ -29,6 +29,7 @@ when the type stays "tax_policy".
 
 from __future__ import annotations
 
+from ...services.mock_knowledge_base import detect_unsafe_intent
 from ..state import TrustRAGState
 
 
@@ -63,6 +64,13 @@ _INVOICE_COMPLIANCE_HINTS = (
 
 _BOOKKEEPING_HINTS = (
     "入账", "做账", "记账", "科目", "bookkeeping", "ledger", "凭证科目",
+)
+
+_MEAL_BOOKKEEPING_HINTS = (
+    "meal",
+    "entertainment",
+    "\u9910\u996e",
+    "\u62db\u5f85",
 )
 
 _INVOICE_BASE_HINTS = (
@@ -134,7 +142,7 @@ def query_analyzer(state: TrustRAGState) -> dict:
     lower = question.lower()
 
     # 1. Highest priority: unsafe intent → Phase 5A fast-path routing.
-    if _has_any(question, lower, _UNSAFE_HINTS):
+    if detect_unsafe_intent(question):
         return {
             "question_type": "unsafe_request",
             "domain": "accounting",
@@ -150,6 +158,7 @@ def query_analyzer(state: TrustRAGState) -> dict:
         h in question for h in _COMPLIANCE_VERBS
     )
     has_bookkeeping_kw = _has_any(question, lower, _BOOKKEEPING_HINTS)
+    has_meal_bookkeeping_kw = _has_any_lower(lower, _MEAL_BOOKKEEPING_HINTS)
     has_invoice_kw = _has_any(question, lower, _INVOICE_BASE_HINTS)
     has_invoice_compliance_kw = _has_any(question, lower, _INVOICE_COMPLIANCE_HINTS)
     has_reimbursement_kw = _has_any(question, lower, _REIMBURSEMENT_HINTS)
@@ -169,6 +178,10 @@ def query_analyzer(state: TrustRAGState) -> dict:
         has_compliance_verb and (has_invoice_kw or has_bookkeeping_kw)
     ):
         question_type = "invoice_compliance"
+    # Meal / entertainment invoice policy asks how to book a client SOP,
+    # not whether an invoice field is compliant.
+    elif has_invoice_kw and has_meal_bookkeeping_kw:
+        question_type = "bookkeeping_sop"
     # 4. reimbursement.
     elif has_reimbursement_kw:
         question_type = "reimbursement_rule"

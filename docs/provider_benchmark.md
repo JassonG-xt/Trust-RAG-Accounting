@@ -157,7 +157,7 @@ prose.
 ## CI boundary
 
 The benchmark is manual and is never invoked by GitHub Actions. The required
-gate stays deterministic and mock-only: `score=1.000`, 18/18 active cases, full
+gate stays deterministic and mock-only: `score=1.000`, 29/29 active cases, full
 pytest, all offline. See [`eval_harness.md`](eval_harness.md) and
 [`real_llm_provider.md`](real_llm_provider.md).
 

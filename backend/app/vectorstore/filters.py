@@ -41,6 +41,8 @@ def metadata_filter_to_payload_filter(
         # Firm-wide (client=None) chunks remain visible — they answer
         # questions about any client.
         pf["client_any_of"] = [metadata_filter.client, None]
+    else:
+        pf["client_any_of"] = [None]
 
     if metadata_filter.document_types:
         pf["document_type_any_of"] = list(metadata_filter.document_types)

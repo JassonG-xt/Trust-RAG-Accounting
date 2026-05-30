@@ -152,7 +152,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    CASES["accounting_eval_cases.json<br/>18 active cases"] --> RUNNER["python -m backend.app.evals.runner"]
+    CASES["accounting_eval_cases.json<br/>29 active cases"] --> RUNNER["python -m backend.app.evals.runner"]
     RUNNER --> RESULTS["data/eval_results.json"]
     RUNNER --> REPORT["data/eval_report.md"]
     RESULTS --> COMMENT["PR eval comment<br/>regression delta"]

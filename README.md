@@ -13,8 +13,8 @@ Current showcase status:
 | Signal | Status |
 |---|---|
 | Phase | 9B - Deployment and operations guide |
-| Tests | 546 passing on `main` |
-| Eval gate | 18/18 active accounting cases passing, score `1.000` |
+| Tests | 586 passing locally |
+| Eval gate | 29/29 active accounting cases passing, score `1.000` |
 | CI | Green on `main` |
 | Dashboard | `http://localhost:8000/dashboard` |
 
@@ -205,9 +205,9 @@ The eval harness is deterministic and offline. It does not use a real LLM, LLM-a
 
 Current active suite:
 
-- 18 active accounting cases.
+- 29 active accounting cases.
 - 7 categories: current policy, client specificity, invoice review, unsafe intent, prompt injection, review trigger, citation faithfulness.
-- 18/18 passing on `main`.
+- 29/29 passing on `main`.
 - Score `1.000`.
 
 CI runs:

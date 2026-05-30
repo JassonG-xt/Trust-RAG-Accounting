@@ -197,6 +197,6 @@ API + dashboard trend panel
 ## CI boundary
 
 CI **never** requires real provider secrets. The required gate runs the
-deterministic eval suite in template mode (`score=1.000`, 18/18 active cases)
+deterministic eval suite in template mode (`score=1.000`, 29/29 active cases)
 and the full pytest suite — both fully offline with the mock provider. No
 GitHub Secret, API key, or network access is needed to make CI green.

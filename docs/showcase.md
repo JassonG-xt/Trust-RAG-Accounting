@@ -53,9 +53,9 @@ Key implementation choices:
 
 ## Evaluation Highlights
 
-- 18 active deterministic eval cases.
+- 29 active deterministic eval cases.
 - 7 accounting-focused categories.
-- Current baseline: 18/18 passing, score `1.000`.
+- Current baseline: 29/29 passing, score `1.000`.
 - CI enforces overall and category thresholds.
 - CI also runs the repository hygiene check to keep generated data, secrets, and local-only files out of tracked history.
 - PR comments show score, category results, failed cases, artifact reference, and delta versus `main`.

@@ -18,6 +18,9 @@ itself) lives in the retriever classes.
 
 from __future__ import annotations
 
+import re
+import unicodedata
+
 from ..ingestion.models import DocumentChunk
 from .models import MetadataFilter
 
@@ -38,10 +41,25 @@ _CLIENT_ALIASES: tuple[tuple[str, str], ...] = (
     ("beta catering", "Beta Catering Ltd."),
     ("gamma tech studio", "Gamma Tech Studio"),
     ("gamma tech", "Gamma Tech Studio"),
-    ("alpha", "Alpha Trading Co."),
-    ("beta", "Beta Catering Ltd."),
-    ("gamma", "Gamma Tech Studio"),
 )
+
+
+_WORD_BOUNDARY_ALIAS = r"(?<![a-z0-9]){alias}(?![a-z0-9])"
+
+
+def _normalize_query_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text or "").lower()
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _alias_matches(query: str, alias: str) -> bool:
+    if not alias:
+        return False
+    pattern = re.compile(
+        _WORD_BOUNDARY_ALIAS.format(alias=re.escape(alias))
+    )
+    return bool(pattern.search(query))
 
 
 # ---------------------------------------------------------------------------
@@ -120,9 +138,9 @@ _QUESTION_TYPE_TO_DOC_TYPES: dict[str, list[str]] = {
 def infer_client_from_query(query: str) -> str | None:
     """Resolve a free-text query to a canonical client name (or None)."""
 
-    q = (query or "").lower()
+    q = _normalize_query_text(query)
     for alias, canonical in _CLIENT_ALIASES:
-        if alias in q:
+        if _alias_matches(q, alias):
             return canonical
     return None
 
@@ -196,9 +214,9 @@ def passes_metadata_filter(
 
     * **Malicious**: filtered unless ``include_malicious=True``.
     * **Client**: if the filter declares a client, the chunk must
-      either match it OR be firm-wide (chunk.client is None). The
-      latter ensures reimbursement_policy_2026 (firm-wide) still
-      surfaces for a question that names Alpha.
+      either match it OR be firm-wide (chunk.client is None). If no
+      client is declared, client-specific chunks are blocked by default.
+      That prevents private SOPs from being cited for generic questions.
     * **Document types**: if the filter declares a non-empty list, the
       chunk's document_type must be in it.
     * **Policy families**: same as document types.
@@ -207,7 +225,10 @@ def passes_metadata_filter(
     if chunk.is_malicious and not metadata_filter.include_malicious:
         return False
 
-    if metadata_filter.client is not None:
+    if metadata_filter.client is None:
+        if chunk.client is not None:
+            return False
+    else:
         if chunk.client is not None and chunk.client != metadata_filter.client:
             return False
 

@@ -4,8 +4,8 @@ The eval harness is TrustRAG Accounting's regression gate. It checks the structu
 
 Current baseline:
 
-- 18 active cases.
-- 18 passing cases.
+- 29 active cases.
+- 29 passing cases.
 - Score `1.000`.
 - 7 categories.
 - CI gate enabled for pull requests and pushes to `main`.
@@ -81,8 +81,8 @@ python -m backend.app.evals.runner \
 Expected summary on current `main`:
 
 ```text
-[eval] running 18 cases (status=active, categories=all)
-[eval] summary: total=18 passed=18 failed=0 skipped=0 score=1.000
+[eval] running 29 cases (status=active, categories=all)
+[eval] summary: total=29 passed=29 failed=0 skipped=0 score=1.000
 ```
 
 ## Eval Artifacts

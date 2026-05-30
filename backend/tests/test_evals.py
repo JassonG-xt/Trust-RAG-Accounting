@@ -686,7 +686,12 @@ class TestRunner:
         )
         assert rc == 0
         loaded = EvalRunSummary.model_validate_json(out_json.read_text(encoding="utf-8"))
-        assert loaded.total == 3
+        expected_total = sum(
+            1
+            for case in load_cases_file(CASES_PATH)
+            if case.category == "unsafe_intent" and case.status == "active"
+        )
+        assert loaded.total == expected_total
         assert set(loaded.by_category) == {"unsafe_intent"}
 
     def test_main_returns_nonzero_on_failing_regression(
@@ -950,12 +955,17 @@ class TestFullActiveSuite:
 
     def test_unsafe_cases_excluded_from_review_queue(self) -> None:
         """Phase 5A invariant: unsafe refusals must NOT enter the review
-        queue. The eval suite includes three unsafe cases; none of them
-        should set ``human_review_required`` even though
-        ``needs_human_review`` is True at the judge level.
+        queue. Only the cases that actually expect an unsafe refusal are
+        part of this assertion; the category now also includes safe
+        anti-false-positive cases.
         """
 
-        cases = [c for c in load_cases_file(CASES_PATH) if c.category == "unsafe_intent"]
+        cases = [
+            c
+            for c in load_cases_file(CASES_PATH)
+            if c.category == "unsafe_intent"
+            and c.expectation.expect_unsafe_request_detected is True
+        ]
         summary = run_eval_suite(cases)
         assert summary.failed == 0
         # Drill into the raw responses by re-running with metrics off the

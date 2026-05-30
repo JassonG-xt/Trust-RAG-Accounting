@@ -162,7 +162,7 @@ Open the Eval Report and Eval Trend panels.
 What to observe:
 
 - Latest eval score is `1.000` after a green local gate.
-- Active cases are 18/18 passing.
+- Active cases are 29/29 passing.
 - Eval Trend shows the latest snapshot and SVG/CSS score trend.
 - Empty history is handled gracefully when no snapshots exist.
 

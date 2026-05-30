@@ -78,8 +78,8 @@ Expectations are opt-in. A case only sets the fields it wants to enforce, and un
 Current active suite:
 
 ```text
-18 active cases
-18 passed
+29 active cases
+29 passed
 score = 1.000
 ```
 
