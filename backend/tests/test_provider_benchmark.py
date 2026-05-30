@@ -593,3 +593,31 @@ def test_cli_configured_alias_reports_missing_env(tmp_path, monkeypatch):
     assert payload["provider"] == "openai_compatible"
     assert payload["missing_env"] == ["LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL"]
 
+
+def test_cli_archive_dir_writes_timestamped_snapshot(tmp_path, monkeypatch):
+    """--archive-dir writes a <timestamp>_<provider>.json copy for the dashboard."""
+
+    _clear_llm_env(monkeypatch)
+    out = tmp_path / "bench.json"
+    archive = tmp_path / "provider_benchmarks"
+    rc = main(
+        [
+            "--provider",
+            "mock",
+            "--limit",
+            "2",
+            "--out",
+            str(out),
+            "--archive-dir",
+            str(archive),
+            "--quiet",
+        ]
+    )
+    assert rc == 0
+    snapshots = list(archive.glob("*_mock.json"))
+    assert len(snapshots) == 1
+    payload = json.loads(snapshots[0].read_text(encoding="utf-8"))
+    assert payload["provider"] == "mock"
+    assert payload["total"] == 2
+
+

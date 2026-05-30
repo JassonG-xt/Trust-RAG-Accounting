@@ -187,7 +187,9 @@ Phase 8C builds on this with a richer **provider benchmark report**
 (`scripts/run_provider_benchmark.sh`) that runs the suite per provider and
 aggregates fallback rate, citation-validation rate, safety preservation, and
 latency into JSON + Markdown — still manual, still never in CI. See
-[`provider_benchmark.md`](provider_benchmark.md).
+[`provider_benchmark.md`](provider_benchmark.md). Phase 8D surfaces those
+artifacts read-only in the dashboard
+([`provider_benchmark_dashboard.md`](provider_benchmark_dashboard.md)).
 
 ## CI boundary
 

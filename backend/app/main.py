@@ -22,6 +22,10 @@ from fastapi.staticfiles import StaticFiles
 from .core.config import get_settings
 from .evals.history import EvalHistoryResponse, list_eval_history
 from .evals.models import EvalRunSummary
+from .evals.provider_benchmark_dashboard import (
+    ProviderBenchmarkArtifactSummary,
+    load_provider_benchmark_artifacts,
+)
 from .graph.workflow import run_query
 from .review import (
     DEFAULT_LIMIT,
@@ -208,6 +212,64 @@ def create_app() -> FastAPI:
         return list_eval_history(
             Path(current_settings.trustrag_eval_history_dir),
             limit=effective_limit,
+        )
+
+    @app.get(
+        "/v1/provider-benchmarks/latest",
+        response_model=ProviderBenchmarkArtifactSummary,
+        tags=["evals"],
+    )
+    def provider_benchmark_latest() -> ProviderBenchmarkArtifactSummary:
+        """Read the latest local provider benchmark artifact for the dashboard.
+
+        Read-only and passive: it never runs a benchmark, never calls a real
+        provider, and never writes files. Missing artifacts return
+        ``available=false``. The returned ``latest`` carries the full newest
+        artifact (with per-case rows for the case table).
+        """
+
+        current_settings = get_settings()
+        return load_provider_benchmark_artifacts(
+            single_result_path=Path(
+                current_settings.trustrag_provider_benchmark_results_path
+            ),
+            benchmark_dir=Path(current_settings.trustrag_provider_benchmark_dir),
+            markdown_report_path=Path(
+                current_settings.trustrag_provider_benchmark_report_path
+            ),
+            limit=1,
+        )
+
+    @app.get(
+        "/v1/provider-benchmarks",
+        response_model=ProviderBenchmarkArtifactSummary,
+        tags=["evals"],
+    )
+    def provider_benchmarks(
+        limit: int | None = Query(default=None, ge=1),
+        provider: str | None = Query(default=None),
+    ) -> ProviderBenchmarkArtifactSummary:
+        """List local provider benchmark artifacts for the dashboard comparison.
+
+        Returns compact per-artifact summaries (no per-case rows) newest-first,
+        optionally filtered by ``provider`` and capped by ``limit``. Read-only —
+        it never runs a benchmark or reaches a real provider.
+        """
+
+        current_settings = get_settings()
+        effective_limit = limit or max(
+            1, current_settings.trustrag_provider_benchmark_limit
+        )
+        return load_provider_benchmark_artifacts(
+            single_result_path=Path(
+                current_settings.trustrag_provider_benchmark_results_path
+            ),
+            benchmark_dir=Path(current_settings.trustrag_provider_benchmark_dir),
+            markdown_report_path=Path(
+                current_settings.trustrag_provider_benchmark_report_path
+            ),
+            limit=effective_limit,
+            provider=provider,
         )
 
     @app.get("/v1/debug/traces", response_model=TracesResponse, tags=["debug"])
