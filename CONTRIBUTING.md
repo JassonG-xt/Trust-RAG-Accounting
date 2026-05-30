@@ -54,6 +54,7 @@ python -m backend.app.ingestion.ingest_sample_docs \
 
 bash scripts/run_eval_gate.sh
 bash scripts/check_repo_hygiene.sh
+bash scripts/check_deploy_readiness.sh
 python -m pytest backend/tests
 ```
 
@@ -104,7 +105,14 @@ Use the hygiene check before committing:
 
 ```bash
 bash scripts/check_repo_hygiene.sh
+bash scripts/check_deploy_readiness.sh
 ```
+
+## Deployment and Operations Docs
+
+- Deployment guide: [`docs/deployment.md`](docs/deployment.md)
+- Operations runbook: [`docs/operations_runbook.md`](docs/operations_runbook.md)
+- Configuration reference: [`docs/configuration.md`](docs/configuration.md)
 
 ## Provider and Secret Policy
 
@@ -120,6 +128,7 @@ bash scripts/check_repo_hygiene.sh
 - [ ] Eval gate passed.
 - [ ] Pytest passed.
 - [ ] Repository hygiene check passed.
+- [ ] Deploy readiness check passed when docs, scripts, or run instructions changed.
 - [ ] Provider benchmark mock ran if provider code changed.
 - [ ] Dashboard smoke ran if frontend code changed.
 - [ ] No generated data, secrets, or local-only files are staged.

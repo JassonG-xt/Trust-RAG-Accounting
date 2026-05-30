@@ -12,8 +12,8 @@ Current showcase status:
 
 | Signal | Status |
 |---|---|
-| Phase | 9A - Repository hardening and release hygiene |
-| Tests | 545 passing on `main` |
+| Phase | 9B - Deployment and operations guide |
+| Tests | 546 passing on `main` |
 | Eval gate | 18/18 active accounting cases passing, score `1.000` |
 | CI | Green on `main` |
 | Dashboard | `http://localhost:8000/dashboard` |
@@ -93,6 +93,9 @@ Detailed design notes live in:
 - [`docs/eval_harness.md`](docs/eval_harness.md)
 - [`docs/dashboard.md`](docs/dashboard.md)
 - [`docs/real_llm_provider.md`](docs/real_llm_provider.md)
+- [`docs/deployment.md`](docs/deployment.md)
+- [`docs/operations_runbook.md`](docs/operations_runbook.md)
+- [`docs/configuration.md`](docs/configuration.md)
 - [`docs/maintenance.md`](docs/maintenance.md)
 - [`docs/release_checklist.md`](docs/release_checklist.md)
 
@@ -136,6 +139,16 @@ Before committing, run:
 ```bash
 bash scripts/check_repo_hygiene.sh
 ```
+
+## Deployment / Operations
+
+- Local demo: `bash scripts/run_dev.sh`
+- Production-like local run: `bash scripts/run_prod_like.sh`
+- Deployment guide: [`docs/deployment.md`](docs/deployment.md)
+- Operations runbook: [`docs/operations_runbook.md`](docs/operations_runbook.md)
+- Configuration reference: [`docs/configuration.md`](docs/configuration.md)
+- Hygiene check: `bash scripts/check_repo_hygiene.sh`
+- Deploy readiness check: `bash scripts/check_deploy_readiness.sh`
 
 ## Example Questions
 
@@ -249,7 +262,7 @@ See [`docs/dashboard.md`](docs/dashboard.md) and [`docs/demo_walkthrough.md`](do
 
 ## Roadmap
 
-Completed through Phase 9A:
+Completed through Phase 9B:
 
 - Accounting verticalization.
 - Multi-format ingestion and chunking.
@@ -264,11 +277,12 @@ Completed through Phase 9A:
 - Read-only provider benchmark dashboard panel and artifact API.
 - Local provider benchmark trend snapshots with a read-only history API and dashboard trend panel.
 - Repository governance docs, release checklist, maintenance guide, PR/issue templates, and forbidden-file hygiene check.
+- Deployment guide, operations runbook, configuration reference, deploy readiness check, and production-like local run helper.
 
 Next realistic phases:
 
-- Phase 9B: release assets and screenshots, if useful for the showcase.
-- Phase 9C: deployment guide.
+- Phase 9C: optional deployment recipe or reverse proxy example.
+- Future: GitHub Pages showcase or release assets, if useful.
 - Future: Postgres persistence for review and document metadata.
 - Future: authentication and authorization for reviewer actions.
 - Future: streaming generation, tool calling, and optional real-provider benchmark artifacts.
@@ -300,8 +314,8 @@ backend/app/
   evals/                 eval cases, runner, report, history archive
 frontend/                FastAPI-served vanilla dashboard
 sample_docs/             fictional accounting corpus
-scripts/                 local dev, eval gate, snapshots, repo hygiene
-docs/                    architecture, demo, eval, CI, dashboard, maintenance docs
+scripts/                 local dev, eval gate, snapshots, hygiene, readiness
+docs/                    architecture, demo, eval, CI, dashboard, deployment docs
 ```
 
 ## License

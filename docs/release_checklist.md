@@ -8,6 +8,7 @@
 - `python -m pytest backend/tests` passes.
 - Provider benchmark mock passes if provider or benchmark code changed.
 - `bash scripts/check_repo_hygiene.sh` passes.
+- `bash scripts/check_deploy_readiness.sh` passes.
 - GitHub Actions CI is green on the release PR.
 - No release-blocking PRs are open.
 - No generated data, local-only files, or secrets are staged.
@@ -30,6 +31,7 @@ python -m backend.app.evals.provider_benchmark \
   --markdown-out data/provider_benchmark_report.md
 
 bash scripts/check_repo_hygiene.sh
+bash scripts/check_deploy_readiness.sh
 python -m pytest backend/tests
 ```
 
@@ -44,8 +46,8 @@ trustrag-accounting-phase-<phase>-<slug>-v1
 Example:
 
 ```bash
-git tag trustrag-accounting-phase-9a-repo-hardening-v1
-git push origin trustrag-accounting-phase-9a-repo-hardening-v1
+git tag trustrag-accounting-phase-9b-deployment-guide-v1
+git push origin trustrag-accounting-phase-9b-deployment-guide-v1
 ```
 
 If the tag already exists, increment the suffix to `v2`.
