@@ -30,6 +30,7 @@ TrustRAG Accounting is phase-gated by tests and evals, not dates. Each phase is 
 | 8D | Complete | Read-only provider benchmark dashboard panel + artifact API (no benchmark runs or real-provider calls from the dashboard). |
 | 8E | Complete | Local provider benchmark trend snapshots + read-only history API and dashboard trend panel (compact summaries only; no per-case rows; never a CI gate). |
 | 9A | Complete | Repository hardening and release hygiene: governance docs, release checklist, maintenance guide, templates, hygiene script, and CI hygiene check. |
+| 9B | Complete | Deployment and operations guide: deployment docs, operations runbook, configuration reference, deploy readiness check, and production-like local run helper. |
 
 Recent validated baselines:
 
@@ -39,6 +40,7 @@ Recent validated baselines:
 - Phase 8D: 519 backend tests passing; eval gate unchanged at 18/18, score `1.000` (the dashboard reads benchmark artifacts read-only; CI is still mock-only).
 - Phase 8E: 543 backend tests passing; eval gate unchanged at 18/18, score `1.000` (provider benchmark trend history is local-only, read-only, and compact-summary; CI is still mock-only).
 - Phase 9A: 545 backend tests passing; eval gate unchanged at 18/18, score `1.000` (repository hygiene is a forbidden-file check, not a runtime behavior change).
+- Phase 9B: 546 backend tests passing; eval gate unchanged at 18/18, score `1.000` (deployment and operations guidance is docs/scripts only).
 
 ## Current Capabilities
 
@@ -56,18 +58,19 @@ Recent validated baselines:
 - Read-only provider benchmark dashboard panel + artifact API over local benchmark artifacts. See [provider_benchmark_dashboard.md](provider_benchmark_dashboard.md).
 - Local provider benchmark trend snapshots (compact summaries) with a read-only history API + dashboard trend panel. See [provider_benchmark_history.md](provider_benchmark_history.md).
 - Repository governance, release checklist, maintenance guide, PR/issue templates, and CI repository hygiene check.
+- Deployment guide, operations runbook, configuration reference, deploy readiness check, and production-like local run helper.
 
 ## Near-Term Next Steps
 
-### Phase 9B: Release assets and screenshots
+### Phase 9C: Optional deployment recipe
 
-- Optional showcase screenshots and release assets if the portfolio presentation needs them.
-- Capture screenshots from the local app or real GitHub UI; do not invent them.
+- Add a concrete reverse proxy or small-server recipe if the demo needs it.
+- Keep it optional and avoid adding a required cloud or Docker dependency.
 
-### Phase 9C: Deployment guide
+### Future: GitHub Pages showcase or release assets
 
-- Document a lightweight hosted demo path.
-- Preserve the no-Node dashboard boundary unless a future workflow justifies changing it.
+- Add screenshots or static showcase assets if the portfolio presentation needs them.
+- Capture assets from the local app or real GitHub UI; do not invent them.
 
 ### Future: Postgres persistence
 

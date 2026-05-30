@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [Phase 9B] Deployment and Operations Guide
+
+- Added deployment guide, operations runbook, and configuration reference.
+- Added deploy readiness check and production-like local run helper.
+- Updated maintenance, release, roadmap, README, and contributing docs for operations workflows.
+
 ## [Phase 9A] Repository Hardening and Release Hygiene
 
 - Added contributor, security, changelog, release checklist, and maintenance documentation.

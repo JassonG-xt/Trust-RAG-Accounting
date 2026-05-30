@@ -10,9 +10,32 @@ python -m backend.app.ingestion.ingest_sample_docs \
 
 bash scripts/run_eval_gate.sh
 bash scripts/check_repo_hygiene.sh
+bash scripts/check_deploy_readiness.sh
 python -m pytest backend/tests
 bash scripts/run_dev.sh
 ```
+
+## Deployment and Operations
+
+- Deployment guide: [deployment.md](deployment.md)
+- Operations runbook: [operations_runbook.md](operations_runbook.md)
+- Configuration reference: [configuration.md](configuration.md)
+
+Production-like local run:
+
+```bash
+HOST=127.0.0.1 PORT=8000 bash scripts/run_prod_like.sh
+```
+
+Deploy readiness check:
+
+```bash
+bash scripts/check_deploy_readiness.sh
+```
+
+The readiness check is lightweight. It verifies repository hygiene, key source
+directories, required deployment docs, and forbidden tracked deployment
+artifacts. It does not run pytest, evals, or a live server.
 
 ## Eval Gate
 
@@ -94,6 +117,12 @@ bash scripts/check_repo_hygiene.sh
 It fails if Git tracks local-only files, secrets, or generated `data/*.json` and
 `data/*.md` artifacts.
 
+Run the deploy readiness check before tagging operational documentation changes:
+
+```bash
+bash scripts/check_deploy_readiness.sh
+```
+
 ## Troubleshooting
 
 - Local Windows bash may hit CRLF issues for shell scripts; CI uses Linux.
@@ -101,3 +130,4 @@ It fails if Git tracks local-only files, secrets, or generated `data/*.json` and
 - `AGENTS.md` is local-only and should be excluded with `.git/info/exclude`.
 - Existing stash WIP should not be popped, dropped, applied, or rewritten during unrelated work.
 - If generated `data/` files appear in `git status`, verify they are ignored before staging.
+- If deploy readiness fails, run the repository hygiene check first and confirm the deployment, operations, and configuration docs exist.
