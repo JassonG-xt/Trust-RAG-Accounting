@@ -48,6 +48,7 @@ This repository demonstrates those constraints in a small, local, inspectable sy
 - Optional real-LLM answer generator (off by default) bounded by a citation contract with deterministic fallback.
 - Optional manual provider benchmark report comparing template, mock, and real providers on fallback rate, citation validation, safety preservation, and latency — kept separate from the deterministic, mock-only CI gate.
 - Read-only provider benchmark dashboard panel and artifact API for inspecting those benchmark results locally (no benchmark runs from the dashboard; CI stays mock-only).
+- Local provider benchmark trend snapshots: manual benchmark summaries can be archived locally and inspected in the dashboard trend panel (score, fallback, citation, and latency over time), still never a CI gate.
 
 ## Architecture
 
@@ -161,6 +162,7 @@ GET  /v1/review/queue
 GET  /v1/evals/latest
 GET  /v1/evals/history
 GET  /v1/provider-benchmarks
+GET  /v1/provider-benchmarks/history
 GET  /dashboard
 ```
 
@@ -221,13 +223,14 @@ The dashboard is served directly by FastAPI at `/dashboard`. It includes:
 - Latest eval report viewer.
 - Eval Trend panel backed by local `data/eval_history/*.json` snapshots.
 - Provider benchmark comparison panel backed by local `data/provider_benchmark*` artifacts (read-only).
+- Provider benchmark trend panel backed by local `data/provider_benchmark_history/*.json` snapshots (read-only).
 - Local trace viewer when tracing is enabled.
 
 See [`docs/dashboard.md`](docs/dashboard.md) and [`docs/demo_walkthrough.md`](docs/demo_walkthrough.md).
 
 ## Roadmap
 
-Completed through Phase 8D:
+Completed through Phase 8E:
 
 - Accounting verticalization.
 - Multi-format ingestion and chunking.
@@ -240,6 +243,7 @@ Completed through Phase 8D:
 - Optional citation-aware real-LLM answer generator (off by default) with deterministic fallback.
 - Manual provider benchmark report (fallback / citation / safety / latency), separate from the deterministic CI gate.
 - Read-only provider benchmark dashboard panel and artifact API.
+- Local provider benchmark trend snapshots with a read-only history API and dashboard trend panel.
 
 Next realistic phases:
 

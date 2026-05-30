@@ -438,6 +438,26 @@ pre {
   margin-top: 12px;
 }
 
+/* Phase 8E — provider benchmark trend panel (reuses eval-sparkline + cards). */
+.provider-trend-panel {
+  overflow: hidden;
+}
+
+.provider-trend-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin: 4px 0 8px;
+}
+
+.provider-trend-chart {
+  min-width: 0;
+}
+
+.provider-trend-chart .table-caption {
+  margin: 0 0 4px;
+}
+
 .empty {
   color: var(--muted);
   font-style: italic;

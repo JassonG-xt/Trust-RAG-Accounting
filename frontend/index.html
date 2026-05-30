@@ -242,6 +242,26 @@
           </details>
         </section>
 
+        <section class="panel provider-trend-panel" aria-labelledby="provider-trend-title">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Trend</p>
+              <h2 id="provider-trend-title">Provider Benchmark Trends</h2>
+            </div>
+            <button class="secondary-button" data-refresh="provider-trend" type="button">Refresh</button>
+          </div>
+          <p class="review-disclaimer">
+            Read-only view of local benchmark history snapshots. The dashboard never
+            runs a benchmark — archive one with
+            <code>bash scripts/run_provider_benchmark.sh mock</code> then
+            <code>bash scripts/archive_provider_benchmark_snapshot.sh</code>.
+          </p>
+          <div class="summary-line" id="provider-trend-summary">No provider benchmark history loaded.</div>
+          <div class="summary-cards" id="provider-trend-metrics" aria-label="Provider benchmark trend metrics"></div>
+          <div class="provider-trend-charts" id="provider-trend-sparklines"></div>
+          <div class="category-table-wrap" id="provider-trend-table"></div>
+        </section>
+
         <section class="panel" aria-labelledby="trace-title">
           <div class="panel-header">
             <div>

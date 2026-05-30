@@ -155,6 +155,41 @@ curl -s "http://localhost:8000/v1/provider-benchmarks?provider=mock" | jq .
 If no artifact exists, the response is `{"available": false, "latest": null, ...}`.
 See [`provider_benchmark_dashboard.md`](provider_benchmark_dashboard.md).
 
+## Provider Benchmark Trends
+
+Read-only trend snapshots of past benchmark summaries (Phase 8E). Archive one
+first (manual, offline):
+
+```bash
+bash scripts/run_provider_benchmark.sh mock
+bash scripts/archive_provider_benchmark_snapshot.sh
+```
+
+Then:
+
+```bash
+curl -s http://localhost:8000/v1/provider-benchmarks/history | jq .
+curl -s "http://localhost:8000/v1/provider-benchmarks/history?limit=20" | jq .
+curl -s "http://localhost:8000/v1/provider-benchmarks/history?provider=mock" | jq .
+```
+
+If no history exists, the response is:
+
+```json
+{
+  "available": false,
+  "count": 0,
+  "snapshots": [],
+  "latest": null,
+  "score_delta_latest": null,
+  "fallback_rate_delta_latest": null,
+  "citation_validation_rate_delta_latest": null
+}
+```
+
+Snapshots are compact summaries only — no per-case rows, answer prose, or
+evidence content. See [`provider_benchmark_history.md`](provider_benchmark_history.md).
+
 ## Dashboard Static Assets
 
 ```bash

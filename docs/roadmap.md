@@ -28,6 +28,7 @@ TrustRAG Accounting is phase-gated by tests and evals, not dates. Each phase is 
 | 8B | Complete | Optional citation-aware real-LLM answer generator (off by default) with deterministic fallback. |
 | 8C | Complete | Manual provider benchmark report (template / mock / optional real providers) over fallback, citation, safety, and latency — separate from the deterministic CI gate. |
 | 8D | Complete | Read-only provider benchmark dashboard panel + artifact API (no benchmark runs or real-provider calls from the dashboard). |
+| 8E | Complete | Local provider benchmark trend snapshots + read-only history API and dashboard trend panel (compact summaries only; no per-case rows; never a CI gate). |
 
 Current `main` baseline this phase built on (Phase 8A):
 
@@ -43,6 +44,8 @@ After Phase 8C: 496 backend tests passing; eval gate unchanged at 18/18, score `
 
 After Phase 8D: 516 backend tests passing; eval gate unchanged at 18/18, score `1.000` (the dashboard reads benchmark artifacts read-only; CI is still mock-only).
 
+After Phase 8E: 540 backend tests passing; eval gate unchanged at 18/18, score `1.000` (provider benchmark trend history is local-only, read-only, and compact-summary; CI is still mock-only).
+
 ## Current Capabilities
 
 - Local FastAPI API and Swagger docs.
@@ -57,6 +60,7 @@ After Phase 8D: 516 backend tests passing; eval gate unchanged at 18/18, score `
 - Optional real-LLM answer generator (off by default) with citation-contract validation and deterministic fallback. See [real_llm_provider.md](real_llm_provider.md).
 - Manual provider benchmark report (template / mock / optional real providers) over fallback, citation, safety, and latency — never a CI gate. See [provider_benchmark.md](provider_benchmark.md).
 - Read-only provider benchmark dashboard panel + artifact API over local benchmark artifacts. See [provider_benchmark_dashboard.md](provider_benchmark_dashboard.md).
+- Local provider benchmark trend snapshots (compact summaries) with a read-only history API + dashboard trend panel. See [provider_benchmark_history.md](provider_benchmark_history.md).
 
 ## Near-Term Next Steps
 
@@ -65,7 +69,7 @@ After Phase 8D: 516 backend tests passing; eval gate unchanged at 18/18, score `
 - Phase 8B delivered the optional LLM provider seam (mock / OpenAI-compatible / Anthropic-compatible) and a manual smoke command.
 - Phase 8C delivered the manual provider benchmark report (fallback / citation / safety / latency), kept separate from the deterministic CI gate. See [provider_benchmark.md](provider_benchmark.md).
 - Phase 8D delivered the read-only provider benchmark dashboard panel + artifact API. See [provider_benchmark_dashboard.md](provider_benchmark_dashboard.md).
-- Next: optional provider benchmark trend snapshots (history of manual runs), still never a required CI gate.
+- Phase 8E delivered optional provider benchmark trend snapshots (history of manual runs) with a read-only history API + dashboard trend panel, still never a required CI gate. See [provider_benchmark_history.md](provider_benchmark_history.md).
 - Keep the mock-provider suite as the required CI floor.
 - Report provider-specific regressions separately from deterministic regressions.
 
@@ -94,7 +98,6 @@ After Phase 8D: 516 backend tests passing; eval gate unchanged at 18/18, score `
 - LLM-as-judge as an optional analysis layer, not the CI gate.
 - Streaming generation for the optional LLM answer path.
 - Tool calling in the optional LLM answer path.
-- Provider benchmark trend snapshots (history of manual benchmark runs, like the eval trend panel).
 - Optional, opt-in real-provider eval artifact upload (never a required CI gate).
 - OCR and invoice image recognition.
 - External tax-bureau integrations.

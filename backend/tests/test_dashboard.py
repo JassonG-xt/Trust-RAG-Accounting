@@ -126,6 +126,41 @@ def test_dashboard_styles_contains_provider_benchmark_styles() -> None:
     assert ".benchmark-table" in body
 
 
+def test_dashboard_contains_provider_benchmark_trend_panel() -> None:
+    client = TestClient(app)
+
+    response = client.get("/dashboard")
+
+    assert response.status_code == 200
+    body = response.text
+    assert "Provider Benchmark Trends" in body
+    assert "provider-trend-summary" in body
+    assert "provider-trend-table" in body
+
+
+def test_dashboard_app_js_contains_provider_benchmark_trend_wiring() -> None:
+    client = TestClient(app)
+
+    response = client.get("/dashboard/static/app.js")
+
+    assert response.status_code == 200
+    body = response.text
+    assert "refreshProviderBenchmarkHistory" in body
+    assert "renderProviderBenchmarkHistory" in body
+    assert "/v1/provider-benchmarks/history" in body
+    # Empty-state guidance points the user at the manual archive script.
+    assert "archive_provider_benchmark_snapshot.sh" in body
+
+
+def test_dashboard_styles_contains_provider_benchmark_trend_styles() -> None:
+    client = TestClient(app)
+
+    response = client.get("/dashboard/static/styles.css")
+
+    assert response.status_code == 200
+    assert ".provider-trend-panel" in response.text
+
+
 def test_dashboard_app_js_static_route_returns_js() -> None:
     client = TestClient(app)
 

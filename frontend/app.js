@@ -16,6 +16,7 @@ const state = {
   traces: null,
   providerBenchmark: null,
   providerBenchmarkList: null,
+  providerBenchmarkHistory: null,
   query: null,
   actionHistory: {},
   actionStatus: {},
@@ -162,6 +163,7 @@ async function refreshAll() {
     refreshEvalHistory(),
     refreshTraces(),
     refreshProviderBenchmark(),
+    refreshProviderBenchmarkHistory(),
   ]);
 }
 
@@ -172,6 +174,7 @@ async function refreshPanel(name) {
   if (name === "eval-history") return refreshEvalHistory();
   if (name === "traces") return refreshTraces();
   if (name === "provider-benchmark") return refreshProviderBenchmark();
+  if (name === "provider-trend") return refreshProviderBenchmarkHistory();
 }
 
 async function refreshHealth() {
@@ -465,6 +468,186 @@ function formatMs(value) {
 
 function formatBool(value) {
   return value ? "yes" : "no";
+}
+
+// --- Phase 8E: provider benchmark trends ----------------------------------
+// Same DOM-construction approach as the 8D panel (no innerHTML); the sparklines
+// are built with createElementNS so artifact strings are never parsed as markup.
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function svgEl(tag, attrs = {}) {
+  const node = document.createElementNS(SVG_NS, tag);
+  Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, String(value)));
+  return node;
+}
+
+async function refreshProviderBenchmarkHistory() {
+  try {
+    state.providerBenchmarkHistory = await fetchJson("/v1/provider-benchmarks/history");
+    renderProviderBenchmarkHistory(state.providerBenchmarkHistory);
+  } catch (error) {
+    renderProviderTrendError(messageOf(error));
+  }
+}
+
+function renderProviderTrendError(message) {
+  $("provider-trend-summary").replaceChildren(makeBadge("Provider benchmark history unavailable", "warn"));
+  $("provider-trend-metrics").replaceChildren();
+  $("provider-trend-sparklines").replaceChildren(makeEmptyNode(`Endpoint unavailable: ${message}`));
+  $("provider-trend-table").replaceChildren();
+}
+
+function renderProviderBenchmarkHistory(data) {
+  const summaryLine = $("provider-trend-summary");
+  const metrics = $("provider-trend-metrics");
+  const charts = $("provider-trend-sparklines");
+  const table = $("provider-trend-table");
+  [metrics, charts, table].forEach((node) => node.replaceChildren());
+
+  const snapshots = (data && data.snapshots) || [];
+  if (!data || !data.available || !snapshots.length) {
+    summaryLine.replaceChildren(makeBadge("No provider benchmark history", "warn"));
+    charts.replaceChildren(
+      makeEmptyNode(
+        "No provider benchmark history found. Run: bash scripts/run_provider_benchmark.sh mock then bash scripts/archive_provider_benchmark_snapshot.sh"
+      )
+    );
+    return;
+  }
+
+  const latest = data.latest || snapshots[snapshots.length - 1];
+  const passed = Number(latest.failed || 0) === 0;
+  summaryLine.replaceChildren(
+    makeBadge(latest.provider || "provider", passed ? "pass" : "warn"),
+    elx("span", {
+      className: "summary-text",
+      text: ` latest score ${formatScore(latest.score)} · ${snapshots.length} snapshots · ${latest.created_at || ""}`,
+    })
+  );
+  renderProviderTrendMetrics(metrics, data, latest);
+  renderProviderTrendCharts(charts, snapshots);
+  renderProviderTrendTable(table, snapshots);
+}
+
+function renderProviderTrendMetrics(container, data, latest) {
+  const scoreDelta = data.score_delta_latest;
+  const fallbackDelta = data.fallback_rate_delta_latest;
+  const citationDelta = data.citation_validation_rate_delta_latest;
+  const cards = [
+    {label: "Snapshots", value: data.count ?? 0, tone: "neutral"},
+    {label: "Latest provider", value: latest.provider || "—", tone: "neutral"},
+    {label: "Latest score", value: formatScore(latest.score), tone: Number(latest.failed || 0) === 0 ? "pass" : "fail"},
+    {label: "Score delta", value: formatDelta(scoreDelta), tone: deltaTone(scoreDelta)},
+    {label: "Fallback delta", value: formatDeltaPct(fallbackDelta), tone: deltaTone(fallbackDelta, {invert: true})},
+    {label: "Citation delta", value: formatDeltaPct(citationDelta), tone: deltaTone(citationDelta)},
+  ];
+  container.replaceChildren(
+    ...cards.map((card) => {
+      const node = elx("div", {className: `summary-card ${card.tone}`});
+      node.append(
+        elx("span", {className: "summary-card-label", text: card.label}),
+        elx("span", {className: "summary-card-value", text: card.value})
+      );
+      return node;
+    })
+  );
+}
+
+function renderProviderTrendCharts(container, snapshots) {
+  const scores = snapshots.map((s) => Number(s.score) || 0);
+  const fallbacks = snapshots.map((s) => Number(s.fallback_rate) || 0);
+  const citations = snapshots.map((s) => Number(s.citation_validation_rate) || 0);
+  container.replaceChildren(
+    makeTrendChart("Score", scores, {label: "Provider benchmark score trend"}),
+    makeTrendChart("Fallback rate", fallbacks, {label: "Provider benchmark fallback rate trend"}),
+    makeTrendChart("Citation validation rate", citations, {label: "Provider benchmark citation validation trend"})
+  );
+}
+
+function renderProviderTrendTable(container, snapshots) {
+  if (!snapshots.length) {
+    container.replaceChildren();
+    return;
+  }
+  const rows = snapshots
+    .slice()
+    .reverse()
+    .map((s) => [
+      s.created_at || "",
+      s.provider || "—",
+      s.model || "—",
+      formatScore(s.score),
+      formatPct(s.fallback_rate),
+      formatPct(s.citation_validation_rate),
+      s.invalid_citation_count ?? 0,
+      s.provider_error_count ?? 0,
+      formatMs(s.avg_latency_ms),
+      formatMs(s.p95_latency_ms),
+      s.git_commit || "—",
+    ]);
+  container.replaceChildren(
+    elx("h3", {className: "table-caption", text: `History (${snapshots.length})`}),
+    makeBenchmarkTable(
+      [
+        "Created At", "Provider", "Model", "Score", "Fallback", "Citation valid",
+        "Invalid", "Errors", "Avg latency", "P95 latency", "Commit",
+      ],
+      rows,
+      "benchmark-case-table"
+    )
+  );
+}
+
+function makeTrendChart(title, values, opts) {
+  const wrap = elx("div", {className: "provider-trend-chart"});
+  wrap.appendChild(elx("h3", {className: "table-caption", text: title}));
+  const spark = elx("div", {className: "eval-sparkline"});
+  spark.appendChild(makeSparkline(values, opts));
+  wrap.appendChild(spark);
+  return wrap;
+}
+
+function makeSparkline(values, {label = "trend", domainMax = 1} = {}) {
+  const width = 320;
+  const height = 72;
+  const pad = 8;
+  const usableWidth = width - pad * 2;
+  const usableHeight = height - pad * 2;
+  const max = Number(domainMax) || 1;
+  const svg = svgEl("svg", {viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": label});
+  svg.appendChild(
+    svgEl("line", {class: "sparkline-axis", x1: pad, y1: height - pad, x2: width - pad, y2: height - pad})
+  );
+  const points = values.map((value, index) => {
+    const x = values.length === 1
+      ? width / 2
+      : pad + (index / (values.length - 1)) * usableWidth;
+    const norm = Math.max(0, Math.min(1, (Number(value) || 0) / max));
+    const y = pad + (1 - norm) * usableHeight;
+    return {x, y};
+  });
+  if (points.length) {
+    svg.appendChild(
+      svgEl("polyline", {points: points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")})
+    );
+    points.forEach((p) => svg.appendChild(svgEl("circle", {cx: p.x.toFixed(1), cy: p.y.toFixed(1), r: 3})));
+  }
+  return svg;
+}
+
+function deltaTone(value, {invert = false} = {}) {
+  if (value === null || value === undefined) return "neutral";
+  const number = Number(value);
+  if (!Number.isFinite(number) || number === 0) return "neutral";
+  const positiveGood = invert ? number < 0 : number > 0;
+  return positiveGood ? "pass" : "fail";
+}
+
+function formatDeltaPct(value) {
+  if (value === null || value === undefined) return "N/A";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "N/A";
+  return `${number > 0 ? "+" : ""}${(number * 100).toFixed(1)}pp`;
 }
 
 async function runQuery() {

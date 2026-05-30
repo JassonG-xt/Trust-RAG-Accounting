@@ -26,6 +26,10 @@ from .evals.provider_benchmark_dashboard import (
     ProviderBenchmarkArtifactSummary,
     load_provider_benchmark_artifacts,
 )
+from .evals.provider_benchmark_history import (
+    ProviderBenchmarkHistoryResponse,
+    list_provider_benchmark_history,
+)
 from .graph.workflow import run_query
 from .review import (
     DEFAULT_LIMIT,
@@ -270,6 +274,34 @@ def create_app() -> FastAPI:
             ),
             limit=effective_limit,
             provider=provider,
+        )
+
+    @app.get(
+        "/v1/provider-benchmarks/history",
+        response_model=ProviderBenchmarkHistoryResponse,
+        tags=["evals"],
+    )
+    def provider_benchmark_history(
+        limit: int | None = Query(default=None, ge=1),
+        provider: str | None = Query(default=None),
+    ) -> ProviderBenchmarkHistoryResponse:
+        """Read local provider benchmark trend snapshots for the dashboard.
+
+        Read-only and passive: it never runs a benchmark, archives snapshots,
+        calls a real provider, requires an API key, or imports GitHub artifacts.
+        Missing history returns ``available=false``. Snapshots are compact
+        summaries (no per-case rows); ``provider`` filters and ``limit`` keeps
+        the newest N.
+        """
+
+        current_settings = get_settings()
+        effective_limit = limit or max(
+            1, current_settings.trustrag_provider_benchmark_history_limit
+        )
+        return list_provider_benchmark_history(
+            Path(current_settings.trustrag_provider_benchmark_history_dir),
+            provider=provider,
+            limit=effective_limit,
         )
 
     @app.get("/v1/debug/traces", response_model=TracesResponse, tags=["debug"])
