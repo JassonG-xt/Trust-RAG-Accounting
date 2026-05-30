@@ -89,6 +89,43 @@ def test_dashboard_styles_contains_eval_history_styles() -> None:
     assert ".eval-sparkline" in body
 
 
+def test_dashboard_contains_provider_benchmark_panel() -> None:
+    client = TestClient(app)
+
+    response = client.get("/dashboard")
+
+    assert response.status_code == 200
+    body = response.text
+    assert "Provider Benchmark" in body
+    assert "provider-benchmark-summary" in body
+    assert "provider-benchmark-cases" in body
+
+
+def test_dashboard_app_js_contains_provider_benchmark_wiring() -> None:
+    client = TestClient(app)
+
+    response = client.get("/dashboard/static/app.js")
+
+    assert response.status_code == 200
+    body = response.text
+    assert "refreshProviderBenchmark" in body
+    assert "renderProviderBenchmark" in body
+    assert "/v1/provider-benchmarks" in body
+    # Empty-state guidance points the user at the manual, offline command.
+    assert "run_provider_benchmark.sh" in body
+
+
+def test_dashboard_styles_contains_provider_benchmark_styles() -> None:
+    client = TestClient(app)
+
+    response = client.get("/dashboard/static/styles.css")
+
+    assert response.status_code == 200
+    body = response.text
+    assert ".provider-benchmark-panel" in body
+    assert ".benchmark-table" in body
+
+
 def test_dashboard_app_js_static_route_returns_js() -> None:
     client = TestClient(app)
 

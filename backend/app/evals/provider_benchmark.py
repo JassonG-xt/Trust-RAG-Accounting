@@ -36,9 +36,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from statistics import mean
 from typing import Any
@@ -578,6 +580,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Exit 0 (instead of 2) when a real provider has no env configured.",
     )
+    p.add_argument(
+        "--archive-dir",
+        type=Path,
+        default=None,
+        help=(
+            "If set, also write a timestamped snapshot copy "
+            "(<timestamp>_<provider>.json) here for the dashboard comparison."
+        ),
+    )
     p.add_argument("--quiet", action="store_true")
     return p
 
@@ -594,6 +605,22 @@ def _parse_categories(raw: list[str] | None) -> set[str] | None:
 def _write_output(path: Path, payload: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(payload, encoding="utf-8")
+
+
+def _archive_snapshot(summary: ProviderBenchmarkSummary, archive_dir: Path) -> Path:
+    """Write a timestamped snapshot copy for the dashboard comparison list.
+
+    The filename embeds a UTC timestamp + provider name so the dashboard can
+    list multiple providers side by side. The JSON body is the same summary as
+    ``--out`` (deterministic content); only the filename carries the timestamp.
+    """
+
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+    safe_provider = re.sub(r"[^0-9A-Za-z_.-]+", "_", summary.provider or "provider")
+    path = archive_dir / f"{stamp}_{safe_provider}.json"
+    path.write_text(summary.model_dump_json(indent=2), encoding="utf-8")
+    return path
 
 
 def _write_skip_report(
@@ -736,6 +763,10 @@ def main(argv: list[str] | None = None) -> int:
         _write_output(args.markdown_out, render_provider_benchmark_report(summary))
         if not args.quiet:
             print(f"[benchmark] wrote Markdown report to {args.markdown_out}")
+    if args.archive_dir is not None:
+        archived = _archive_snapshot(summary, args.archive_dir)
+        if not args.quiet:
+            print(f"[benchmark] archived snapshot to {archived}")
 
     print(
         f"[benchmark] summary: provider={summary.provider} "

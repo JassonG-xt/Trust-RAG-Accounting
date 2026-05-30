@@ -416,6 +416,28 @@ pre {
   text-align: left;
 }
 
+/* Phase 8D — provider benchmark panel (reuses category-table + summary-card). */
+.table-caption {
+  margin: 14px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.benchmark-table {
+  font-size: 12px;
+}
+
+.benchmark-case-table {
+  min-width: 720px;
+}
+
+.provider-benchmark-panel .summary-cards {
+  margin-top: 12px;
+}
+
 .empty {
   color: var(--muted);
   font-style: italic;

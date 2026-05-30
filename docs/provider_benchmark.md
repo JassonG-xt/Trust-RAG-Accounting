@@ -160,3 +160,6 @@ The benchmark is manual and is never invoked by GitHub Actions. The required
 gate stays deterministic and mock-only: `score=1.000`, 18/18 active cases, full
 pytest, all offline. See [`eval_harness.md`](eval_harness.md) and
 [`real_llm_provider.md`](real_llm_provider.md).
+
+The artifacts this command writes can be browsed read-only from the local
+dashboard — see [`provider_benchmark_dashboard.md`](provider_benchmark_dashboard.md).

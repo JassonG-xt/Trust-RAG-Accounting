@@ -47,6 +47,7 @@ http://localhost:8000/dashboard
 | Review export | `GET /v1/review/queue/export.json` and `.csv` |
 | Latest eval report | `GET /v1/evals/latest` |
 | Eval trend panel | `GET /v1/evals/history` |
+| Provider benchmark panel | `GET /v1/provider-benchmarks/latest` and `GET /v1/provider-benchmarks` |
 | Local traces | `GET /v1/debug/traces` |
 
 ## Demo Flow
@@ -104,6 +105,34 @@ No eval history snapshots found. Run eval gate and archive a snapshot.
 ```
 
 `GET /v1/evals/history` is read-only. It does not run evals, archive snapshots, import GitHub artifacts, or write files.
+
+## Provider Benchmark
+
+The Provider Benchmark panel reads local Phase 8C benchmark artifacts:
+
+```text
+data/provider_benchmark_results.json
+data/provider_benchmarks/*.json
+data/provider_benchmark_report.md
+```
+
+Generate one (manual, offline):
+
+```bash
+bash scripts/run_provider_benchmark.sh mock
+```
+
+The panel shows summary cards (score, fallback rate, citation validation rate,
+invalid citations, latency), a category table, a case table, an artifacts
+comparison table, and the raw Markdown report. Empty state:
+
+```text
+No provider benchmark artifact found. Run: bash scripts/run_provider_benchmark.sh mock
+```
+
+`GET /v1/provider-benchmarks/latest` and `GET /v1/provider-benchmarks` are
+read-only. They never run a benchmark, call a real provider, require a key, or
+write files. See [`provider_benchmark_dashboard.md`](provider_benchmark_dashboard.md).
 
 ## Review Filtering and Export
 

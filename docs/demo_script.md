@@ -231,6 +231,9 @@ Point out:
   answer" from "the model broke a citation or a safety gate."
 - A real provider needs `LLM_*` env; without it the command is a clean no-op
   (exit 0) and never runs in CI. See [`provider_benchmark.md`](provider_benchmark.md).
+- Open `/dashboard` → **Provider Benchmark** panel to inspect the same metrics
+  read-only (summary cards, category + case tables, template-vs-mock comparison).
+  See [`provider_benchmark_dashboard.md`](provider_benchmark_dashboard.md).
 
 ## Demo Close
 

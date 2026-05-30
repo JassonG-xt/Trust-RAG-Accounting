@@ -14,6 +14,8 @@ const state = {
   eval: null,
   evalHistory: null,
   traces: null,
+  providerBenchmark: null,
+  providerBenchmarkList: null,
   query: null,
   actionHistory: {},
   actionStatus: {},
@@ -159,6 +161,7 @@ async function refreshAll() {
     refreshEval(),
     refreshEvalHistory(),
     refreshTraces(),
+    refreshProviderBenchmark(),
   ]);
 }
 
@@ -168,6 +171,7 @@ async function refreshPanel(name) {
   if (name === "eval") return refreshEval();
   if (name === "eval-history") return refreshEvalHistory();
   if (name === "traces") return refreshTraces();
+  if (name === "provider-benchmark") return refreshProviderBenchmark();
 }
 
 async function refreshHealth() {
@@ -246,6 +250,221 @@ async function refreshTraces() {
     $("trace-summary").textContent = `Traces unavailable: ${messageOf(error)}`;
     $("trace-list").innerHTML = emptyHtml("No trace data available.");
   }
+}
+
+async function refreshProviderBenchmark() {
+  try {
+    const [latest, list] = await Promise.all([
+      fetchJson("/v1/provider-benchmarks/latest"),
+      fetchJson("/v1/provider-benchmarks"),
+    ]);
+    state.providerBenchmark = latest;
+    state.providerBenchmarkList = list;
+    renderProviderBenchmark(latest, list);
+  } catch (error) {
+    renderProviderBenchmarkError(messageOf(error));
+  }
+}
+
+// The provider benchmark panel is built with DOM nodes + textContent (not
+// innerHTML) so artifact-sourced strings can never be parsed as markup —
+// XSS-safe by construction, no sanitizer dependency.
+function elx(tag, {className, text} = {}) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined && text !== null) node.textContent = String(text);
+  return node;
+}
+
+function makeBadge(text, tone = "neutral") {
+  return elx("span", {className: `badge ${tone}`, text});
+}
+
+function makeEmptyNode(text) {
+  return elx("div", {className: "empty", text});
+}
+
+function makeBenchmarkTable(headers, rows, extraClass = "") {
+  const table = elx("table", {className: `category-table benchmark-table ${extraClass}`.trim()});
+  const thead = elx("thead");
+  const headRow = elx("tr");
+  headers.forEach((h) => headRow.appendChild(elx("th", {text: h})));
+  thead.appendChild(headRow);
+  const tbody = elx("tbody");
+  rows.forEach((cells) => {
+    const tr = elx("tr");
+    cells.forEach((cell) => {
+      const td = elx("td");
+      if (cell instanceof Node) td.appendChild(cell);
+      else td.textContent = String(cell);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.append(thead, tbody);
+  return table;
+}
+
+function renderProviderBenchmarkError(message) {
+  $("provider-benchmark-summary").replaceChildren(makeBadge("Provider benchmark unavailable", "warn"));
+  $("provider-benchmark-cards").replaceChildren();
+  $("provider-benchmark-providers").replaceChildren();
+  $("provider-benchmark-categories").replaceChildren();
+  $("provider-benchmark-cases").replaceChildren(makeEmptyNode(`Endpoint unavailable: ${message}`));
+  $("provider-benchmark-markdown").textContent = "No report loaded.";
+}
+
+function renderProviderBenchmark(latest, list) {
+  const cards = $("provider-benchmark-cards");
+  const providers = $("provider-benchmark-providers");
+  const categories = $("provider-benchmark-categories");
+  const cases = $("provider-benchmark-cases");
+  const markdown = $("provider-benchmark-markdown");
+  const summaryLine = $("provider-benchmark-summary");
+  [cards, providers, categories, cases].forEach((node) => node.replaceChildren());
+
+  if (!latest || !latest.available || !latest.latest) {
+    summaryLine.replaceChildren(makeBadge("No provider benchmark artifact", "warn"));
+    cases.replaceChildren(
+      makeEmptyNode("No provider benchmark artifact found. Run: bash scripts/run_provider_benchmark.sh mock")
+    );
+    markdown.textContent =
+      "Run bash scripts/run_provider_benchmark.sh mock to generate a local benchmark artifact.";
+    return;
+  }
+
+  const summary = latest.latest;
+  const passed = Number(summary.failed || 0) === 0;
+  summaryLine.replaceChildren(
+    makeBadge(summary.provider || "provider", passed ? "pass" : "warn"),
+    elx("span", {
+      className: "summary-text",
+      text: ` score ${formatScore(summary.score)}, ${summary.passed ?? 0}/${summary.total ?? 0} cases, source ${summary.source || "results"}`,
+    })
+  );
+  renderBenchmarkCards(cards, summary);
+  renderBenchmarkProviders(providers, (list && list.artifacts) || []);
+  renderBenchmarkCategories(categories, summary.by_category || {});
+  renderBenchmarkCases(cases, summary.results || []);
+  markdown.textContent = latest.markdown_report || "No Markdown report available.";
+}
+
+function renderBenchmarkCards(container, summary) {
+  const cards = [
+    ["Provider", summary.provider || "—", "neutral"],
+    ["Model", summary.model || "—", "neutral"],
+    ["Score", formatScore(summary.score), Number(summary.failed || 0) === 0 ? "pass" : "warn"],
+    ["Fallback rate", formatPct(summary.fallback_rate), Number(summary.fallback_rate || 0) > 0 ? "warn" : "pass"],
+    ["Citation valid", formatPct(summary.citation_validation_rate), "pass"],
+    ["Invalid citations", summary.invalid_citation_count ?? 0, Number(summary.invalid_citation_count || 0) ? "fail" : "neutral"],
+    ["Provider errors", summary.provider_error_count ?? 0, Number(summary.provider_error_count || 0) ? "fail" : "neutral"],
+    ["Avg latency", formatMs(summary.avg_latency_ms), "neutral"],
+    ["P95 latency", formatMs(summary.p95_latency_ms), "neutral"],
+  ];
+  container.replaceChildren(
+    ...cards.map(([label, value, tone]) => {
+      const card = elx("div", {className: `summary-card ${tone}`});
+      card.append(
+        elx("span", {className: "summary-card-label", text: label}),
+        elx("span", {className: "summary-card-value", text: value})
+      );
+      return card;
+    })
+  );
+}
+
+function renderBenchmarkProviders(container, artifacts) {
+  if (!artifacts.length) {
+    container.replaceChildren();
+    return;
+  }
+  const rows = artifacts.map((a) => [
+    a.provider || "—",
+    a.model || "—",
+    formatScore(a.score),
+    formatPct(a.fallback_rate),
+    formatPct(a.citation_validation_rate),
+    formatMs(a.avg_latency_ms),
+    a.source || "",
+  ]);
+  container.replaceChildren(
+    elx("h3", {className: "table-caption", text: `Artifacts (${artifacts.length})`}),
+    makeBenchmarkTable(
+      ["Provider", "Model", "Score", "Fallback", "Citation valid", "Avg latency", "Source"],
+      rows
+    )
+  );
+}
+
+function renderBenchmarkCategories(container, categories) {
+  const names = Object.keys(categories).sort();
+  if (!names.length) {
+    container.replaceChildren();
+    return;
+  }
+  const rows = names.map((name) => {
+    const stats = categories[name] || {};
+    return [
+      name,
+      stats.total ?? 0,
+      stats.passed ?? 0,
+      stats.failed ?? 0,
+      formatScore(stats.score),
+      formatPct(stats.fallback_rate),
+      formatPct(stats.citation_validation_rate),
+    ];
+  });
+  container.replaceChildren(
+    elx("h3", {className: "table-caption", text: "By category"}),
+    makeBenchmarkTable(
+      ["Category", "Total", "Passed", "Failed", "Score", "Fallback", "Citation valid"],
+      rows
+    )
+  );
+}
+
+function renderBenchmarkCases(container, results) {
+  if (!results.length) {
+    container.replaceChildren(makeEmptyNode("No per-case rows in this artifact."));
+    return;
+  }
+  const rows = results.map((r) => [
+    r.case_id || "",
+    r.category || "",
+    makeBadge(r.passed ? "pass" : "fail", r.passed ? "pass" : "fail"),
+    formatScore(r.score),
+    formatBool(r.llm_used),
+    formatBool(r.fallback_used),
+    r.fallback_reason || "—",
+    r.citation_valid === null || r.citation_valid === undefined ? "n/a" : formatBool(r.citation_valid),
+    formatMs(r.latency_ms),
+    (r.failure_reasons || []).join("; ") || "—",
+  ]);
+  container.replaceChildren(
+    elx("h3", {className: "table-caption", text: `Cases (${results.length})`}),
+    makeBenchmarkTable(
+      ["Case", "Category", "Passed", "Score", "LLM", "Fallback", "Reason", "Citation", "Latency", "Failures"],
+      rows,
+      "benchmark-case-table"
+    )
+  );
+}
+
+function formatPct(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "n/a";
+  return `${(number * 100).toFixed(1)}%`;
+}
+
+function formatMs(value) {
+  if (value === null || value === undefined) return "n/a";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "n/a";
+  return `${number.toFixed(1)} ms`;
+}
+
+function formatBool(value) {
+  return value ? "yes" : "no";
 }
 
 async function runQuery() {

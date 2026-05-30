@@ -47,6 +47,7 @@ This repository demonstrates those constraints in a small, local, inspectable sy
 - Deterministic accounting eval harness with CI gate, PR comment bot, and local eval trend snapshots.
 - Optional real-LLM answer generator (off by default) bounded by a citation contract with deterministic fallback.
 - Optional manual provider benchmark report comparing template, mock, and real providers on fallback rate, citation validation, safety preservation, and latency — kept separate from the deterministic, mock-only CI gate.
+- Read-only provider benchmark dashboard panel and artifact API for inspecting those benchmark results locally (no benchmark runs from the dashboard; CI stays mock-only).
 
 ## Architecture
 
@@ -159,6 +160,7 @@ GET  /v1/documents
 GET  /v1/review/queue
 GET  /v1/evals/latest
 GET  /v1/evals/history
+GET  /v1/provider-benchmarks
 GET  /dashboard
 ```
 
@@ -218,13 +220,14 @@ The dashboard is served directly by FastAPI at `/dashboard`. It includes:
 - Review filtering, pagination, and JSON/CSV export.
 - Latest eval report viewer.
 - Eval Trend panel backed by local `data/eval_history/*.json` snapshots.
+- Provider benchmark comparison panel backed by local `data/provider_benchmark*` artifacts (read-only).
 - Local trace viewer when tracing is enabled.
 
 See [`docs/dashboard.md`](docs/dashboard.md) and [`docs/demo_walkthrough.md`](docs/demo_walkthrough.md).
 
 ## Roadmap
 
-Completed through Phase 8C:
+Completed through Phase 8D:
 
 - Accounting verticalization.
 - Multi-format ingestion and chunking.
@@ -236,6 +239,7 @@ Completed through Phase 8C:
 - GitHub showcase documentation polish.
 - Optional citation-aware real-LLM answer generator (off by default) with deterministic fallback.
 - Manual provider benchmark report (fallback / citation / safety / latency), separate from the deterministic CI gate.
+- Read-only provider benchmark dashboard panel and artifact API.
 
 Next realistic phases:
 

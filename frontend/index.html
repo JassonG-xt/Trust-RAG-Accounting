@@ -218,6 +218,30 @@
           <div class="category-table-wrap" id="eval-trend-categories"></div>
         </section>
 
+        <section class="panel provider-benchmark-panel" aria-labelledby="provider-benchmark-title">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Providers</p>
+              <h2 id="provider-benchmark-title">Provider Benchmark</h2>
+            </div>
+            <button class="secondary-button" data-refresh="provider-benchmark" type="button">Refresh</button>
+          </div>
+          <p class="review-disclaimer">
+            Read-only view of local benchmark artifacts. The dashboard never runs a
+            benchmark or calls a real provider — generate one with
+            <code>bash scripts/run_provider_benchmark.sh mock</code>.
+          </p>
+          <div class="summary-line" id="provider-benchmark-summary">No provider benchmark loaded.</div>
+          <div class="summary-cards" id="provider-benchmark-cards" aria-label="Provider benchmark summary cards"></div>
+          <div class="category-table-wrap" id="provider-benchmark-providers"></div>
+          <div class="category-table-wrap" id="provider-benchmark-categories"></div>
+          <div class="category-table-wrap" id="provider-benchmark-cases"></div>
+          <details class="details-block">
+            <summary>Markdown report</summary>
+            <pre id="provider-benchmark-markdown">No report loaded.</pre>
+          </details>
+        </section>
+
         <section class="panel" aria-labelledby="trace-title">
           <div class="panel-header">
             <div>

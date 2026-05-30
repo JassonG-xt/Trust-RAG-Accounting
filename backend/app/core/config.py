@@ -195,6 +195,30 @@ class Settings:
         default_factory=lambda: _int_env("TRUSTRAG_EVAL_HISTORY_LIMIT", 50)
     )
 
+    # Phase 8D — provider benchmark dashboard. Read-only inputs used by
+    # ``GET /v1/provider-benchmarks*``; the API never runs a benchmark or writes
+    # files. Defaults point at the Phase 8C artifacts under gitignored ``data/``.
+    trustrag_provider_benchmark_results_path: str = field(
+        default_factory=lambda: os.getenv(
+            "TRUSTRAG_PROVIDER_BENCHMARK_RESULTS_PATH",
+            "data/provider_benchmark_results.json",
+        )
+    )
+    trustrag_provider_benchmark_report_path: str = field(
+        default_factory=lambda: os.getenv(
+            "TRUSTRAG_PROVIDER_BENCHMARK_REPORT_PATH",
+            "data/provider_benchmark_report.md",
+        )
+    )
+    trustrag_provider_benchmark_dir: str = field(
+        default_factory=lambda: os.getenv(
+            "TRUSTRAG_PROVIDER_BENCHMARK_DIR", "data/provider_benchmarks"
+        )
+    )
+    trustrag_provider_benchmark_limit: int = field(
+        default_factory=lambda: _int_env("TRUSTRAG_PROVIDER_BENCHMARK_LIMIT", 20)
+    )
+
     # Phase 8B — optional real LLM answer generation. Default OFF: the
     # deterministic template generator runs unless LLM_ANSWER_MODE=llm. The
     # existing ``llm_provider`` field (above, default "mock") selects the

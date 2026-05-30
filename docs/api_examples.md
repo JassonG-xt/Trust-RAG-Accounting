@@ -140,6 +140,21 @@ If no snapshots exist, the response is:
 }
 ```
 
+## Provider Benchmarks
+
+Read-only views of local provider benchmark artifacts (Phase 8D). These never
+run a benchmark or call a real provider — generate artifacts first with
+`bash scripts/run_provider_benchmark.sh mock`.
+
+```bash
+curl -s http://localhost:8000/v1/provider-benchmarks/latest | jq .
+curl -s "http://localhost:8000/v1/provider-benchmarks?limit=10" | jq .
+curl -s "http://localhost:8000/v1/provider-benchmarks?provider=mock" | jq .
+```
+
+If no artifact exists, the response is `{"available": false, "latest": null, ...}`.
+See [`provider_benchmark_dashboard.md`](provider_benchmark_dashboard.md).
+
 ## Dashboard Static Assets
 
 ```bash
