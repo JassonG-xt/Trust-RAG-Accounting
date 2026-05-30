@@ -18,6 +18,7 @@ An accountant asks whether a transaction, reimbursement, invoice, or policy inte
 - Human review handoff, local queue, reviewer actions, filtering, pagination, and export.
 - Dashboard served by FastAPI with vanilla HTML/CSS/JS.
 - Deterministic eval harness, CI gate, PR eval comments, and local eval trend snapshots.
+- Repository hygiene check, contributor docs, security policy, and release checklist for maintainability.
 
 ## Architecture Highlights
 
@@ -56,6 +57,7 @@ Key implementation choices:
 - 7 accounting-focused categories.
 - Current baseline: 18/18 passing, score `1.000`.
 - CI enforces overall and category thresholds.
+- CI also runs the repository hygiene check to keep generated data, secrets, and local-only files out of tracked history.
 - PR comments show score, category results, failed cases, artifact reference, and delta versus `main`.
 - Local eval history snapshots feed the dashboard Eval Trend panel.
 

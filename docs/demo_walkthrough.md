@@ -180,7 +180,7 @@ Open the GitHub pull request checks and eval comment.
 
 What to observe:
 
-- CI runs ingestion, eval gate, and pytest.
+- CI runs repository hygiene, ingestion, eval gate, and pytest.
 - The eval comment shows score, category results, threshold status, delta versus main, and artifact reference.
 - The `accounting-eval-report` artifact contains generated eval outputs.
 

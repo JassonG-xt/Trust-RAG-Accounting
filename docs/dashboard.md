@@ -24,6 +24,7 @@ python -m backend.app.ingestion.ingest_sample_docs \
 
 bash scripts/run_eval_gate.sh
 bash scripts/archive_eval_snapshot.sh
+bash scripts/check_repo_hygiene.sh
 bash scripts/run_dev.sh
 ```
 
@@ -63,6 +64,9 @@ http://localhost:8000/dashboard
 8. Open the eval report and Eval Trend panel.
 
 The full script is in [`demo_walkthrough.md`](demo_walkthrough.md).
+
+When changing dashboard code, also run the repository hygiene check so local
+artifacts under `data/` and other local-only files stay out of Git.
 
 ## Eval Report Viewer
 
