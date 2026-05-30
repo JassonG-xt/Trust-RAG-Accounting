@@ -119,6 +119,14 @@ TRUSTRAG_PROVIDER_BENCHMARK_HISTORY_LIMIT=50
 No secrets. Snapshots live under the gitignored `data/` tree and are never
 committed.
 
+Before opening a PR or tagging a release, run:
+
+```bash
+bash scripts/check_repo_hygiene.sh
+```
+
+The check fails if provider benchmark history snapshots are accidentally tracked.
+
 ## CI boundary
 
 This is local-only and read-only. CI does not run real provider benchmarks,

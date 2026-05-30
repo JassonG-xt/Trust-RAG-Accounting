@@ -29,22 +29,16 @@ TrustRAG Accounting is phase-gated by tests and evals, not dates. Each phase is 
 | 8C | Complete | Manual provider benchmark report (template / mock / optional real providers) over fallback, citation, safety, and latency — separate from the deterministic CI gate. |
 | 8D | Complete | Read-only provider benchmark dashboard panel + artifact API (no benchmark runs or real-provider calls from the dashboard). |
 | 8E | Complete | Local provider benchmark trend snapshots + read-only history API and dashboard trend panel (compact summaries only; no per-case rows; never a CI gate). |
+| 9A | Complete | Repository hardening and release hygiene: governance docs, release checklist, maintenance guide, templates, hygiene script, and CI hygiene check. |
 
-Current `main` baseline this phase built on (Phase 8A):
+Recent validated baselines:
 
-- 419 backend tests passing.
-- 18/18 active eval cases passing.
-- Eval score `1.000`.
-- CI green.
-- Tag `trustrag-accounting-phase-8a-showcase-v1`.
-
-After Phase 8B: 462 backend tests passing; eval gate unchanged at 18/18, score `1.000` (the LLM seam is off by default).
-
-After Phase 8C: 496 backend tests passing; eval gate unchanged at 18/18, score `1.000` (the provider benchmark is a manual tool and never gates CI).
-
-After Phase 8D: 516 backend tests passing; eval gate unchanged at 18/18, score `1.000` (the dashboard reads benchmark artifacts read-only; CI is still mock-only).
-
-After Phase 8E: 540 backend tests passing; eval gate unchanged at 18/18, score `1.000` (provider benchmark trend history is local-only, read-only, and compact-summary; CI is still mock-only).
+- Phase 8A: 419 backend tests passing; eval gate 18/18, score `1.000`; tag `trustrag-accounting-phase-8a-showcase-v1`.
+- Phase 8B: 462 backend tests passing; eval gate unchanged at 18/18, score `1.000` (the LLM seam is off by default).
+- Phase 8C: 496 backend tests passing; eval gate unchanged at 18/18, score `1.000` (the provider benchmark is a manual tool and never gates CI).
+- Phase 8D: 519 backend tests passing; eval gate unchanged at 18/18, score `1.000` (the dashboard reads benchmark artifacts read-only; CI is still mock-only).
+- Phase 8E: 543 backend tests passing; eval gate unchanged at 18/18, score `1.000` (provider benchmark trend history is local-only, read-only, and compact-summary; CI is still mock-only).
+- Phase 9A: 545 backend tests passing; eval gate unchanged at 18/18, score `1.000` (repository hygiene is a forbidden-file check, not a runtime behavior change).
 
 ## Current Capabilities
 
@@ -61,34 +55,37 @@ After Phase 8E: 540 backend tests passing; eval gate unchanged at 18/18, score `
 - Manual provider benchmark report (template / mock / optional real providers) over fallback, citation, safety, and latency — never a CI gate. See [provider_benchmark.md](provider_benchmark.md).
 - Read-only provider benchmark dashboard panel + artifact API over local benchmark artifacts. See [provider_benchmark_dashboard.md](provider_benchmark_dashboard.md).
 - Local provider benchmark trend snapshots (compact summaries) with a read-only history API + dashboard trend panel. See [provider_benchmark_history.md](provider_benchmark_history.md).
+- Repository governance, release checklist, maintenance guide, PR/issue templates, and CI repository hygiene check.
 
 ## Near-Term Next Steps
 
-### Real provider eval
+### Phase 9B: Release assets and screenshots
 
-- Phase 8B delivered the optional LLM provider seam (mock / OpenAI-compatible / Anthropic-compatible) and a manual smoke command.
-- Phase 8C delivered the manual provider benchmark report (fallback / citation / safety / latency), kept separate from the deterministic CI gate. See [provider_benchmark.md](provider_benchmark.md).
-- Phase 8D delivered the read-only provider benchmark dashboard panel + artifact API. See [provider_benchmark_dashboard.md](provider_benchmark_dashboard.md).
-- Phase 8E delivered optional provider benchmark trend snapshots (history of manual runs) with a read-only history API + dashboard trend panel, still never a required CI gate. See [provider_benchmark_history.md](provider_benchmark_history.md).
-- Keep the mock-provider suite as the required CI floor.
-- Report provider-specific regressions separately from deterministic regressions.
+- Optional showcase screenshots and release assets if the portfolio presentation needs them.
+- Capture screenshots from the local app or real GitHub UI; do not invent them.
 
-### Postgres persistence
+### Phase 9C: Deployment guide
+
+- Document a lightweight hosted demo path.
+- Preserve the no-Node dashboard boundary unless a future workflow justifies changing it.
+
+### Future: Postgres persistence
 
 - Add durable storage behind the existing review and document-store seams.
 - Preserve the local JSONL path for offline demos and tests.
 - Avoid changing review state-machine semantics.
 
-### Authentication and authorization
+### Future: Authentication and authorization
 
 - Protect reviewer actions.
 - Distinguish reviewer identity from the current local free-text reviewer field.
 - Keep demo mode simple and explicit.
 
-### Deployed dashboard
+### Future: Optional generation improvements
 
-- Package the existing FastAPI-served dashboard for a hosted demo.
-- Avoid introducing a heavy frontend framework unless a real workflow needs it.
+- Streaming generation.
+- Tool calling in the optional LLM answer path.
+- Optional real-provider benchmark artifacts, never a required CI gate.
 
 ## Deferred Ideas
 
@@ -96,9 +93,6 @@ After Phase 8E: 540 backend tests passing; eval gate unchanged at 18/18, score `
 - Branch-to-branch eval trend comparison.
 - Historical review analytics.
 - LLM-as-judge as an optional analysis layer, not the CI gate.
-- Streaming generation for the optional LLM answer path.
-- Tool calling in the optional LLM answer path.
-- Optional, opt-in real-provider eval artifact upload (never a required CI gate).
 - OCR and invoice image recognition.
 - External tax-bureau integrations.
 

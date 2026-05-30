@@ -57,6 +57,7 @@ data/
 Thumbs.db
 
 # Local-only project meta (never commit to GitHub)
+AGENTS.md
 CLAUDE.md
 skills-lock.json
 .agents/

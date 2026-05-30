@@ -1,12 +1,13 @@
 # CI Eval Gate
 
-The GitHub Actions workflow in `.github/workflows/ci.yml` runs the deterministic accounting eval gate and backend tests on every pull request to `main` and every push to `main`.
+The GitHub Actions workflow in `.github/workflows/ci.yml` runs the repository hygiene check, deterministic accounting eval gate, and backend tests on every pull request to `main` and every push to `main`.
 
 ## Workflow
 
 ```mermaid
 flowchart TD
-    PR["Pull request or push to main"] --> INSTALL["pip install -e .[dev]"]
+    PR["Pull request or push to main"] --> HYGIENE["bash scripts/check_repo_hygiene.sh"]
+    HYGIENE --> INSTALL["pip install -e .[dev]"]
     INSTALL --> INGEST["Ingest sample_docs"]
     INGEST --> EVAL["Run accounting eval gate"]
     EVAL --> BASE["Same-repo PR only:<br/>run base eval for delta"]
@@ -29,7 +30,7 @@ The CI policy is intentionally strict and deterministic:
 --category-threshold citation_faithfulness=0.95
 ```
 
-Phase 8A does not change this policy.
+Phase 9A adds a repository hygiene check but does not change this threshold policy.
 
 ## Local Equivalent
 
@@ -40,6 +41,8 @@ python -m backend.app.ingestion.ingest_sample_docs \
   --chunks-out data/trustrag_chunks.json
 
 bash scripts/run_eval_gate.sh
+
+bash scripts/check_repo_hygiene.sh
 
 python -m pytest backend/tests
 ```

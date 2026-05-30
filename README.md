@@ -12,8 +12,8 @@ Current showcase status:
 
 | Signal | Status |
 |---|---|
-| Phase | 8A - GitHub showcase polish |
-| Tests | 419 passing on `main` |
+| Phase | 9A - Repository hardening and release hygiene |
+| Tests | 545 passing on `main` |
 | Eval gate | 18/18 active accounting cases passing, score `1.000` |
 | CI | Green on `main` |
 | Dashboard | `http://localhost:8000/dashboard` |
@@ -93,6 +93,8 @@ Detailed design notes live in:
 - [`docs/eval_harness.md`](docs/eval_harness.md)
 - [`docs/dashboard.md`](docs/dashboard.md)
 - [`docs/real_llm_provider.md`](docs/real_llm_provider.md)
+- [`docs/maintenance.md`](docs/maintenance.md)
+- [`docs/release_checklist.md`](docs/release_checklist.md)
 
 ## Quickstart Demo
 
@@ -118,6 +120,22 @@ http://localhost:8000/dashboard
 ```
 
 The generated files under `data/` are local artifacts and are intentionally gitignored.
+
+## Repository Maintenance
+
+Contributor, security, release, and maintenance workflows live in:
+
+- [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- [`SECURITY.md`](SECURITY.md)
+- [`CHANGELOG.md`](CHANGELOG.md)
+- [`docs/release_checklist.md`](docs/release_checklist.md)
+- [`docs/maintenance.md`](docs/maintenance.md)
+
+Before committing, run:
+
+```bash
+bash scripts/check_repo_hygiene.sh
+```
 
 ## Example Questions
 
@@ -181,12 +199,13 @@ Current active suite:
 
 CI runs:
 
-1. Sample document ingestion.
-2. Accounting eval gate with threshold policy.
-3. Base-branch eval for same-repository PR deltas.
-4. PR eval comment generation and update.
-5. `python -m pytest backend/tests`.
-6. Eval report artifact upload and GitHub Step Summary.
+1. Repository hygiene check.
+2. Sample document ingestion.
+3. Accounting eval gate with threshold policy.
+4. Base-branch eval for same-repository PR deltas.
+5. PR eval comment generation and update.
+6. `python -m pytest backend/tests`.
+7. Eval report artifact upload and GitHub Step Summary.
 
 Threshold policy:
 
@@ -230,7 +249,7 @@ See [`docs/dashboard.md`](docs/dashboard.md) and [`docs/demo_walkthrough.md`](do
 
 ## Roadmap
 
-Completed through Phase 8E:
+Completed through Phase 9A:
 
 - Accounting verticalization.
 - Multi-format ingestion and chunking.
@@ -244,12 +263,15 @@ Completed through Phase 8E:
 - Manual provider benchmark report (fallback / citation / safety / latency), separate from the deterministic CI gate.
 - Read-only provider benchmark dashboard panel and artifact API.
 - Local provider benchmark trend snapshots with a read-only history API and dashboard trend panel.
+- Repository governance docs, release checklist, maintenance guide, PR/issue templates, and forbidden-file hygiene check.
 
 Next realistic phases:
 
-- Postgres persistence for review and document metadata.
-- Authentication and authorization for reviewer actions.
-- Deployed dashboard.
+- Phase 9B: release assets and screenshots, if useful for the showcase.
+- Phase 9C: deployment guide.
+- Future: Postgres persistence for review and document metadata.
+- Future: authentication and authorization for reviewer actions.
+- Future: streaming generation, tool calling, and optional real-provider benchmark artifacts.
 
 Full roadmap: [`docs/roadmap.md`](docs/roadmap.md).
 
@@ -278,8 +300,8 @@ backend/app/
   evals/                 eval cases, runner, report, history archive
 frontend/                FastAPI-served vanilla dashboard
 sample_docs/             fictional accounting corpus
-scripts/                 local dev, eval gate, eval snapshot archive
-docs/                    architecture, demo, eval, CI, dashboard docs
+scripts/                 local dev, eval gate, snapshots, repo hygiene
+docs/                    architecture, demo, eval, CI, dashboard, maintenance docs
 ```
 
 ## License
