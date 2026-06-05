@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: trust-rag-accounting-demo
+    runtime: python
+    plan: free
+    buildCommand: pip install -e .
+    startCommand: bash scripts/run_render_demo.sh
+    healthCheckPath: /healthz
+    envVars:
+      - key: LLM_ANSWER_MODE
+        value: template
+      - key: EMBEDDING_PROVIDER
+        value: mock
+      - key: VECTOR_STORE
+        value: memory
+      - key: RERANKER_PROVIDER
+        value: mock
+      - key: TRUSTRAG_PUBLIC_DEMO_ENABLED
+        value: "true"
+      - key: TRUSTRAG_TRACE_ENABLED
+        value: "false"

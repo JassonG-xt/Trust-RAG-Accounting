@@ -23,6 +23,14 @@ class HealthResponse(BaseModel):
     service: str = "trust-rag-backend"
 
 
+class DemoConfigResponse(BaseModel):
+    """Public demo capability flags consumed by the vanilla dashboard."""
+
+    public_demo_enabled: bool = False
+    review_queue_enabled: bool = True
+    demo_mode_label: str = "Local full demo"
+
+
 # ---------------------------------------------------------------------------
 # Core domain objects
 # ---------------------------------------------------------------------------

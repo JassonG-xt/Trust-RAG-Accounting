@@ -18,6 +18,11 @@ const state = {
   providerBenchmarkList: null,
   providerBenchmarkHistory: null,
   query: null,
+  demoConfig: {
+    public_demo_enabled: false,
+    review_queue_enabled: true,
+    demo_mode_label: "Local full demo",
+  },
   actionHistory: {},
   actionStatus: {},
   reviewFilters: {
@@ -62,7 +67,11 @@ function bindReviewFilters() {
   if (resetBtn) {
     resetBtn.addEventListener("click", () => {
       resetReviewFilters();
-      refreshReview();
+      if (reviewQueueEnabled()) {
+        refreshReview();
+      } else {
+        renderPublicDemoReviewDisabled();
+      }
     });
   }
   const exportJson = $("review-export-json");
@@ -77,6 +86,10 @@ function bindReviewFilters() {
 
 let _reviewFilterTimer = null;
 function scheduleReviewFilterUpdate() {
+  if (!reviewQueueEnabled()) {
+    renderPublicDemoReviewDisabled();
+    return;
+  }
   if (_reviewFilterTimer) clearTimeout(_reviewFilterTimer);
   _reviewFilterTimer = setTimeout(() => {
     readReviewFiltersFromForm();
@@ -132,6 +145,10 @@ function reviewFilterQueryString({includePaging = true} = {}) {
 }
 
 function downloadExport(format) {
+  if (!reviewQueueEnabled()) {
+    renderPublicDemoReviewDisabled();
+    return;
+  }
   const qs = reviewFilterQueryString({includePaging: false});
   const suffix = format === "csv" ? "csv" : "json";
   const url = `/v1/review/queue/export.${suffix}${qs ? `?${qs}` : ""}`;
@@ -155,10 +172,14 @@ function renderExamples() {
 }
 
 async function refreshAll() {
+  await refreshDemoConfig();
+  const reviewRefresh = reviewQueueEnabled()
+    ? refreshReview()
+    : Promise.resolve(renderPublicDemoReviewDisabled());
   await Promise.allSettled([
     refreshHealth(),
     refreshDocuments(),
-    refreshReview(),
+    reviewRefresh,
     refreshEval(),
     refreshEvalHistory(),
     refreshTraces(),
@@ -169,7 +190,10 @@ async function refreshAll() {
 
 async function refreshPanel(name) {
   if (name === "documents") return refreshDocuments();
-  if (name === "review") return refreshReview();
+  if (name === "review") {
+    if (reviewQueueEnabled()) return refreshReview();
+    return renderPublicDemoReviewDisabled();
+  }
   if (name === "eval") return refreshEval();
   if (name === "eval-history") return refreshEvalHistory();
   if (name === "traces") return refreshTraces();
@@ -189,6 +213,53 @@ async function refreshHealth() {
   }
 }
 
+async function refreshDemoConfig() {
+  try {
+    const data = await fetchJson("/v1/demo/config");
+    state.demoConfig = {
+      ...state.demoConfig,
+      ...data,
+    };
+  } catch (error) {
+    state.demoConfig = {
+      public_demo_enabled: false,
+      review_queue_enabled: true,
+      demo_mode_label: "Local full demo",
+    };
+  }
+  applyDemoConfigToUi();
+}
+
+function publicDemoEnabled() {
+  return Boolean(state.demoConfig?.public_demo_enabled);
+}
+
+function reviewQueueEnabled() {
+  return state.demoConfig?.review_queue_enabled !== false;
+}
+
+function applyDemoConfigToUi() {
+  document.body.dataset.publicDemo = publicDemoEnabled() ? "true" : "false";
+  document.body.dataset.reviewQueueEnabled = reviewQueueEnabled() ? "true" : "false";
+  setReviewControlsEnabled(reviewQueueEnabled());
+}
+
+function setReviewControlsEnabled(enabled) {
+  const selectors = [
+    "[data-refresh=\"review\"]",
+    "#review-export-json",
+    "#review-export-csv",
+    "#review-filter-reset",
+    "#review-filters input",
+    "#review-filters select",
+  ];
+  document.querySelectorAll(selectors.join(",")).forEach((element) => {
+    if ("disabled" in element) {
+      element.disabled = !enabled;
+    }
+  });
+}
+
 async function refreshDocuments() {
   try {
     state.documents = await fetchJson("/v1/documents");
@@ -202,6 +273,10 @@ async function refreshDocuments() {
 }
 
 async function refreshReview() {
+  if (!reviewQueueEnabled()) {
+    renderPublicDemoReviewDisabled();
+    return;
+  }
   const qs = reviewFilterQueryString();
   const summaryQs = reviewFilterQueryString({includePaging: false});
   try {
@@ -668,7 +743,10 @@ async function runQuery() {
     state.query = data;
     renderQuery(data);
     $("query-status").textContent = "Query complete.";
-    await Promise.allSettled([refreshReview(), refreshTraces()]);
+    const reviewRefresh = reviewQueueEnabled()
+      ? refreshReview()
+      : Promise.resolve(renderPublicDemoReviewDisabled());
+    await Promise.allSettled([reviewRefresh, refreshTraces()]);
   } catch (error) {
     $("query-status").textContent = `Query failed: ${messageOf(error)}`;
   } finally {
@@ -769,6 +847,10 @@ function renderDocuments(data) {
 }
 
 function renderReview(data) {
+  if (!data.enabled && publicDemoEnabled()) {
+    renderPublicDemoReviewDisabled();
+    return;
+  }
   if (!data.enabled) {
     $("review-summary").innerHTML = badge("Review disabled", "warn");
     $("review-list").innerHTML = emptyHtml("Human review handoff is disabled.");
@@ -801,6 +883,17 @@ function renderReview(data) {
   $("review-list").innerHTML = entries
     .map((entry) => reviewEntryHtml(entry))
     .join("");
+}
+
+function renderPublicDemoReviewDisabled() {
+  state.review = {enabled: false, entries: [], count: 0, total: 0};
+  state.reviewSummary = null;
+  $("review-summary").innerHTML = badge("Public read-only demo", "warn");
+  $("review-list").innerHTML = emptyHtml(
+    "Public demo keeps RAG query, evidence, citations, temporal analysis, safety analysis, documents, and eval viewers available; reviewer workflow is disabled."
+  );
+  $("review-pager").innerHTML = "";
+  $("review-summary-cards").innerHTML = "";
 }
 
 function filterDescription(filters, sort) {
@@ -870,6 +963,10 @@ function renderReviewPager(data) {
 }
 
 function paginateReview(direction) {
+  if (!reviewQueueEnabled()) {
+    renderPublicDemoReviewDisabled();
+    return;
+  }
   const f = state.reviewFilters;
   const total = state.review?.total ?? 0;
   const nextOffset = Math.max(0, f.offset + direction * f.limit);
@@ -1150,6 +1247,10 @@ function historyHtml(actions) {
 }
 
 async function handleReviewClick(event) {
+  if (!reviewQueueEnabled()) {
+    renderPublicDemoReviewDisabled();
+    return;
+  }
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
   const item = target.closest(".review-item");
@@ -1191,6 +1292,10 @@ async function handleReviewClick(event) {
 }
 
 async function refreshActionHistory(reviewId) {
+  if (!reviewQueueEnabled()) {
+    renderPublicDemoReviewDisabled();
+    return;
+  }
   try {
     const data = await fetchJson(`/v1/review/queue/${encodeURIComponent(reviewId)}/actions`);
     state.actionHistory[reviewId] = data.actions || [];
