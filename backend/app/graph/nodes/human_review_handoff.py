@@ -86,6 +86,16 @@ def human_review_handoff(state: TrustRAGState) -> dict:
             "human_review_reasons": [],
         }
 
+    if settings.trustrag_public_demo_enabled:
+        return {
+            **visited_marker,
+            "human_review_required": True,
+            "human_review_reasons": reasons,
+            "review_queue_id": None,
+            "review_status": "public_demo_not_persisted",
+            "review_checkpoint_path": None,
+        }
+
     queue_id = _generate_queue_id()
     created_at = _utc_iso_now()
     include_content = bool(settings.trustrag_review_include_content)

@@ -67,6 +67,20 @@ def test_dashboard_app_js_contains_eval_history_wiring() -> None:
     assert "renderEvalHistory" in body
 
 
+def test_dashboard_app_js_contains_public_demo_wiring() -> None:
+    client = TestClient(app)
+
+    response = client.get("/dashboard/static/app.js")
+
+    assert response.status_code == 200
+    body = response.text
+    assert "refreshDemoConfig" in body
+    assert "/v1/demo/config" in body
+    assert "public_demo_enabled" in body
+    assert "review_queue_enabled" in body
+    assert "renderPublicDemoReviewDisabled" in body
+
+
 def test_dashboard_styles_contains_review_action_styles() -> None:
     client = TestClient(app)
 

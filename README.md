@@ -3,8 +3,8 @@
 Evidence-grounded agentic RAG for accounting-firm knowledge work: client SOPs, invoice rules, reimbursement policies, tax notes, human review, and deterministic evals in one local FastAPI demo.
 
 [![CI](https://github.com/JassonG-xt/Trust-RAG-Accounting/actions/workflows/ci.yml/badge.svg)](https://github.com/JassonG-xt/Trust-RAG-Accounting/actions/workflows/ci.yml)
+[![Live RAG Demo](https://img.shields.io/badge/Live%20RAG%20Demo-Open%20Dashboard-009688)](https://trust-rag-accounting-demo.onrender.com/dashboard)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
-![FastAPI](https://img.shields.io/badge/FastAPI-local%20demo-009688)
 ![LangGraph](https://img.shields.io/badge/LangGraph-workflow-7c3aed)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -16,9 +16,12 @@ Current showcase status:
 | Tests | 586 passing locally |
 | Eval gate | 29/29 active accounting cases passing, score `1.000` |
 | CI | Green on `main` |
-| Dashboard | `http://localhost:8000/dashboard` |
+| Hosted dashboard | `https://trust-rag-accounting-demo.onrender.com/dashboard` |
+| Local dashboard | `http://localhost:8000/dashboard` |
 
 TrustRAG Accounting is a portfolio-grade prototype. It uses fictional clients only: Alpha Trading Co., Beta Catering Ltd., and Gamma Tech Studio. It is not a tax authority, production accounting system, or substitute for accountant review.
+
+Hosted demo uses fictional sample docs; the free Render instance may cold start; it is not accounting or tax advice.
 
 ## Why This Project Exists
 
@@ -99,7 +102,17 @@ Detailed design notes live in:
 - [`docs/maintenance.md`](docs/maintenance.md)
 - [`docs/release_checklist.md`](docs/release_checklist.md)
 
-## Quickstart Demo
+## Try the Hosted Demo
+
+Open the public read-only dashboard:
+
+```text
+https://trust-rag-accounting-demo.onrender.com/dashboard
+```
+
+The hosted demo supports real RAG queries over fictional sample docs, citations, evidence, temporal checks, safety analysis, document overview, and eval report viewing. Reviewer writes, review exports, and queue mutation are disabled in public demo mode.
+
+## Run Locally
 
 ```bash
 python -m venv .venv

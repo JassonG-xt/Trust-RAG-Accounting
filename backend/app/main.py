@@ -51,6 +51,7 @@ from .review import (
     get_review_checkpoint_store,
 )
 from .schemas.rag import (
+    DemoConfigResponse,
     DocumentsResponse,
     EvalLatestResponse,
     EvalLatestSummary,
@@ -95,6 +96,21 @@ def create_app() -> FastAPI:
     @app.get("/healthz", response_model=HealthResponse, tags=["meta"])
     def healthz() -> HealthResponse:
         return HealthResponse()
+
+    @app.get("/v1/demo/config", response_model=DemoConfigResponse, tags=["meta"])
+    def demo_config() -> DemoConfigResponse:
+        current_settings = get_settings()
+        public_demo = bool(current_settings.trustrag_public_demo_enabled)
+        return DemoConfigResponse(
+            public_demo_enabled=public_demo,
+            review_queue_enabled=(
+                bool(current_settings.trustrag_human_review_enabled)
+                and not public_demo
+            ),
+            demo_mode_label=(
+                "Public read-only demo" if public_demo else "Local full demo"
+            ),
+        )
 
     @app.get("/dashboard", include_in_schema=False)
     def dashboard() -> FileResponse:
@@ -361,6 +377,7 @@ def create_app() -> FastAPI:
         """
 
         current_settings = get_settings()
+        _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             return ReviewQueueResponse(
                 enabled=False,
@@ -415,6 +432,7 @@ def create_app() -> FastAPI:
         """
 
         current_settings = get_settings()
+        _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             return ReviewQueueSummaryResponse(
                 enabled=False, total=0, by_status={}, by_question_type={}, by_reason={}
@@ -452,6 +470,7 @@ def create_app() -> FastAPI:
         """
 
         current_settings = get_settings()
+        _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             raise HTTPException(status_code=404, detail="human review disabled")
         filter_spec = _build_queue_filter(
@@ -489,6 +508,7 @@ def create_app() -> FastAPI:
         """
 
         current_settings = get_settings()
+        _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             raise HTTPException(status_code=404, detail="human review disabled")
         filter_spec = _build_queue_filter(
@@ -517,6 +537,7 @@ def create_app() -> FastAPI:
         """Fetch a single review checkpoint by queue id, with current status."""
 
         current_settings = get_settings()
+        _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             raise HTTPException(
                 status_code=404,
@@ -540,6 +561,7 @@ def create_app() -> FastAPI:
         """Clear the local review queue *and* the Phase 7B action log."""
 
         current_settings = get_settings()
+        _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             return ReviewClearResponse(
                 enabled=False, cleared=0, cleared_actions=0
@@ -569,6 +591,7 @@ def create_app() -> FastAPI:
         """
 
         current_settings = get_settings()
+        _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             raise HTTPException(
                 status_code=400,
@@ -608,6 +631,7 @@ def create_app() -> FastAPI:
         """
 
         current_settings = get_settings()
+        _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             raise HTTPException(
                 status_code=404,
@@ -669,6 +693,14 @@ def _build_queue_filter(
         has_actions=has_actions,
         sort=sort,
     )
+
+
+def _raise_if_public_demo(settings) -> None:
+    if getattr(settings, "trustrag_public_demo_enabled", False):
+        raise HTTPException(
+            status_code=403,
+            detail="review workflow is disabled in public demo mode",
+        )
 
 
 _CSV_COLUMNS = [

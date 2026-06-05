@@ -141,6 +141,11 @@ class Settings:
     trustrag_human_review_enabled: bool = field(
         default_factory=lambda: _bool_env("TRUSTRAG_HUMAN_REVIEW_ENABLED", True)
     )
+    # Public hosted demo mode. RAG queries remain enabled, but reviewer
+    # workflow endpoints and queue persistence are disabled for visitors.
+    trustrag_public_demo_enabled: bool = field(
+        default_factory=lambda: _bool_env("TRUSTRAG_PUBLIC_DEMO_ENABLED", False)
+    )
     trustrag_review_store_path: str = field(
         default_factory=lambda: os.getenv(
             "TRUSTRAG_REVIEW_STORE_PATH", "data/review_queue.jsonl"

@@ -100,6 +100,7 @@ def _reset_singletons(
     # Reset env-driven toggles to a known default.
     monkeypatch.delenv("TRUSTRAG_HUMAN_REVIEW_ENABLED", raising=False)
     monkeypatch.delenv("TRUSTRAG_REVIEW_INCLUDE_CONTENT", raising=False)
+    monkeypatch.delenv("TRUSTRAG_PUBLIC_DEMO_ENABLED", raising=False)
     monkeypatch.delenv("TRUSTRAG_TRACE_ENABLED", raising=False)
     reset_repository()
     reset_review_checkpoint_store()
@@ -462,6 +463,21 @@ def test_workflow_checkpoint_written_to_store() -> None:
         assert summary.content_preview is None
 
 
+def test_public_demo_handoff_preserves_review_signal_without_persisting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRUSTRAG_PUBLIC_DEMO_ENABLED", "true")
+
+    state = run_query("小规模纳税人现在增值税应该怎么处理？")
+
+    assert state["human_review_required"] is True
+    assert "tax_policy_always_review" in state["human_review_reasons"]
+    assert state["review_status"] == "public_demo_not_persisted"
+    assert state["review_queue_id"] is None
+    assert state["review_checkpoint_path"] is None
+    assert get_review_checkpoint_store().list_entries() == []
+
+
 # ===========================================================================
 # Group D — FastAPI integration
 # ===========================================================================
@@ -562,6 +578,75 @@ def test_api_review_queue_disabled_returns_empty(
     # Per-id GET should 404 when disabled.
     response = client.get("/v1/review/queue/anything")
     assert response.status_code == 404
+
+
+def test_api_public_demo_config_reports_read_only_mode(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRUSTRAG_PUBLIC_DEMO_ENABLED", "true")
+
+    response = client.get("/v1/demo/config")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "public_demo_enabled": True,
+        "review_queue_enabled": False,
+        "demo_mode_label": "Public read-only demo",
+    }
+
+
+def test_api_public_demo_rag_returns_review_signal_without_queue_id(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRUSTRAG_PUBLIC_DEMO_ENABLED", "true")
+
+    response = client.post(
+        "/v1/rag/query",
+        json={"question": "小规模纳税人现在增值税应该怎么处理？"},
+    )
+
+    assert response.status_code == 200
+    human = response.json()["human_review"]
+    assert human["required"] is True
+    assert human["review_queue_id"] is None
+    assert human["status"] == "public_demo_not_persisted"
+    assert "tax_policy_always_review" in human["reasons"]
+    assert get_review_checkpoint_store().list_entries() == []
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("get", "/v1/review/queue"),
+        ("get", "/v1/review/queue/summary"),
+        ("get", "/v1/review/queue/export.json"),
+        ("get", "/v1/review/queue/export.csv"),
+        ("get", "/v1/review/queue/anything"),
+        ("delete", "/v1/review/queue"),
+        ("post", "/v1/review/queue/anything/actions"),
+        ("get", "/v1/review/queue/anything/actions"),
+    ],
+)
+def test_api_public_demo_blocks_review_workflow_endpoints(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    path: str,
+) -> None:
+    monkeypatch.setenv("TRUSTRAG_PUBLIC_DEMO_ENABLED", "true")
+    request = getattr(client, method)
+    kwargs = (
+        {"json": {"action_type": "approve", "reviewer": "local_reviewer"}}
+        if method == "post"
+        else {}
+    )
+
+    response = request(path, **kwargs)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "review workflow is disabled in public demo mode"
 
 
 # ===========================================================================
