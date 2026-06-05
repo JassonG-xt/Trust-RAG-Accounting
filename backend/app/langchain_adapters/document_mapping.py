@@ -43,7 +43,6 @@ _BREAKDOWN_KEYS = (
     "metadata",
     "client_match",
     "stance",
-    "temporal",
     "malicious_penalty",
 )
 

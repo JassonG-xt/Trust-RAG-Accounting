@@ -429,39 +429,6 @@ def test_hybrid_retriever_reimbursement_support_counter(chunks):
     assert "reimbursement_policy_2024" in counter_ids
 
 
-def test_hybrid_retriever_support_surfaces_historical_policy_for_2024_query(chunks):
-    service = RetrievalService(chunks)
-
-    support = service.search(
-        "2024 年打车 150 元需要审批吗？",
-        question_type="reimbursement_rule",
-        stance="support",
-        top_k=5,
-    )
-
-    doc_ids = [h.document_id for h in support]
-    assert "reimbursement_policy_2024" in doc_ids
-    assert all(not h.is_malicious for h in support)
-
-
-def test_hybrid_retriever_current_query_keeps_2026_ahead_of_2024(chunks):
-    service = RetrievalService(chunks)
-
-    support = service.search(
-        "现在打车超过 100 元需要审批吗？",
-        question_type="reimbursement_rule",
-        stance="support",
-        top_k=5,
-    )
-
-    doc_ids = [h.document_id for h in support]
-    assert doc_ids[0] == "reimbursement_policy_2026"
-    if "reimbursement_policy_2024" in doc_ids:
-        assert doc_ids.index("reimbursement_policy_2026") < doc_ids.index(
-            "reimbursement_policy_2024"
-        )
-
-
 def test_hybrid_retriever_quarantines_malicious_by_default(chunks):
     service = RetrievalService(chunks)
     # Benign query → malicious chunk must not appear in either stance.
@@ -549,7 +516,6 @@ def test_repository_search_evidence_has_breakdown_and_strategy(
     assert "metadata" in breakdown
     assert "client_match" in breakdown
     assert "stance" in breakdown
-    assert "temporal" in breakdown
     assert "malicious_penalty" in breakdown
 
 
@@ -642,7 +608,6 @@ def test_repository_breakdown_invariant_at_dict_layer(
             + bd["metadata"]
             + bd["client_match"]
             + bd["stance"]
-            + bd["temporal"]
             + bd["malicious_penalty"]
         )
         assert abs(hit["score"] - round(total, 4)) < 1e-3, hit

@@ -96,9 +96,6 @@ class ScoreBreakdown(BaseModel):
       can attribute "client-aware boost" separately.
     * ``stance`` — stance-driven adjustment (e.g. counter stance
       rewards expired or replaced versions).
-    * ``temporal`` — as-of-date adjustment. Support retrieval boosts
-      documents active at the query date; counter retrieval boosts
-      contrasting inactive versions.
     * ``malicious_penalty`` — negative contribution that drives a
       malicious chunk to 0 in the default safety path.
     """
@@ -110,7 +107,6 @@ class ScoreBreakdown(BaseModel):
     metadata: float = 0.0
     client_match: float = 0.0
     stance: float = 0.0
-    temporal: float = 0.0
     malicious_penalty: float = 0.0
 
     def total(self) -> float:
@@ -124,7 +120,6 @@ class ScoreBreakdown(BaseModel):
             + self.metadata
             + self.client_match
             + self.stance
-            + self.temporal
             + self.malicious_penalty
         )
 
