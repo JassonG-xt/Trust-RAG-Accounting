@@ -260,7 +260,6 @@ def test_document_to_evidence_dict_fills_missing_metadata_safely() -> None:
         "metadata",
         "client_match",
         "stance",
-        "temporal",
         "malicious_penalty",
     ):
         assert bd[key] == 0.0
@@ -282,7 +281,6 @@ def test_round_trip_preserves_breakdown_invariant() -> None:
             "metadata",
             "client_match",
             "stance",
-            "temporal",
             "malicious_penalty",
         )
     )
@@ -437,7 +435,6 @@ def test_runnable_invoke_returns_evidence_dicts(
         "metadata",
         "client_match",
         "stance",
-        "temporal",
         "malicious_penalty",
     ):
         assert key in top["score_breakdown"], f"missing breakdown key: {key}"
@@ -516,7 +513,6 @@ def test_runnable_breakdown_invariant(
                 "metadata",
                 "client_match",
                 "stance",
-                "temporal",
                 "malicious_penalty",
             )
         )
