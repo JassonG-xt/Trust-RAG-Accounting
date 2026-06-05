@@ -162,6 +162,9 @@ def _scored_chunk_to_evidence_dict(
         "content": scored.content,
         "score": scored.score,
         "stance": stance,
+        "is_context_expansion": scored.is_context_expansion,
+        "expanded_from_chunk_id": scored.expanded_from_chunk_id,
+        "expansion_offset": scored.expansion_offset,
         # Phase 3A retrieval explainability
         "score_breakdown": scored.score_breakdown.model_dump(),
         "retrieval_strategy": scored.retrieval_strategy,

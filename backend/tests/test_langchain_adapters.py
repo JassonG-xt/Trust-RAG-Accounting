@@ -44,7 +44,6 @@ from backend.app.services.document_repository import (
     reset_repository,
 )
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_DOCS = PROJECT_ROOT / "sample_docs"
 
@@ -190,6 +189,30 @@ def test_scored_chunk_to_document_carries_parent_document_metadata() -> None:
         assert key in md, f"missing parent-doc metadata key: {key}"
 
 
+def test_scored_chunk_to_document_carries_context_expansion_metadata() -> None:
+    chunk = _make_synthetic_scored_chunk(
+        chunk_id="alpha::chunk_0002",
+        chunk_index=2,
+        score=0.0,
+        score_breakdown=ScoreBreakdown(),
+        retrieval_strategy="context_neighbor",
+        is_context_expansion=True,
+        expanded_from_chunk_id="alpha::chunk_0001",
+        expansion_offset=1,
+    )
+
+    doc = scored_chunk_to_document(chunk)
+    evidence = document_to_evidence_dict(doc, stance="support")
+
+    assert doc.metadata["is_context_expansion"] is True
+    assert doc.metadata["expanded_from_chunk_id"] == "alpha::chunk_0001"
+    assert doc.metadata["expansion_offset"] == 1
+    assert evidence["is_context_expansion"] is True
+    assert evidence["expanded_from_chunk_id"] == "alpha::chunk_0001"
+    assert evidence["expansion_offset"] == 1
+    assert evidence["retrieval_strategy"] == "context_neighbor"
+
+
 def test_document_to_evidence_dict_preserves_content_and_breakdown() -> None:
     chunk = _make_synthetic_scored_chunk()
     doc = scored_chunk_to_document(chunk)
@@ -227,7 +250,7 @@ def test_document_to_evidence_dict_fills_missing_metadata_safely() -> None:
     assert evidence["content"] == "hello"
     assert evidence["score"] == 0.0
     assert evidence["doc_id"] == ""
-    # Breakdown defaults to all-zero across the eight components.
+    # Breakdown defaults to all-zero across the retrieval components.
     bd = evidence["score_breakdown"]
     for key in (
         "keyword",
@@ -403,7 +426,7 @@ def test_runnable_invoke_returns_evidence_dicts(
     assert "score_breakdown" in top
     assert "retrieval_strategy" in top
     assert top["stance"] == "support"
-    # Every eight breakdown components present.
+    # Every breakdown component is present.
     for key in (
         "keyword",
         "bm25",

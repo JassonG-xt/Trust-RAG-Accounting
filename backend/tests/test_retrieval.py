@@ -26,11 +26,9 @@ import pytest
 from backend.app.ingestion.ingest_sample_docs import ingest
 from backend.app.retrieval import (
     BM25Retriever,
-    HybridRetriever,
     KeywordRetriever,
     MetadataFilter,
     RetrievalService,
-    ScoredChunk,
     build_metadata_filter,
     expand_query_terms,
     infer_client_from_query,
@@ -42,7 +40,6 @@ from backend.app.services.document_repository import (
     DocumentRepository,
     reset_repository,
 )
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_DOCS = PROJECT_ROOT / "sample_docs"
@@ -458,6 +455,36 @@ def test_hybrid_retriever_returns_malicious_when_explicitly_requested(chunks):
     assert all(r.score <= 0.25 for r in malicious)
 
 
+def test_retrieval_service_expands_adjacent_chunks_after_top_k(chunks):
+    service = RetrievalService(chunks)
+
+    results = service.search(
+        "Alpha Trading Co. 的餐饮发票应该怎么入账？",
+        stance="support",
+        top_k=1,
+    )
+
+    primary_hits = [r for r in results if not r.is_context_expansion]
+    assert len(primary_hits) == 1
+    primary = primary_hits[0]
+    expected_neighbor_indexes = {
+        c.chunk_index
+        for c in chunks
+        if c.document_id == primary.document_id
+        and abs(c.chunk_index - primary.chunk_index) == 1
+    }
+    context_hits = [r for r in results if r.is_context_expansion]
+
+    assert expected_neighbor_indexes
+    assert len(results) == 1 + len(expected_neighbor_indexes)
+    assert {r.chunk_index for r in context_hits} == expected_neighbor_indexes
+    assert all(r.document_id == primary.document_id for r in context_hits)
+    assert all(r.expanded_from_chunk_id == primary.chunk_id for r in context_hits)
+    assert {r.expansion_offset for r in context_hits} <= {-1, 1}
+    assert all(r.score == 0.0 for r in context_hits)
+    assert all(r.retrieval_strategy == "context_neighbor" for r in context_hits)
+
+
 # ---------------------------------------------------------------------------
 # Group 5 — DocumentRepository integration
 # ---------------------------------------------------------------------------
@@ -515,7 +542,27 @@ def test_repository_search_top_k_overrides_limit(
         top_k=3,
         limit=10,
     )
-    assert len(big) <= 3
+    primary_hits = [h for h in big if not h.get("is_context_expansion", False)]
+    assert len(primary_hits) <= 3
+
+
+def test_repository_search_marks_context_expansion_evidence(
+    repository: DocumentRepository,
+):
+    hits = repository.search(
+        "Alpha Trading Co. 的餐饮发票应该怎么入账？",
+        stance="support",
+        top_k=1,
+    )
+
+    primary_hits = [h for h in hits if not h.get("is_context_expansion", False)]
+    context_hits = [h for h in hits if h.get("is_context_expansion", False)]
+
+    assert len(primary_hits) == 1
+    assert context_hits
+    assert all(h["expanded_from_chunk_id"] == primary_hits[0]["chunk_id"] for h in context_hits)
+    assert {h["expansion_offset"] for h in context_hits} <= {-1, 1}
+    assert all(h["retrieval_strategy"] == "context_neighbor" for h in context_hits)
 
 
 def test_repository_malicious_auto_detect_only_on_injection_query(

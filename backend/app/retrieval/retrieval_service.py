@@ -46,7 +46,7 @@ from .bm25_retriever import BM25Retriever
 from .filters import build_metadata_filter
 from .hybrid_retriever import HybridRetriever
 from .keyword_retriever import KeywordRetriever
-from .models import ScoredChunk
+from .models import ScoreBreakdown, ScoredChunk
 from .vector_retriever import VectorRetriever
 
 logger = logging.getLogger(__name__)
@@ -78,6 +78,9 @@ class RetrievalService:
         reranker: Any | None = None,
     ) -> None:
         self._chunks: list[DocumentChunk] = list(chunks)
+        self._chunk_by_doc_index: dict[tuple[str, int], DocumentChunk] = {
+            (chunk.document_id, chunk.chunk_index): chunk for chunk in self._chunks
+        }
         self._settings = settings or get_settings()
 
         self._keyword = KeywordRetriever(self._chunks)
@@ -170,8 +173,13 @@ class RetrievalService:
         )
 
         if self._reranker is not None:
-            return self._reranker.rerank(query, candidates, top_k=top_k)
-        return candidates[:top_k]
+            ranked = self._reranker.rerank(query, candidates, top_k=top_k)
+        else:
+            ranked = candidates[:top_k]
+        return self._expand_with_context_neighbors(
+            ranked,
+            include_malicious=include_malicious,
+        )
 
     # -- Sub-retriever accessors (tests + ablation) --------------------------
 
@@ -200,6 +208,81 @@ class RetrievalService:
         return list(self._chunks)
 
     # -- Internals -----------------------------------------------------------
+
+    def _expand_with_context_neighbors(
+        self,
+        hits: list[ScoredChunk],
+        *,
+        include_malicious: bool,
+    ) -> list[ScoredChunk]:
+        if not hits:
+            return []
+
+        expanded: list[ScoredChunk] = []
+        seen_chunk_ids: set[str] = set()
+        for hit in hits:
+            if hit.chunk_id in seen_chunk_ids:
+                continue
+            expanded.append(hit)
+            seen_chunk_ids.add(hit.chunk_id)
+
+        context_hits: list[ScoredChunk] = []
+        for hit in hits:
+            for offset in (-1, 1):
+                neighbor = self._chunk_by_doc_index.get(
+                    (hit.document_id, hit.chunk_index + offset)
+                )
+                if neighbor is None:
+                    continue
+                if neighbor.chunk_id in seen_chunk_ids:
+                    continue
+                if neighbor.is_malicious and not include_malicious:
+                    continue
+                context_hits.append(
+                    self._context_neighbor_from_chunk(
+                        neighbor,
+                        expanded_from=hit,
+                        offset=offset,
+                    )
+                )
+                seen_chunk_ids.add(neighbor.chunk_id)
+
+        return [*expanded, *context_hits]
+
+    @staticmethod
+    def _context_neighbor_from_chunk(
+        chunk: DocumentChunk,
+        *,
+        expanded_from: ScoredChunk,
+        offset: int,
+    ) -> ScoredChunk:
+        return ScoredChunk(
+            chunk_id=chunk.chunk_id,
+            document_id=chunk.document_id,
+            content=chunk.content,
+            score=0.0,
+            score_breakdown=ScoreBreakdown(),
+            retrieval_strategy="context_neighbor",
+            title=chunk.title,
+            version=chunk.version,
+            document_type=chunk.document_type,
+            client=chunk.client,
+            policy_family=chunk.policy_family,
+            replaces=chunk.replaces,
+            valid_from=chunk.valid_from,
+            valid_to=chunk.valid_to,
+            section_title=chunk.section_title,
+            page_number=chunk.page_number,
+            source_path=chunk.source_path,
+            risk_type=chunk.risk_type,
+            is_malicious=chunk.is_malicious,
+            chunk_index=chunk.chunk_index,
+            token_estimate=chunk.token_estimate,
+            is_context_expansion=True,
+            expanded_from_chunk_id=expanded_from.chunk_id,
+            expansion_offset=offset,
+            metadata=dict(chunk.metadata),
+        )
 
     def _build_vector_store(self, *, dimension: int) -> VectorStore:
         backend = (self._settings.vector_store or "memory").strip().lower()

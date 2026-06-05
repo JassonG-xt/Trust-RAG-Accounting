@@ -80,6 +80,9 @@ def scored_chunk_to_document(chunk: ScoredChunk) -> Document:
         "score": chunk.score,
         "score_breakdown": chunk.score_breakdown.model_dump(),
         "retrieval_strategy": chunk.retrieval_strategy,
+        "is_context_expansion": chunk.is_context_expansion,
+        "expanded_from_chunk_id": chunk.expanded_from_chunk_id,
+        "expansion_offset": chunk.expansion_offset,
     }
     return Document(page_content=chunk.content, metadata=metadata)
 
@@ -139,6 +142,9 @@ def document_to_evidence_dict(
         "content": document.page_content,
         "score": float(md.get("score", 0.0)),
         "stance": stance,
+        "is_context_expansion": bool(md.get("is_context_expansion", False)),
+        "expanded_from_chunk_id": md.get("expanded_from_chunk_id"),
+        "expansion_offset": md.get("expansion_offset"),
         "score_breakdown": breakdown,
         "retrieval_strategy": md.get("retrieval_strategy"),
     }

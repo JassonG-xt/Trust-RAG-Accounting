@@ -155,4 +155,7 @@ class ScoredChunk(BaseModel):
 
     chunk_index: int = 0
     token_estimate: int = 0
+    is_context_expansion: bool = False
+    expanded_from_chunk_id: str | None = None
+    expansion_offset: int | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
