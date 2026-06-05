@@ -142,6 +142,37 @@ def test_oversize_section_uses_sliding_window():
         assert len(c.content) <= 1100
 
 
+def test_oversize_section_prefers_paragraph_boundaries():
+    para1 = "Paragraph one " + ("A" * 80) + "."
+    para2 = "Paragraph two " + ("B" * 80) + "."
+    para3 = "Paragraph three " + ("C" * 80) + "."
+    doc = _make_doc(content=f"# Long\n\n{para1}\n\n{para2}\n\n{para3}\n")
+
+    chunks = chunk_document(doc, max_chars=140, overlap_chars=0)
+
+    assert len(chunks) == 3
+    assert chunks[0].content.endswith(para1)
+    assert "Paragraph two" not in chunks[0].content
+    assert chunks[1].content == para2
+    assert chunks[2].content == para3
+
+
+def test_oversize_paragraph_prefers_sentence_boundaries():
+    sentence1 = "Sentence one requires manager approval."
+    sentence2 = "Sentence two keeps the reimbursement exception intact."
+    sentence3 = "Sentence three lists the required receipt."
+    doc = _make_doc(
+        content=f"# Long\n\n{sentence1} {sentence2} {sentence3}\n",
+    )
+
+    chunks = chunk_document(doc, max_chars=70, overlap_chars=0)
+
+    assert len(chunks) == 3
+    assert chunks[0].content.endswith(sentence1)
+    assert chunks[1].content == sentence2
+    assert chunks[2].content == sentence3
+
+
 def test_token_estimate_is_non_negative():
     doc = _make_doc(content="# H\n\nSome text.\n")
     for c in chunk_document(doc):

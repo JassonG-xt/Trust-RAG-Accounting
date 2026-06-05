@@ -30,12 +30,16 @@ from .models import (
     make_chunk_id,
 )
 
-
 # ATX heading regex: 1-6 ``#`` followed by whitespace.
 _HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
 
 # Paragraph separator: 2+ newlines.
 _PARAGRAPH_SEP = re.compile(r"\n\s*\n")
+
+# Sentence splitter used only inside oversize paragraphs. It deliberately
+# stays simple and deterministic: sentence-ending punctuation wins, and
+# punctuation-free text falls back to the character window.
+_SENTENCE_PATTERN = re.compile(r"[^.!?。！？]+[.!?。！？]+|[^.!?。！？]+$")
 
 
 def _is_markdown(document: AccountingDocument) -> bool:
@@ -92,6 +96,14 @@ def _split_plain_paragraphs(text: str) -> list[tuple[str | None, str]]:
     return [(None, p) for p in paragraphs if p]
 
 
+def _split_paragraph_text(text: str) -> list[str]:
+    return [p.strip() for p in _PARAGRAPH_SEP.split(text) if p.strip()]
+
+
+def _split_sentences(text: str) -> list[str]:
+    return [m.group(0).strip() for m in _SENTENCE_PATTERN.finditer(text) if m.group(0).strip()]
+
+
 # ---------------------------------------------------------------------------
 # Window splitting (applied per section / per paragraph)
 # ---------------------------------------------------------------------------
@@ -121,6 +133,117 @@ def _window_split(text: str, *, max_chars: int, overlap_chars: int) -> list[str]
             next_start = end
         start = next_start
     return out
+
+
+def _overlap_units(
+    units: list[str],
+    *,
+    joiner: str,
+    overlap_chars: int,
+) -> list[str]:
+    if overlap_chars <= 0:
+        return []
+
+    out: list[str] = []
+    for unit in reversed(units):
+        candidate = [unit, *out]
+        text = joiner.join(candidate)
+        if len(text) > overlap_chars:
+            break
+        out = candidate
+    return out
+
+
+def _split_units(
+    units: list[str],
+    *,
+    joiner: str,
+    max_chars: int,
+    overlap_chars: int,
+    split_oversize,
+) -> list[str]:
+    chunks: list[str] = []
+    current: list[str] = []
+
+    def flush() -> None:
+        if current:
+            chunk = joiner.join(current).strip()
+            if chunk:
+                chunks.append(chunk)
+
+    for unit in units:
+        if len(unit) > max_chars:
+            pieces = split_oversize(unit)
+            if current and pieces:
+                first_candidate = joiner.join([*current, pieces[0]]).strip()
+                if len(first_candidate) <= max_chars:
+                    chunks.append(first_candidate)
+                    chunks.extend(pieces[1:])
+                    current = []
+                    continue
+            flush()
+            chunks.extend(pieces)
+            current = []
+            continue
+
+        candidate_units = [*current, unit]
+        candidate = joiner.join(candidate_units).strip()
+        if not current or len(candidate) <= max_chars:
+            current = candidate_units
+            continue
+
+        flush()
+        current = _overlap_units(
+            current,
+            joiner=joiner,
+            overlap_chars=overlap_chars,
+        )
+        while current and len(joiner.join([*current, unit]).strip()) > max_chars:
+            current = current[1:]
+        current.append(unit)
+
+    flush()
+    return chunks
+
+
+def _semantic_split(text: str, *, max_chars: int, overlap_chars: int) -> list[str]:
+    """Split oversize text on paragraph/sentence boundaries before windows."""
+
+    text = text.strip()
+    if not text:
+        return []
+    if len(text) <= max_chars:
+        return [text]
+
+    paragraphs = _split_paragraph_text(text)
+    if len(paragraphs) > 1:
+        return _split_units(
+            paragraphs,
+            joiner="\n\n",
+            max_chars=max_chars,
+            overlap_chars=overlap_chars,
+            split_oversize=lambda paragraph: _semantic_split(
+                paragraph,
+                max_chars=max_chars,
+                overlap_chars=overlap_chars,
+            ),
+        )
+
+    sentences = _split_sentences(text)
+    if len(sentences) > 1:
+        return _split_units(
+            sentences,
+            joiner=" ",
+            max_chars=max_chars,
+            overlap_chars=overlap_chars,
+            split_oversize=lambda sentence: _window_split(
+                sentence,
+                max_chars=max_chars,
+                overlap_chars=overlap_chars,
+            ),
+        )
+
+    return _window_split(text, max_chars=max_chars, overlap_chars=overlap_chars)
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +283,7 @@ def chunk_document(
     chunks: list[DocumentChunk] = []
     index = 0
     for section_title, body in sections:
-        pieces = _window_split(body, max_chars=max_chars, overlap_chars=overlap_chars)
+        pieces = _semantic_split(body, max_chars=max_chars, overlap_chars=overlap_chars)
         for piece in pieces:
             metadata = {
                 "section_title": section_title,

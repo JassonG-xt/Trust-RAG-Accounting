@@ -26,11 +26,9 @@ import pytest
 from backend.app.ingestion.ingest_sample_docs import ingest
 from backend.app.retrieval import (
     BM25Retriever,
-    HybridRetriever,
     KeywordRetriever,
     MetadataFilter,
     RetrievalService,
-    ScoredChunk,
     build_metadata_filter,
     expand_query_terms,
     infer_client_from_query,
@@ -42,7 +40,6 @@ from backend.app.services.document_repository import (
     DocumentRepository,
     reset_repository,
 )
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_DOCS = PROJECT_ROOT / "sample_docs"
@@ -432,6 +429,39 @@ def test_hybrid_retriever_reimbursement_support_counter(chunks):
     assert "reimbursement_policy_2024" in counter_ids
 
 
+def test_hybrid_retriever_support_surfaces_historical_policy_for_2024_query(chunks):
+    service = RetrievalService(chunks)
+
+    support = service.search(
+        "2024 年打车 150 元需要审批吗？",
+        question_type="reimbursement_rule",
+        stance="support",
+        top_k=5,
+    )
+
+    doc_ids = [h.document_id for h in support]
+    assert "reimbursement_policy_2024" in doc_ids
+    assert all(not h.is_malicious for h in support)
+
+
+def test_hybrid_retriever_current_query_keeps_2026_ahead_of_2024(chunks):
+    service = RetrievalService(chunks)
+
+    support = service.search(
+        "现在打车超过 100 元需要审批吗？",
+        question_type="reimbursement_rule",
+        stance="support",
+        top_k=5,
+    )
+
+    doc_ids = [h.document_id for h in support]
+    assert doc_ids[0] == "reimbursement_policy_2026"
+    if "reimbursement_policy_2024" in doc_ids:
+        assert doc_ids.index("reimbursement_policy_2026") < doc_ids.index(
+            "reimbursement_policy_2024"
+        )
+
+
 def test_hybrid_retriever_quarantines_malicious_by_default(chunks):
     service = RetrievalService(chunks)
     # Benign query → malicious chunk must not appear in either stance.
@@ -456,6 +486,36 @@ def test_hybrid_retriever_returns_malicious_when_explicitly_requested(chunks):
     # But its score must remain capped (well below 1.0).
     malicious = [r for r in results if r.is_malicious]
     assert all(r.score <= 0.25 for r in malicious)
+
+
+def test_retrieval_service_expands_adjacent_chunks_after_top_k(chunks):
+    service = RetrievalService(chunks)
+
+    results = service.search(
+        "Alpha Trading Co. 的餐饮发票应该怎么入账？",
+        stance="support",
+        top_k=1,
+    )
+
+    primary_hits = [r for r in results if not r.is_context_expansion]
+    assert len(primary_hits) == 1
+    primary = primary_hits[0]
+    expected_neighbor_indexes = {
+        c.chunk_index
+        for c in chunks
+        if c.document_id == primary.document_id
+        and abs(c.chunk_index - primary.chunk_index) == 1
+    }
+    context_hits = [r for r in results if r.is_context_expansion]
+
+    assert expected_neighbor_indexes
+    assert len(results) == 1 + len(expected_neighbor_indexes)
+    assert {r.chunk_index for r in context_hits} == expected_neighbor_indexes
+    assert all(r.document_id == primary.document_id for r in context_hits)
+    assert all(r.expanded_from_chunk_id == primary.chunk_id for r in context_hits)
+    assert {r.expansion_offset for r in context_hits} <= {-1, 1}
+    assert all(r.score == 0.0 for r in context_hits)
+    assert all(r.retrieval_strategy == "context_neighbor" for r in context_hits)
 
 
 # ---------------------------------------------------------------------------
@@ -489,6 +549,7 @@ def test_repository_search_evidence_has_breakdown_and_strategy(
     assert "metadata" in breakdown
     assert "client_match" in breakdown
     assert "stance" in breakdown
+    assert "temporal" in breakdown
     assert "malicious_penalty" in breakdown
 
 
@@ -515,7 +576,27 @@ def test_repository_search_top_k_overrides_limit(
         top_k=3,
         limit=10,
     )
-    assert len(big) <= 3
+    primary_hits = [h for h in big if not h.get("is_context_expansion", False)]
+    assert len(primary_hits) <= 3
+
+
+def test_repository_search_marks_context_expansion_evidence(
+    repository: DocumentRepository,
+):
+    hits = repository.search(
+        "Alpha Trading Co. 的餐饮发票应该怎么入账？",
+        stance="support",
+        top_k=1,
+    )
+
+    primary_hits = [h for h in hits if not h.get("is_context_expansion", False)]
+    context_hits = [h for h in hits if h.get("is_context_expansion", False)]
+
+    assert len(primary_hits) == 1
+    assert context_hits
+    assert all(h["expanded_from_chunk_id"] == primary_hits[0]["chunk_id"] for h in context_hits)
+    assert {h["expansion_offset"] for h in context_hits} <= {-1, 1}
+    assert all(h["retrieval_strategy"] == "context_neighbor" for h in context_hits)
 
 
 def test_repository_malicious_auto_detect_only_on_injection_query(
@@ -561,6 +642,7 @@ def test_repository_breakdown_invariant_at_dict_layer(
             + bd["metadata"]
             + bd["client_match"]
             + bd["stance"]
+            + bd["temporal"]
             + bd["malicious_penalty"]
         )
         assert abs(hit["score"] - round(total, 4)) < 1e-3, hit
