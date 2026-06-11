@@ -123,3 +123,26 @@ def test_behavior_confusion_computes_abstention_precision_recall():
 def test_faithfulness_metrics_tuple_exposes_both_metrics():
     names = {m.__name__ for m in FAITHFULNESS_METRICS}
     assert names == {"metric_groundedness", "metric_behavior"}
+
+
+from pathlib import Path
+from backend.app.evals.models import load_cases_file
+
+_FAITHFULNESS_CASES = (
+    Path(__file__).resolve().parents[1]
+    / "app" / "evals" / "cases" / "faithfulness_adversarial_cases.json"
+)
+
+
+def test_adversarial_cases_load_and_cover_all_modes():
+    cases = load_cases_file(_FAITHFULNESS_CASES)
+    assert len(cases) >= 12
+    modes = {c.category for c in cases}
+    assert {"no_evidence", "stale_policy", "conflict", "cross_client", "control"} <= modes
+
+
+def test_adversarial_cases_each_assert_a_behavior():
+    cases = load_cases_file(_FAITHFULNESS_CASES)
+    # Every adversarial case must pin an expected_behavior — that is the
+    # whole point of the set. (Controls pin "answer".)
+    assert all(c.expectation.expected_behavior is not None for c in cases)
