@@ -146,3 +146,47 @@ def test_adversarial_cases_each_assert_a_behavior():
     # Every adversarial case must pin an expected_behavior — that is the
     # whole point of the set. (Controls pin "answer".)
     assert all(c.expectation.expected_behavior is not None for c in cases)
+
+
+from backend.app.evals.faithfulness_runner import run_faithfulness_suite
+
+
+def _stub_query_fn(question: str) -> dict:
+    # Deterministic stub: abstains on "mileage", answers the Alpha control
+    # with a grounded claim, else answers with an ungrounded claim.
+    if "mileage" in question.lower():
+        return {
+            "answer": "",
+            "support_evidence": [],
+            "judge_verdict": {"conclusion": "insufficient_evidence"},
+            "needs_human_review": False,
+        }
+    if "two artefacts" in question.lower():
+        return {
+            "answer": "Alpha Trading requires a valid invoice and a signed client visit note.",
+            "support_evidence": [
+                {"content": "Two artefacts are required: a valid invoice and a signed client visit note.",
+                 "is_malicious": False}
+            ],
+            "judge_verdict": {"conclusion": "answerable"},
+            "needs_human_review": False,
+        }
+    return {
+        "answer": "Some unsupported claim about reimbursement amounts here.",
+        "support_evidence": [{"content": "unrelated text", "is_malicious": False}],
+        "judge_verdict": {"conclusion": "answerable"},
+        "needs_human_review": False,
+    }
+
+
+def test_run_faithfulness_suite_produces_composite_and_by_mode():
+    summary = run_faithfulness_suite(query_fn=_stub_query_fn)
+    # Composite faithfulness in [0, 1].
+    assert 0.0 <= summary["composite_groundedness"] <= 1.0
+    # 2-D table keyed by failure mode.
+    assert "no_evidence" in summary["by_mode"]
+    assert "control" in summary["by_mode"]
+    # Abstention recall present (the anti-gaming guard).
+    assert "abstain" in summary["behavior_confusion"]
+    # The mileage no_evidence case should have abstained correctly.
+    assert summary["behavior_confusion"]["abstain"]["recall"] > 0.0
