@@ -73,6 +73,10 @@ class EvalExpectation(BaseModel):
     expect_temporal_conflict: bool | None = None
     expect_evidence_conflict: bool | None = None
 
+    # Faithfulness expectations (Phase 1 — answer-level grounding eval)
+    gold_supported_claims: list[str] = Field(default_factory=list)
+    expected_behavior: Literal["answer", "abstain", "escalate", "refuse"] | None = None
+
 
 # ---------------------------------------------------------------------------
 # Eval case
