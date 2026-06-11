@@ -1,0 +1,56 @@
+{
+  "version": "1.0",
+  "description": "Hand-labeled claim/evidence grounding pairs for judge calibration. Evidence strings are drawn verbatim (markdown stripped) from sample_docs/. Used to report Cohen's kappa between the deterministic overlap judge and human judgment.",
+  "labels": [
+    {
+      "claim": "Taxi expenses over 100 RMB require direct manager approval",
+      "evidence": ["Taxi expenses over 100 RMB require direct manager approval. Submit the original invoice, the trip purpose, and the manager's approval note within 14 days of travel."],
+      "human_grounded": true
+    },
+    {
+      "claim": "Hotel expenses over 200 RMB per night require a signed travel approval form",
+      "evidence": ["Hotel expenses over 200 RMB per night require both an invoice and a signed travel approval form. Stays below the threshold can be reimbursed with the invoice alone."],
+      "human_grounded": true
+    },
+    {
+      "claim": "Alpha Trading requires a valid invoice and a signed client visit note",
+      "evidence": ["Two artefacts are required before the entry is booked: a valid invoice matching the firm-name and tax-id requirements, and a signed client visit note describing the date, the attendees, and the business purpose of the meal."],
+      "human_grounded": true
+    },
+    {
+      "claim": "Bank statements are required for every operating account",
+      "evidence": ["Bank statements — every operating account, full month."],
+      "human_grounded": true
+    },
+    {
+      "claim": "Taxi expenses under 200 RMB can be reimbursed without manager approval",
+      "evidence": ["Taxi expenses under 200 RMB can be reimbursed without manager approval. Submit the original invoice and the trip purpose within 30 days of travel."],
+      "human_grounded": true
+    },
+    {
+      "claim": "Beta Catering delivery invoices without a clear service description must be flagged for manual review",
+      "evidence": ["Delivery service invoices without a clear service description should be flagged for manual review before bookkeeping."],
+      "human_grounded": true
+    },
+    {
+      "claim": "The mileage rate is 5 RMB per kilometre",
+      "evidence": ["Taxi expenses over 100 RMB require direct manager approval."],
+      "human_grounded": false
+    },
+    {
+      "claim": "Cryptocurrency purchases are reimbursable up to 1000 RMB",
+      "evidence": ["Taxi expenses under 200 RMB can be reimbursed without manager approval."],
+      "human_grounded": false
+    },
+    {
+      "claim": "Alpha Trading meals are capped at 50 USD per day",
+      "evidence": ["Meal invoices submitted for client entertainment should be recorded under business entertainment expenses."],
+      "human_grounded": false
+    },
+    {
+      "claim": "Hotel stays require a passport copy and a visa",
+      "evidence": ["Hotel expenses over 200 RMB per night require both an invoice and a signed travel approval form."],
+      "human_grounded": false
+    }
+  ]
+}
