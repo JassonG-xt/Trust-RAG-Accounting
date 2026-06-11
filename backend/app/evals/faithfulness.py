@@ -83,3 +83,72 @@ def claim_is_grounded(
 
     grounded = best_overlap >= threshold
     return (grounded, round(best_overlap, 4), best_idx if grounded else -1)
+
+
+def evidence_texts_from_response(response: dict) -> list[str]:
+    """Extract clean (non-malicious) support-evidence texts from a
+    workflow response. Mirrors the answer_generator's filter so the
+    eval sees exactly what the answer was allowed to ground against.
+    """
+    out: list[str] = []
+    for e in response.get("support_evidence") or []:
+        if not isinstance(e, dict) or e.get("is_malicious"):
+            continue
+        content = e.get("content")
+        if content:
+            out.append(content)
+    return out
+
+
+def groundedness_report(
+    answer: str, evidence_texts: list[str], *, threshold: float = 0.5
+) -> dict:
+    """Per-claim grounding report for an answer.
+
+    ``score`` = grounded_claims / total_claims. An answer with no claims
+    scores 1.0 (nothing is unsupported) — which is why the suite pairs
+    this with abstention_recall (see faithfulness_metrics).
+    """
+    claims = extract_claims(answer)
+    claim_rows: list[dict] = []
+    grounded_count = 0
+    for claim in claims:
+        grounded, overlap, idx = claim_is_grounded(
+            claim, evidence_texts, threshold=threshold
+        )
+        if grounded:
+            grounded_count += 1
+        claim_rows.append(
+            {
+                "claim": claim,
+                "grounded": grounded,
+                "overlap": overlap,
+                "evidence_index": idx,
+            }
+        )
+    total = len(claims)
+    score = 1.0 if total == 0 else round(grounded_count / total, 4)
+    return {
+        "total_claims": total,
+        "grounded_claims": grounded_count,
+        "score": score,
+        "claims": claim_rows,
+    }
+
+
+def observed_behavior(response: dict) -> str:
+    """Classify the system's behavior into one of:
+    ``refuse`` / ``abstain`` / ``escalate`` / ``answer``.
+
+    Priority order matters: refusal and abstention are terminal verdicts
+    from the judge; escalation is a routing outcome layered on an
+    otherwise-answerable verdict; answer is the residual.
+    """
+    verdict = (response.get("judge_verdict") or {}).get("conclusion")
+    if verdict == "refuse_unsafe":
+        return "refuse"
+    if verdict == "insufficient_evidence":
+        return "abstain"
+    if response.get("needs_human_review") or response.get("human_review_required"):
+        return "escalate"
+    return "answer"
