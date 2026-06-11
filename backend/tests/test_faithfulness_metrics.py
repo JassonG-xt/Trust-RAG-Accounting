@@ -22,3 +22,104 @@ def test_expectation_rejects_unknown_behavior():
 
     with pytest.raises(ValidationError):
         EvalExpectation(expected_behavior="explode")
+
+
+from backend.app.evals.faithfulness_metrics import (
+    metric_groundedness,
+    metric_behavior,
+    behavior_confusion,
+    FAITHFULNESS_METRICS,
+)
+from backend.app.evals.models import EvalCaseResult, MetricResult
+
+
+def _resp(answer, evidence, verdict="answerable", review=False):
+    return {
+        "answer": answer,
+        "support_evidence": [{"content": e, "is_malicious": False} for e in evidence],
+        "judge_verdict": {"conclusion": verdict},
+        "needs_human_review": review,
+    }
+
+
+def test_metric_groundedness_passes_when_all_claims_supported():
+    resp = _resp(
+        "The meal cap is 50 USD.",
+        ["Meal reimbursement is capped at 50 USD per day."],
+    )
+    exp = EvalExpectation(gold_supported_claims=["meal cap"])
+    result = metric_groundedness(resp, exp)
+    assert result.passed is True
+    assert result.score == 1.0
+
+
+def test_metric_groundedness_fails_on_unsupported_claim():
+    resp = _resp(
+        "The mileage rate is 0.65 USD per mile.",
+        ["Meal reimbursement is capped at 50 USD per day."],
+    )
+    exp = EvalExpectation(gold_supported_claims=["mileage"])
+    result = metric_groundedness(resp, exp)
+    assert result.passed is False
+    assert result.score == 0.0
+
+
+def test_metric_groundedness_skipped_when_no_gold_claims():
+    resp = _resp("Anything.", ["evidence"])
+    result = metric_groundedness(resp, EvalExpectation())
+    assert result.skipped is True
+
+
+def test_metric_behavior_passes_on_match():
+    resp = _resp("x", ["y"], verdict="insufficient_evidence")
+    exp = EvalExpectation(expected_behavior="abstain")
+    result = metric_behavior(resp, exp)
+    assert result.passed is True
+
+
+def test_metric_behavior_fails_on_mismatch():
+    resp = _resp("x", ["y"], verdict="answerable")
+    exp = EvalExpectation(expected_behavior="abstain")
+    result = metric_behavior(resp, exp)
+    assert result.passed is False
+    assert result.details["observed"] == "answer"
+
+
+def test_behavior_confusion_computes_abstention_precision_recall():
+    # 2 cases that SHOULD abstain: one did (TP), one answered (FN).
+    # 1 case that should answer but abstained (FP).
+    results = [
+        EvalCaseResult(
+            case_id="a", category="no_evidence", status="active", question="q",
+            passed=True, score=1.0,
+            metrics=[MetricResult(
+                name="behavior", passed=True, score=1.0,
+                details={"expected": "abstain", "observed": "abstain"},
+            )],
+        ),
+        EvalCaseResult(
+            case_id="b", category="no_evidence", status="active", question="q",
+            passed=False, score=0.0,
+            metrics=[MetricResult(
+                name="behavior", passed=False, score=0.0,
+                details={"expected": "abstain", "observed": "answer"},
+            )],
+        ),
+        EvalCaseResult(
+            case_id="c", category="control", status="active", question="q",
+            passed=False, score=0.0,
+            metrics=[MetricResult(
+                name="behavior", passed=False, score=0.0,
+                details={"expected": "answer", "observed": "abstain"},
+            )],
+        ),
+    ]
+    conf = behavior_confusion(results)
+    # abstain: TP=1, FP=1, FN=1 => precision=0.5, recall=0.5
+    assert conf["abstain"]["precision"] == 0.5
+    assert conf["abstain"]["recall"] == 0.5
+
+
+def test_faithfulness_metrics_tuple_exposes_both_metrics():
+    names = {m.__name__ for m in FAITHFULNESS_METRICS}
+    assert names == {"metric_groundedness", "metric_behavior"}
