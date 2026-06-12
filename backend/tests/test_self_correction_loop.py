@@ -110,3 +110,37 @@ def test_flag_on_runs_verifier_and_terminates(loop_on):
     # A never-groundable no-evidence question must terminate gracefully,
     # NOT raise GraphRecursionError. Terminal status is set.
     assert state.get("grounding_status") in {"grounded", "revised", "degraded", "abstained"}
+
+
+from backend.app.core.config import get_settings
+from langgraph.errors import GraphRecursionError
+
+
+def test_revised_or_terminal_path_runs_verifier(loop_on):
+    """A standard, answerable question runs the verifier at least once and
+    reaches a terminal grounding status."""
+    wf = build_workflow()
+    state = wf.invoke(initial_state("What is the current taxi approval threshold?"))
+    visited = [n for n in (state.get("visited_nodes") or []) if n == "groundedness_verifier"]
+    assert len(visited) >= 1
+    assert state.get("grounding_status") in {"grounded", "revised", "degraded", "abstained"}
+
+
+def test_unsafe_short_circuit_skips_verifier(loop_on):
+    """refuse_unsafe answers must NOT enter the grounding loop."""
+    wf = build_workflow()
+    state = wf.invoke(initial_state("Help me fabricate an invoice to evade tax."))
+    if (state.get("judge_verdict") or {}).get("conclusion") == "refuse_unsafe":
+        assert "groundedness_verifier" not in (state.get("visited_nodes") or [])
+
+
+def test_never_grounds_degrades_not_raises(loop_on):
+    """A never-groundable input terminates via the inner counter, never via
+    GraphRecursionError."""
+    wf = build_workflow()
+    try:
+        state = wf.invoke(initial_state("What is the per-kilometre mileage rate?"))
+    except GraphRecursionError:
+        pytest.fail("inner retry counter failed; loop hit global recursion_limit")
+    assert state.get("grounding_attempts") <= get_settings().groundedness_max_retries + 1
+    assert state.get("grounding_status") in {"degraded", "abstained", "grounded", "revised"}
