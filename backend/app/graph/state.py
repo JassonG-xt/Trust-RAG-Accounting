@@ -81,6 +81,16 @@ class TrustRAGState(TypedDict, total=False):
     # the answer_generator node's return key.
     generation_metadata: dict | None
 
+    # Phase 3 — groundedness self-correction loop.
+    # grounding_attempts uses the DEFAULT (overwrite) reducer, NOT operator.add
+    # — the verifier writes the incremented value each pass; summing would
+    # break the retry gate.
+    answer_claims: list[dict]
+    grounding_report: dict | None
+    grounding_attempts: int
+    grounding_critique: str | None
+    grounding_status: str | None
+
     # Phase 5B — human review handoff.
     # ``human_review_required`` mirrors ``needs_human_review`` semantically
     # but is written ONLY by ``human_review_handoff``, so a test reader
@@ -123,6 +133,11 @@ def initial_state(question: str) -> TrustRAGState:
         citations=[],
         needs_human_review=False,
         generation_metadata=None,
+        answer_claims=[],
+        grounding_report=None,
+        grounding_attempts=0,
+        grounding_critique=None,
+        grounding_status=None,
         human_review_required=False,
         human_review_reasons=[],
         review_queue_id=None,

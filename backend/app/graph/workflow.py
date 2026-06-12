@@ -48,6 +48,7 @@ from .nodes import (
     claim_decomposer,
     conflict_detector,
     counter_retriever,
+    groundedness_verifier,
     human_review_handoff,
     judge_agent,
     query_analyzer,
@@ -67,6 +68,10 @@ _UNSAFE_BRANCH = "unsafe_fast_path"
 _STANDARD_BRANCH = "standard_rag"
 _REVIEW_BRANCH = "human_review_handoff"
 _DIRECT_BRANCH = "answer_directly"
+_REGENERATE_BRANCH = "regenerate"
+_GROUNDING_DONE_BRANCH = "grounding_done"
+_SKIP_GROUNDING_BRANCH = "skip_grounding"
+_VERIFY_BRANCH = "verify"
 
 
 def route_after_query_analysis(state: TrustRAGState) -> str:
@@ -103,6 +108,30 @@ def route_after_judge(state: TrustRAGState) -> str:
         return _DIRECT_BRANCH
     should, _ = should_handoff_for_review(state)
     return _REVIEW_BRANCH if should else _DIRECT_BRANCH
+
+
+def route_after_grounding(state: TrustRAGState) -> str:
+    """Phase 3 conditional edge.
+
+    Pure reader of ``grounding_status``. A terminal status
+    (grounded / revised / degraded / abstained) ends the loop; ``None``
+    means the verifier asked for another generation.
+    """
+    return _GROUNDING_DONE_BRANCH if state.get("grounding_status") else _REGENERATE_BRANCH
+
+
+def route_after_answer(state: TrustRAGState) -> str:
+    """Phase 3 conditional edge AFTER answer_generator.
+
+    Unsafe refusals carry no groundable factual claims — sending a refusal
+    message through the verifier would flag its sentences as "ungrounded"
+    and the loop would strip the refusal. So ``refuse_unsafe`` skips the
+    loop and goes straight to END; every other answer enters the verifier.
+    """
+    conclusion = (state.get("judge_verdict") or {}).get("conclusion")
+    if conclusion == "refuse_unsafe":
+        return _SKIP_GROUNDING_BRANCH
+    return _VERIFY_BRANCH
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +194,32 @@ def build_workflow():
     )
     # Both review and direct branches converge on answer_generator.
     graph.add_edge("human_review_handoff", "answer_generator")
-    graph.add_edge("answer_generator", END)
+
+    # Phase 3 — groundedness self-correction loop, behind a default-OFF flag.
+    # When disabled the graph is byte-identical to Phase 5B (answer_generator
+    # -> END). When enabled, answer_generator routes through the verifier
+    # (except unsafe refusals, which skip straight to END), and the verifier
+    # either ends the loop or sends a critique back for regeneration.
+    if get_settings().enable_groundedness_self_correction:
+        graph.add_node("groundedness_verifier", groundedness_verifier)
+        graph.add_conditional_edges(
+            "answer_generator",
+            route_after_answer,
+            {
+                _SKIP_GROUNDING_BRANCH: END,
+                _VERIFY_BRANCH: "groundedness_verifier",
+            },
+        )
+        graph.add_conditional_edges(
+            "groundedness_verifier",
+            route_after_grounding,
+            {
+                _REGENERATE_BRANCH: "answer_generator",
+                _GROUNDING_DONE_BRANCH: END,
+            },
+        )
+    else:
+        graph.add_edge("answer_generator", END)
 
     return graph.compile()
 

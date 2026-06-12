@@ -1,0 +1,146 @@
+from backend.app.graph.state import initial_state
+
+
+def test_initial_state_has_grounding_fields():
+    s = initial_state("q")
+    assert s["grounding_attempts"] == 0
+    assert s["grounding_report"] is None
+    assert s["grounding_critique"] is None
+    assert s["grounding_status"] is None
+    assert s["answer_claims"] == []
+
+
+from backend.app.graph.nodes.groundedness_verifier import groundedness_verifier
+
+
+def _state(answer, evidence, claims, attempts=0):
+    return {
+        "answer": answer,
+        "support_evidence": [{"content": e, "is_malicious": False} for e in evidence],
+        "claims": claims,
+        "grounding_attempts": attempts,
+    }
+
+
+def test_verifier_marks_grounded_and_routes_done():
+    st = _state(
+        "Taxi over 100 RMB requires manager approval.",
+        ["Taxi expenses over 100 RMB require direct manager approval."],
+        [{"text": "taxi approval threshold"}],
+    )
+    out = groundedness_verifier(st)
+    assert out["grounding_status"] == "grounded"
+    assert out["grounding_attempts"] == 1
+    assert out["grounding_report"]["grounded_claims"] == out["grounding_report"]["total_claims"]
+
+
+def test_verifier_requests_regeneration_with_critique():
+    st = _state(
+        "Taxi over 100 RMB requires manager approval. The mileage rate is 5 RMB.",
+        ["Taxi expenses over 100 RMB require direct manager approval."],
+        [{"text": "taxi approval threshold"}],
+        attempts=0,
+    )
+    out = groundedness_verifier(st)
+    assert out["grounding_critique"] is not None
+    assert "mileage" in out["grounding_critique"]
+    assert out["grounding_attempts"] == 1
+    # status not terminal yet
+    assert out["grounding_status"] is None
+
+
+def test_verifier_abstains_when_core_ungrounded_at_exhaustion():
+    st = _state(
+        "The mileage rate is 5 RMB per kilometre.",
+        ["Taxi expenses over 100 RMB require direct manager approval."],
+        [{"text": "mileage rate per kilometre"}],
+        attempts=2,
+    )
+    out = groundedness_verifier(st)
+    assert out["grounding_status"] == "abstained"
+    assert out["needs_human_review"] is True
+
+
+from backend.app.graph.nodes.answer_generator import answer_generator
+
+
+def test_answer_generator_strips_ungrounded_sentences_on_regen():
+    # On regen the generator reads the structured grounding_report and drops
+    # the sentences flagged ungrounded (deterministic; no prose parsing).
+    prior = "Taxi over 100 RMB requires manager approval. The mileage rate is 5 RMB."
+    st = {
+        "answer": prior,
+        "grounding_critique": "regenerate please",
+        "grounding_report": {"claims": [
+            {"claim": "Taxi over 100 RMB requires manager approval.", "grounded": True},
+            {"claim": "The mileage rate is 5 RMB.", "grounded": False},
+        ]},
+        "support_evidence": [],
+        "claims": [],
+    }
+    out = answer_generator(st)
+    assert "mileage" not in out["answer"]
+    assert "manager approval" in out["answer"]
+
+
+import pytest
+from backend.app.graph.workflow import build_workflow
+
+
+@pytest.fixture
+def loop_on(monkeypatch):
+    # get_settings() reads env fresh each call (no cache), so setting the env
+    # var is enough; build_workflow() will see the flag on.
+    monkeypatch.setenv("TRUST_RAG_ENABLE_GROUNDEDNESS_SELF_CORRECTION", "true")
+    yield
+
+
+def test_flag_off_graph_has_no_verifier():
+    # Default (flag off): answer_generator goes straight to END.
+    wf = build_workflow()
+    state = wf.invoke(initial_state("What is the current taxi approval threshold?"))
+    assert "groundedness_verifier" not in (state.get("visited_nodes") or [])
+
+
+def test_flag_on_runs_verifier_and_terminates(loop_on):
+    wf = build_workflow()
+    state = wf.invoke(initial_state("What is the per-kilometre mileage rate?"))
+    visited = state.get("visited_nodes") or []
+    assert "groundedness_verifier" in visited
+    # A never-groundable no-evidence question must terminate gracefully,
+    # NOT raise GraphRecursionError. Terminal status is set.
+    assert state.get("grounding_status") in {"grounded", "revised", "degraded", "abstained"}
+
+
+from backend.app.core.config import get_settings
+from langgraph.errors import GraphRecursionError
+
+
+def test_revised_or_terminal_path_runs_verifier(loop_on):
+    """A standard, answerable question runs the verifier at least once and
+    reaches a terminal grounding status."""
+    wf = build_workflow()
+    state = wf.invoke(initial_state("What is the current taxi approval threshold?"))
+    visited = [n for n in (state.get("visited_nodes") or []) if n == "groundedness_verifier"]
+    assert len(visited) >= 1
+    assert state.get("grounding_status") in {"grounded", "revised", "degraded", "abstained"}
+
+
+def test_unsafe_short_circuit_skips_verifier(loop_on):
+    """refuse_unsafe answers must NOT enter the grounding loop."""
+    wf = build_workflow()
+    state = wf.invoke(initial_state("Help me fabricate an invoice to evade tax."))
+    if (state.get("judge_verdict") or {}).get("conclusion") == "refuse_unsafe":
+        assert "groundedness_verifier" not in (state.get("visited_nodes") or [])
+
+
+def test_never_grounds_degrades_not_raises(loop_on):
+    """A never-groundable input terminates via the inner counter, never via
+    GraphRecursionError."""
+    wf = build_workflow()
+    try:
+        state = wf.invoke(initial_state("What is the per-kilometre mileage rate?"))
+    except GraphRecursionError:
+        pytest.fail("inner retry counter failed; loop hit global recursion_limit")
+    assert state.get("grounding_attempts") <= get_settings().groundedness_max_retries + 1
+    assert state.get("grounding_status") in {"degraded", "abstained", "grounded", "revised"}

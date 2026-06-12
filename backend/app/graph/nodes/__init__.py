@@ -9,6 +9,7 @@ from .answer_generator import answer_generator
 from .claim_decomposer import claim_decomposer
 from .conflict_detector import conflict_detector
 from .counter_retriever import counter_retriever
+from .groundedness_verifier import groundedness_verifier
 from .human_review_handoff import human_review_handoff
 from .judge_agent import judge_agent
 from .query_analyzer import query_analyzer
@@ -21,6 +22,7 @@ __all__ = [
     "claim_decomposer",
     "conflict_detector",
     "counter_retriever",
+    "groundedness_verifier",
     "human_review_handoff",
     "judge_agent",
     "query_analyzer",
