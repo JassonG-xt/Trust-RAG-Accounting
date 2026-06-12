@@ -92,3 +92,49 @@ ablation should confirm their marginal contribution and NOT regress them.
 
 Each target is a measurable before→after the self-correction loop will be
 graded against.
+
+---
+
+## After self-correction (Phase 3)
+
+Self-correction loop ON (`TRUST_RAG_ENABLE_GROUNDEDNESS_SELF_CORRECTION=true`),
+`groundedness_max_retries=2`, threshold `0.5`. Reproduce:
+`python scripts/run_faithfulness_comparison.py`.
+
+| Metric | Before (loop off) | After (loop on) | Δ |
+|---|---|---|---|
+| Composite groundedness (control) | 0.4288 | **1.0000** | **+0.57** |
+| Abstain recall (no-evidence) | 0.0 | 0.0 | — |
+| Escalate recall | 0.625 | 0.625 | — |
+| no_evidence behavior acc | 0.0 | 0.0 | — |
+| stale_policy behavior acc | 1.0 | 1.0 | — (no regression) |
+| conflict behavior acc | 1.0 | 1.0 | — (no regression) |
+| cross_client behavior acc | 0.0 | 0.0 | — |
+| control behavior acc | 0.333 | 0.333 | — |
+
+### What the loop fixed (F3)
+
+Composite groundedness rose from **0.43 → 1.0**. The verifier flags the
+template generator's unsupported framing sentences ("based on …", temporal
+notes), the critique-aware regeneration strips exactly those, and the
+re-verify finds every remaining claim grounded (status `revised`, attempts
+2). Verified NOT gaming-by-emptying: control answers stay substantive
+(173–523 chars) and retain their grounded policy content (taxi approval rule,
+meal artefacts, bank statements).
+
+### What the loop did NOT fix — and why (honest scope)
+
+Abstain recall on no-evidence questions stayed **0.0**, and cross_client
+behavior stayed **0.0**. This is expected and informative: those failures are
+**retrieval-relevance** problems, not answer-grounding problems. Asked for the
+per-km mileage rate, the pipeline retrieves the *nearest* doc (hotel policy)
+and answers from it; the answer's claims genuinely echo that retrieved text,
+so the groundedness check — which asks "are the answer's claims supported by
+the retrieved evidence?" — correctly sees them as grounded. The missing gate
+is **"is the retrieved evidence relevant to the question?"**, which the
+self-correction loop is not designed to enforce.
+
+**Takeaway:** the loop is a real, measured win on faithfulness-to-evidence
+(0.43→1.0) with zero regression on the temporal/conflict machinery. Closing
+the no-evidence/cross-client behavior gap needs a separate query↔evidence
+relevance gate (a candidate for a future phase), not more reflexion.
