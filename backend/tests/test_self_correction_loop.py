@@ -81,3 +81,32 @@ def test_answer_generator_strips_ungrounded_sentences_on_regen():
     out = answer_generator(st)
     assert "mileage" not in out["answer"]
     assert "manager approval" in out["answer"]
+
+
+import pytest
+from backend.app.graph.workflow import build_workflow
+
+
+@pytest.fixture
+def loop_on(monkeypatch):
+    # get_settings() reads env fresh each call (no cache), so setting the env
+    # var is enough; build_workflow() will see the flag on.
+    monkeypatch.setenv("TRUST_RAG_ENABLE_GROUNDEDNESS_SELF_CORRECTION", "true")
+    yield
+
+
+def test_flag_off_graph_has_no_verifier():
+    # Default (flag off): answer_generator goes straight to END.
+    wf = build_workflow()
+    state = wf.invoke(initial_state("What is the current taxi approval threshold?"))
+    assert "groundedness_verifier" not in (state.get("visited_nodes") or [])
+
+
+def test_flag_on_runs_verifier_and_terminates(loop_on):
+    wf = build_workflow()
+    state = wf.invoke(initial_state("What is the per-kilometre mileage rate?"))
+    visited = state.get("visited_nodes") or []
+    assert "groundedness_verifier" in visited
+    # A never-groundable no-evidence question must terminate gracefully,
+    # NOT raise GraphRecursionError. Terminal status is set.
+    assert state.get("grounding_status") in {"grounded", "revised", "degraded", "abstained"}
