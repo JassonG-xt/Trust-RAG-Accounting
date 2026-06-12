@@ -84,18 +84,21 @@ def _pick_active_evidence(state: TrustRAGState) -> dict | None:
     if active_doc_id:
         same_doc = [e for e in support if e.get("doc_id") == active_doc_id]
         if same_doc:
-            # Prefer the chunk with the most content (token_estimate when
-            # present, fall back to len(content)). Stable on ties via
-            # chunk_index.
-            def _content_size(rec: dict) -> tuple[int, int]:
+            # Prefer the chunk the *retriever* ranked highest for this query
+            # (relevance), so a "taxi" question cites the taxi sub-rule rather
+            # than whichever paragraph in the doc happens to be longest.
+            # Content size and chunk_index only break ties, keeping citations
+            # stable across runs.
+            def _relevance_key(rec: dict) -> tuple[float, int, int]:
+                score = rec.get("score") or 0.0
                 size = rec.get("token_estimate")
                 if size is None:
                     size = len(rec.get("content") or "")
                 # Negate chunk_index so earlier chunks win ties (stable
                 # citation IDs across runs).
-                return (size, -1 * (rec.get("chunk_index") or 0))
+                return (score, size, -1 * (rec.get("chunk_index") or 0))
 
-            same_doc.sort(key=_content_size, reverse=True)
+            same_doc.sort(key=_relevance_key, reverse=True)
             return same_doc[0]
 
     if not support:
@@ -352,6 +355,31 @@ def _maybe_generate_with_llm(
 
 
 def answer_generator(state: TrustRAGState) -> dict:
+    # Phase 3 — reflexion regeneration. When the verifier asked for a redo
+    # (grounding_critique set), drop exactly the sentences it flagged as
+    # ungrounded in grounding_report from the prior answer. Deterministic and
+    # mock-safe: no prose parsing, no LLM. Real LLM mode would instead feed the
+    # critique into the prompt; this structured strip is the offline default.
+    if state.get("grounding_critique") and state.get("answer"):
+        report = state.get("grounding_report") or {}
+        ungrounded = {
+            (c.get("claim") or "").rstrip(".").strip()
+            for c in report.get("claims", [])
+            if not c.get("grounded")
+        }
+        if ungrounded:
+            from ...evals.faithfulness import extract_claims
+
+            kept = [
+                s
+                for s in extract_claims(state["answer"])
+                if s.rstrip(".").strip() not in ungrounded
+            ]
+            return {
+                "answer": " ".join(kept),
+                "visited_nodes": ["answer_generator"],
+            }
+
     verdict = state.get("judge_verdict") or {}
     conclusion = verdict.get("conclusion") or "answerable"
 

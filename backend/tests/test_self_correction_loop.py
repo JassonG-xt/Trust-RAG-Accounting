@@ -59,3 +59,25 @@ def test_verifier_abstains_when_core_ungrounded_at_exhaustion():
     out = groundedness_verifier(st)
     assert out["grounding_status"] == "abstained"
     assert out["needs_human_review"] is True
+
+
+from backend.app.graph.nodes.answer_generator import answer_generator
+
+
+def test_answer_generator_strips_ungrounded_sentences_on_regen():
+    # On regen the generator reads the structured grounding_report and drops
+    # the sentences flagged ungrounded (deterministic; no prose parsing).
+    prior = "Taxi over 100 RMB requires manager approval. The mileage rate is 5 RMB."
+    st = {
+        "answer": prior,
+        "grounding_critique": "regenerate please",
+        "grounding_report": {"claims": [
+            {"claim": "Taxi over 100 RMB requires manager approval.", "grounded": True},
+            {"claim": "The mileage rate is 5 RMB.", "grounded": False},
+        ]},
+        "support_evidence": [],
+        "claims": [],
+    }
+    out = answer_generator(st)
+    assert "mileage" not in out["answer"]
+    assert "manager approval" in out["answer"]
