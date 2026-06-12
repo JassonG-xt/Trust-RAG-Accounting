@@ -46,6 +46,13 @@ def _optional_str_env(name: str) -> str | None:
     return raw or None
 
 
+def _default_embedding_dimension() -> int:
+    provider = os.getenv("EMBEDDING_PROVIDER", "mock").strip().lower()
+    if provider in {"sentence_transformers", "sentence-transformers", "bge_m3", "bge-m3"}:
+        return 1024
+    return 64
+
+
 @dataclass(frozen=True)
 class Settings:
     """Runtime configuration for the TrustRAG backend."""
@@ -53,7 +60,7 @@ class Settings:
     app_env: str = field(default_factory=lambda: os.getenv("APP_ENV", "development"))
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
 
-    # Provider selection — only "mock" is wired up in the MVP.
+    # Provider selection — mock remains the deterministic default.
     llm_provider: str = field(default_factory=lambda: os.getenv("LLM_PROVIDER", "mock"))
     embedding_provider: str = field(
         default_factory=lambda: os.getenv("EMBEDDING_PROVIDER", "mock")
@@ -73,14 +80,40 @@ class Settings:
         default_factory=lambda: _bool_env("TRUST_RAG_ENABLE_SAFETY_CHECK", True)
     )
 
+    # Phase 3 — groundedness self-correction (reflexion) loop. Default OFF so
+    # the compiled graph is byte-identical to pre-Phase-3 when disabled.
+    enable_groundedness_self_correction: bool = field(
+        default_factory=lambda: _bool_env(
+            "TRUST_RAG_ENABLE_GROUNDEDNESS_SELF_CORRECTION", False
+        )
+    )
+    groundedness_max_retries: int = field(
+        default_factory=lambda: _int_env("TRUST_RAG_GROUNDEDNESS_MAX_RETRIES", 2)
+    )
+    groundedness_threshold: float = field(
+        default_factory=lambda: _float_env("TRUST_RAG_GROUNDEDNESS_THRESHOLD", 0.5)
+    )
+
     # Phase 3B — vector retrieval. Default ON with mock provider + in-memory
     # store so tests and fresh clones work offline. Operators opt in to
-    # Qdrant via VECTOR_STORE=qdrant + QDRANT_URL.
+    # real local embeddings via EMBEDDING_PROVIDER=sentence_transformers.
     retrieval_enable_vector: bool = field(
         default_factory=lambda: _bool_env("RETRIEVAL_ENABLE_VECTOR", True)
     )
+    embedding_model: str | None = field(
+        default_factory=lambda: _optional_str_env("EMBEDDING_MODEL")
+    )
     embedding_dimension: int = field(
-        default_factory=lambda: _int_env("EMBEDDING_DIMENSION", 64)
+        default_factory=lambda: _int_env(
+            "EMBEDDING_DIMENSION",
+            _default_embedding_dimension(),
+        )
+    )
+    embedding_device: str | None = field(
+        default_factory=lambda: _optional_str_env("EMBEDDING_DEVICE")
+    )
+    embedding_batch_size: int = field(
+        default_factory=lambda: _int_env("EMBEDDING_BATCH_SIZE", 16)
     )
     vector_store: str = field(
         default_factory=lambda: os.getenv("VECTOR_STORE", "memory")
