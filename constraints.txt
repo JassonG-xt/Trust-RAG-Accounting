@@ -1,0 +1,7 @@
+# Compatibility ceiling for the synchronous FastAPI TestClient stack.
+# Keep these bounds aligned with pyproject.toml so CI and local installs do
+# not resolve the AnyIO 4.13 / Starlette 1.x combination that hangs sync routes.
+fastapi<0.136
+starlette<1.0
+anyio<4.13
+httpx<0.29

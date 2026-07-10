@@ -9,10 +9,12 @@ from .answer_generator import answer_generator
 from .claim_decomposer import claim_decomposer
 from .conflict_detector import conflict_detector
 from .counter_retriever import counter_retriever
+from .final_review_router import final_review_router
 from .groundedness_verifier import groundedness_verifier
 from .human_review_handoff import human_review_handoff
 from .judge_agent import judge_agent
 from .query_analyzer import query_analyzer
+from .response_finalizer import response_finalizer
 from .safety_checker import safety_checker
 from .support_retriever import support_retriever
 from .temporal_checker import temporal_checker
@@ -22,10 +24,12 @@ __all__ = [
     "claim_decomposer",
     "conflict_detector",
     "counter_retriever",
+    "final_review_router",
     "groundedness_verifier",
     "human_review_handoff",
     "judge_agent",
     "query_analyzer",
+    "response_finalizer",
     "safety_checker",
     "support_retriever",
     "temporal_checker",

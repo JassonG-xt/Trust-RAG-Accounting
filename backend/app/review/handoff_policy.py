@@ -5,8 +5,8 @@ workflow state, decide whether the case should be routed to the
 ``human_review_handoff`` node and which named reasons justify the
 handoff. The decision is consumed in two places:
 
-* :func:`backend.app.graph.workflow.route_after_judge` — the LangGraph
-  conditional edge after ``judge_agent``.
+* :func:`backend.app.graph.workflow.route_after_final_review` — the
+  LangGraph conditional edge after answer generation/self-correction.
 * :func:`backend.app.graph.nodes.human_review_handoff.human_review_handoff`
   — the node itself, which re-runs the policy to obtain the final
   reasons list it writes into the checkpoint.

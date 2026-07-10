@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -77,3 +77,48 @@ def test_repo_hygiene_fails_for_generated_and_local_files(tmp_path: Path) -> Non
     assert "[hygiene] Forbidden tracked files detected:" in result.stdout
     assert "AGENTS.md" in result.stdout
     assert "data/eval_results.json" in result.stdout
+
+
+def test_dependency_compatibility_bounds_are_declared() -> None:
+    config = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    project = config["project"]
+    runtime = project["dependencies"]
+    dev = project["optional-dependencies"]["dev"]
+
+    assert any(item.startswith("fastapi") and "<0.136" in item for item in runtime)
+    assert any(item.startswith("starlette") and "<1.0" in item for item in runtime)
+    assert any(item.startswith("anyio") and "<4.13" in item for item in runtime)
+    assert any(item.startswith("httpx") and "<0.29" in item for item in dev)
+
+    constraints = {
+        line.strip()
+        for line in (REPO_ROOT / "constraints.txt").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+    assert {
+        "fastapi<0.136",
+        "starlette<1.0",
+        "anyio<4.13",
+        "httpx<0.29",
+    }.issubset(constraints)
+
+    ci_workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    assert 'pip install -c constraints.txt -e ".[dev]"' in ci_workflow
+
+
+def test_documented_workflow_uses_post_generation_review_routing() -> None:
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    architecture = (REPO_ROOT / "docs" / "architecture.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "FR[final_review_router]" in readme
+    assert "FR -->|review required| HR[human_review_handoff]" in readme
+    assert "JA -->|review required| HR[human_review_handoff]" not in readme
+
+    assert "JA[judge_agent] --> AG[answer_generator]" in architecture
+    assert 'AG --> FR["final_review_router"]' in architecture
+    assert 'FR --> POLICY["should_handoff_for_review"]' in architecture
+    assert 'POLICY -->|no| AG[answer_generator]' not in architecture

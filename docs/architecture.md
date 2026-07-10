@@ -59,18 +59,23 @@ flowchart TD
     TC --> CF[conflict_detector]
     CF --> SC
     SC --> JA[judge_agent]
-    JA -->|human_review_handoff| HR[human_review_handoff]
-    JA -->|answer_directly| AG[answer_generator]
-    HR --> AG
-    AG --> END([END])
+    JA --> AG[answer_generator]
+    AG -->|grounding disabled or unsafe refusal| FR[final_review_router]
+    AG -->|verify| GV[groundedness_verifier]
+    GV -->|regenerate| AG
+    GV -->|terminal| FR
+    FR -->|human_review_handoff| HR[human_review_handoff]
+    FR -->|answer_directly| RF[response_finalizer]
+    HR --> RF
+    RF --> END([END])
 ```
 
 Two routing boundaries matter:
 
 - Unsafe accounting requests branch immediately after `query_analyzer` to `safety_checker`, skipping claim decomposition and retrieval.
-- Review-sensitive cases branch after `judge_agent` to `human_review_handoff`, then converge back into `answer_generator`.
+- Review-sensitive cases branch after answer generation/self-correction through `final_review_router` to `human_review_handoff`, then converge into `response_finalizer`.
 
-The topology is intentionally small and pinned by tests. Phase 8A does not change it.
+The topology is intentionally small and pinned by tests.
 
 ## Retrieval Architecture
 
@@ -115,11 +120,13 @@ Unsafe refusal is a valid workflow outcome, not an error condition.
 
 ```mermaid
 flowchart LR
-    JA[judge_agent] --> POLICY["should_handoff_for_review"]
+    JA[judge_agent] --> AG[answer_generator]
+    AG --> FR["final_review_router"]
+    FR --> POLICY["should_handoff_for_review"]
     POLICY -->|yes| HR[human_review_handoff]
-    POLICY -->|no| AG[answer_generator]
+    POLICY -->|no| RF[response_finalizer]
     HR --> STORE["data/review_queue.jsonl"]
-    HR --> AG
+    HR --> RF
     DASH["/dashboard"] --> QUEUE["GET /v1/review/queue"]
     DASH --> ACTIONS["POST /v1/review/queue/{id}/actions"]
     ACTIONS --> LOG["data/review_actions.jsonl"]

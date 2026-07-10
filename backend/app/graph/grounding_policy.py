@@ -20,7 +20,8 @@ def is_core_claim(claim: str, query_claims: list[dict]) -> bool:
     """
     if not query_claims:
         return False
-    primary_tokens = tokenize(query_claims[0].get("text", ""))
+    primary = query_claims[0]
+    primary_tokens = tokenize(primary.get("claim_text") or primary.get("text", ""))
     if not primary_tokens:
         return False
     claim_tokens = tokenize(claim)

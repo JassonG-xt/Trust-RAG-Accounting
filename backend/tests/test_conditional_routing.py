@@ -107,6 +107,8 @@ _UNSAFE_FAST_PATH_NODES = (
     "safety_checker",
     "judge_agent",
     "answer_generator",
+    "final_review_router",
+    "response_finalizer",
 )
 
 
@@ -133,7 +135,7 @@ def test_unsafe_request_takes_fast_path() -> None:
     assert state["routing_reason"] == "question_type=unsafe_request"
 
     visited = state["visited_nodes"]
-    # Strict order — exactly the four-node fast path.
+    # Strict order — retrieval-free path plus final response nodes.
     assert visited == list(_UNSAFE_FAST_PATH_NODES)
     # And none of the retrieval-stage nodes ran.
     assert _RETRIEVAL_NODES.isdisjoint(visited)
@@ -276,6 +278,8 @@ _STANDARD_PATH_NODES = (
     "safety_checker",
     "judge_agent",
     "answer_generator",
+    "final_review_router",
+    "response_finalizer",
 )
 
 
