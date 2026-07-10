@@ -32,8 +32,8 @@ import math
 from ..ingestion.models import DocumentChunk
 from .filters import passes_metadata_filter
 from .models import MetadataFilter, ScoreBreakdown, ScoredChunk
+from .temporal import is_chunk_active_as_of, parse_iso_date, temporal_score_for_chunk
 from .tokenizer import expand_query_terms, tokenize
-
 
 _MALICIOUS_BM25_CAP = 0.15
 
@@ -119,20 +119,20 @@ class BM25Retriever:
 
         # First pass: raw BM25 scores per candidate chunk.
         raw_scores: dict[str, float] = {}
+        as_of = parse_iso_date(metadata_filter.as_of)
         for chunk in self._chunks:
             if not passes_metadata_filter(chunk, metadata_filter):
                 continue
 
-            # Mirror KeywordRetriever's stance / malicious handling.
+            # Mirror KeywordRetriever's malicious handling. Temporal
+            # stance is handled as a score component, not a hard
+            # filter, so historical support queries can retrieve the
+            # version active at that historical date.
             if chunk.is_malicious:
                 if stance != "counter":
                     continue
-            else:
-                is_expired = bool(chunk.valid_to)
-                if stance == "support" and is_expired:
-                    continue
-                if stance == "counter" and not is_expired:
-                    continue
+            elif stance == "counter" and is_chunk_active_as_of(chunk, as_of):
+                continue
 
             score = self._bm25_score(chunk, query_terms)
             if score > 0.0:
@@ -171,7 +171,12 @@ class BM25Retriever:
                     and chunk.client == metadata_filter.client
                 ):
                     breakdown.client_match = 0.05
-                breakdown.stance = 0.02
+                breakdown.stance = 0.02 if stance == "support" else 0.0
+                breakdown.temporal = temporal_score_for_chunk(
+                    chunk,
+                    as_of=as_of,
+                    stance=stance,
+                )
 
             total = max(0.0, breakdown.total())
             results.append(

@@ -84,21 +84,26 @@ flowchart TD
     Q["Question"] --> FILTER["MetadataFilter<br/>client + document type + malicious policy"]
     FILTER --> KEY["KeywordRetriever"]
     FILTER --> BM25["BM25Retriever"]
-    FILTER --> VEC["VectorRetriever<br/>mock embedding + in-memory store"]
-    KEY --> HYBRID["HybridRetriever<br/>weighted fusion"]
+    FILTER --> VEC["VectorRetriever<br/>embedding provider + vector store"]
+    KEY --> HYBRID["HybridRetriever<br/>weighted demo / RRF production"]
     BM25 --> HYBRID
     VEC --> HYBRID
-    HYBRID --> RERANK["MockReranker"]
-    RERANK --> SCORED["ScoredChunk + ScoreBreakdown"]
+    HYBRID --> DEDUP["Exact-content dedup"]
+    DEDUP --> RERANK["Mock or BGE cross-encoder reranker"]
+    RERANK --> MMR["MMR diversity selection"]
+    MMR --> SCORED["ScoredChunk + ScoreBreakdown"]
     SCORED --> EVIDENCE["Evidence dicts<br/>citations + score audit trail"]
 ```
 
 Retrieval is deterministic by default:
 
-- The embedding provider is a local feature-hashing mock.
+- The default embedding provider is a local feature-hashing mock; optional
+  `sentence_transformers` mode runs local open-source models such as
+  `BAAI/bge-m3`.
 - The vector store is in-memory unless configured otherwise.
-- The reranker is a local token-overlap mock.
-- Qdrant and external reranker providers are adapter seams, not required for tests or demos.
+- The reranker is a local token-overlap mock by default; production can use
+  `BAAI/bge-reranker-v2-m3` through the same seam.
+- Qdrant and sentence-transformers are optional and not required for tests or demos.
 
 Every evidence item carries a score breakdown. The invariant `score == breakdown.total()` is covered by tests so ranking changes are auditable.
 

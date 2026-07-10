@@ -55,11 +55,11 @@ dev = [
 qdrant = [
     "qdrant-client>=1.7",
 ]
+embeddings = [
+    "sentence-transformers>=3.0",
+]
 reranker = [
-    # Placeholder for Phase 3E real reranker adapters (BGE / Cohere /
-    # open-source cross-encoders). The Phase 3C MockReranker has no
-    # external dependency, so this group stays empty by design — its
-    # presence documents the seam.
+    "sentence-transformers>=3.0",
 ]
 
 [project.urls]

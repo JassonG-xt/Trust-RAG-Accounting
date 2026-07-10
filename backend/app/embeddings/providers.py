@@ -10,8 +10,8 @@ A ``dimension`` property is exposed so the vector store can size its
 collection at construction time without an empty-vector probe.
 
 The factory :func:`get_embedding_provider` is the single place
-``RetrievalService`` reaches for a provider — switching to a real
-provider in Phase 3B+ means adding one branch here, nothing else.
+``RetrievalService`` reaches for a provider — switching implementations means
+adding one branch here, nothing else.
 """
 
 from __future__ import annotations
@@ -37,15 +37,16 @@ class EmbeddingProvider(Protocol):
 def get_embedding_provider(
     provider: str = "mock",
     *,
-    dimension: int = 64,
+    dimension: int | None = None,
+    model_name: str | None = None,
+    device: str | None = None,
+    batch_size: int = 16,
 ) -> EmbeddingProvider:
     """Construct the embedding provider named in config.
 
-    Currently only ``mock`` is supported. Real providers (``openai``,
-    ``bedrock``) will land in Phase 3B+. The factory raises
-    :class:`ValueError` for unknown providers so a misconfigured
-    deployment fails loudly at startup rather than silently degrading
-    to lexical-only retrieval.
+    ``mock`` stays the default for deterministic offline tests. The
+    ``sentence_transformers`` branch is optional and imports its dependency
+    lazily, so default installs do not need PyTorch or model downloads.
     """
 
     name = (provider or "").strip().lower()
@@ -53,9 +54,22 @@ def get_embedding_provider(
         # Local import to avoid an early circular at module load.
         from .mock_provider import MockEmbeddingProvider
 
-        return MockEmbeddingProvider(dimension=dimension)
+        return MockEmbeddingProvider(dimension=dimension or 64)
+
+    if name in {"sentence_transformers", "sentence-transformers", "bge_m3", "bge-m3"}:
+        from .sentence_transformers_provider import (
+            DEFAULT_SENTENCE_TRANSFORMERS_DIMENSION,
+            SentenceTransformersEmbeddingProvider,
+        )
+
+        return SentenceTransformersEmbeddingProvider(
+            model_name=model_name,
+            dimension=dimension or DEFAULT_SENTENCE_TRANSFORMERS_DIMENSION,
+            device=device,
+            batch_size=batch_size,
+        )
+
     raise ValueError(
         f"Unknown embedding provider {provider!r}. "
-        "Supported: 'mock'. Real providers (openai / bedrock) are not "
-        "wired yet — keep EMBEDDING_PROVIDER=mock for now."
+        "Supported: 'mock', 'sentence_transformers'."
     )

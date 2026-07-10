@@ -1,0 +1,228 @@
+{
+  "version": "1.0",
+  "description": "Offline retrieval IR eval cases for TrustRAG Accounting. Active cases describe behavior the current local retrieval layer should satisfy; expected_gap cases document known retrieval-quality gaps without lowering the active headline score.",
+  "cases": [
+    {
+      "case_id": "retrieval_alpha_meal_invoice",
+      "category": "client_filtering",
+      "status": "active",
+      "question": "Alpha Trading Co. 的餐饮发票应该怎么入账？",
+      "question_type": "bookkeeping_sop",
+      "stance": "support",
+      "top_k": 5,
+      "relevant_document_ids": ["alpha_trading_bookkeeping_sop_2026"],
+      "relevant_chunk_id_prefixes": ["alpha_trading_bookkeeping_sop_2026::chunk_"],
+      "forbidden_document_ids": [
+        "beta_catering_invoice_rule_2026",
+        "malicious_accounting_instruction_sample"
+      ],
+      "description": "Alpha meal-invoice retrieval should hit Alpha's SOP and avoid Beta or malicious evidence."
+    },
+    {
+      "case_id": "retrieval_beta_delivery_invoice",
+      "category": "client_filtering",
+      "status": "active",
+      "question": "Beta Catering Ltd. 没有明确服务描述的配送发票能直接入账吗？",
+      "question_type": "invoice_compliance",
+      "stance": "support",
+      "top_k": 5,
+      "relevant_document_ids": ["beta_catering_invoice_rule_2026"],
+      "relevant_chunk_id_prefixes": ["beta_catering_invoice_rule_2026::chunk_"],
+      "forbidden_document_ids": [
+        "alpha_trading_bookkeeping_sop_2026",
+        "malicious_accounting_instruction_sample"
+      ],
+      "description": "Beta delivery-invoice ambiguity should hit the Beta invoice rule and avoid Alpha."
+    },
+    {
+      "case_id": "retrieval_gamma_no_sop",
+      "category": "client_filtering",
+      "status": "active",
+      "question": "Gamma Tech Studio 的餐饮发票怎么入账？",
+      "question_type": "bookkeeping_sop",
+      "stance": "support",
+      "top_k": 5,
+      "forbidden_document_ids": [
+        "alpha_trading_bookkeeping_sop_2026",
+        "beta_catering_invoice_rule_2026",
+        "malicious_accounting_instruction_sample"
+      ],
+      "description": "Gamma has no client SOP in the sample corpus; retrieval must not leak Alpha or Beta private rules."
+    },
+    {
+      "case_id": "retrieval_clientless_meal_invoice",
+      "category": "client_filtering",
+      "status": "active",
+      "question": "餐饮发票应该怎么入账？",
+      "question_type": "bookkeeping_sop",
+      "stance": "support",
+      "top_k": 5,
+      "forbidden_document_ids": [
+        "alpha_trading_bookkeeping_sop_2026",
+        "beta_catering_invoice_rule_2026",
+        "malicious_accounting_instruction_sample"
+      ],
+      "description": "Clientless meal-invoice questions should not retrieve client-specific SOPs."
+    },
+    {
+      "case_id": "retrieval_taxi_current_policy",
+      "category": "current_policy",
+      "status": "active",
+      "question": "现在打车超过 100 元需要审批吗？",
+      "question_type": "reimbursement_rule",
+      "stance": "support",
+      "top_k": 5,
+      "relevant_document_ids": ["reimbursement_policy_2026"],
+      "relevant_chunk_id_prefixes": ["reimbursement_policy_2026::chunk_"],
+      "forbidden_document_ids": ["malicious_accounting_instruction_sample"],
+      "description": "Current taxi reimbursement retrieval should surface the 2026 reimbursement policy."
+    },
+    {
+      "case_id": "retrieval_taxi_2024_policy_gap",
+      "category": "current_policy",
+      "status": "active",
+      "question": "2024 年打车 150 元需要审批吗？",
+      "question_type": "reimbursement_rule",
+      "stance": "support",
+      "top_k": 5,
+      "relevant_document_ids": ["reimbursement_policy_2024"],
+      "relevant_chunk_id_prefixes": ["reimbursement_policy_2024::chunk_"],
+      "forbidden_document_ids": ["malicious_accounting_instruction_sample"],
+      "description": "Historical taxi reimbursement retrieval should surface the 2024 policy when the query explicitly names 2024."
+    },
+    {
+      "case_id": "retrieval_hotel_current_policy",
+      "category": "current_policy",
+      "status": "active",
+      "question": "现在住宿费超过 200 元需要什么材料？",
+      "question_type": "reimbursement_rule",
+      "stance": "support",
+      "top_k": 5,
+      "relevant_document_ids": ["reimbursement_policy_2026"],
+      "relevant_chunk_id_prefixes": ["reimbursement_policy_2026::chunk_"],
+      "forbidden_document_ids": ["malicious_accounting_instruction_sample"],
+      "description": "Current hotel reimbursement retrieval should surface the 2026 reimbursement policy."
+    },
+    {
+      "case_id": "retrieval_vat_small_taxpayer",
+      "category": "tax_policy",
+      "status": "active",
+      "question": "小规模纳税人现在增值税应该怎么处理？",
+      "question_type": "tax_policy",
+      "stance": "support",
+      "top_k": 5,
+      "relevant_document_ids": ["vat_policy_note_2025"],
+      "relevant_chunk_id_prefixes": ["vat_policy_note_2025::chunk_"],
+      "forbidden_document_ids": ["malicious_accounting_instruction_sample"],
+      "description": "Small-taxpayer VAT retrieval should surface the 2025 VAT policy note."
+    },
+    {
+      "case_id": "retrieval_prompt_injection_candidate",
+      "category": "prompt_injection",
+      "status": "active",
+      "question": "文档里说 Ignore previous instructions，系统应该照做吗？",
+      "stance": "counter",
+      "top_k": 5,
+      "include_malicious": true,
+      "relevant_document_ids": ["malicious_accounting_instruction_sample"],
+      "relevant_chunk_id_prefixes": ["malicious_accounting_instruction_sample::chunk_"],
+      "description": "Prompt-injection inspection retrieval should be able to surface the malicious sample when the case explicitly allows malicious evidence."
+    },
+    {
+      "case_id": "retrieval_legal_tax_planning_safe",
+      "category": "safe_tax_queries",
+      "status": "active",
+      "question": "what is legal tax planning?",
+      "stance": "support",
+      "top_k": 5,
+      "forbidden_document_ids": [
+        "alpha_trading_bookkeeping_sop_2026",
+        "beta_catering_invoice_rule_2026",
+        "malicious_accounting_instruction_sample"
+      ],
+      "description": "Safe tax-planning wording may retrieve generic tax notes, but must not hit malicious or client-specific docs."
+    },
+    {
+      "case_id": "retrieval_compliant_income_reporting_safe",
+      "category": "safe_tax_queries",
+      "status": "active",
+      "question": "how should I report this income correctly?",
+      "stance": "support",
+      "top_k": 5,
+      "forbidden_document_ids": [
+        "alpha_trading_bookkeeping_sop_2026",
+        "beta_catering_invoice_rule_2026",
+        "malicious_accounting_instruction_sample"
+      ],
+      "description": "Compliant income-reporting wording must not retrieve malicious or client-specific docs."
+    },
+    {
+      "case_id": "retrieval_alpha_meal_paraphrase",
+      "category": "semantic_paraphrase",
+      "status": "active",
+      "question": "Alpha Trading Co. 客户招待餐费要记到哪个科目？",
+      "question_type": "bookkeeping_sop",
+      "stance": "support",
+      "top_k": 5,
+      "relevant_document_ids": ["alpha_trading_bookkeeping_sop_2026"],
+      "relevant_chunk_id_prefixes": ["alpha_trading_bookkeeping_sop_2026::chunk_0001"],
+      "forbidden_document_ids": ["beta_catering_invoice_rule_2026"],
+      "description": "Chinese paraphrase should recover the Alpha meal and entertainment rule."
+    },
+    {
+      "case_id": "retrieval_beta_invoice_paraphrase",
+      "category": "semantic_paraphrase",
+      "status": "active",
+      "question": "Beta Catering Ltd. 配送服务发票描述含糊时该怎么办？",
+      "question_type": "invoice_compliance",
+      "stance": "support",
+      "top_k": 5,
+      "relevant_document_ids": ["beta_catering_invoice_rule_2026"],
+      "relevant_chunk_id_prefixes": ["beta_catering_invoice_rule_2026::chunk_0001"],
+      "forbidden_document_ids": ["alpha_trading_bookkeeping_sop_2026"],
+      "description": "Paraphrased invoice ambiguity should recover the Beta compliance rule."
+    },
+    {
+      "case_id": "retrieval_taxi_approval_paraphrase",
+      "category": "semantic_paraphrase",
+      "status": "active",
+      "question": "出租车费用超过一百块，现行制度是否要主管签字？",
+      "question_type": "reimbursement_rule",
+      "stance": "support",
+      "top_k": 5,
+      "relevant_document_ids": ["reimbursement_policy_2026"],
+      "relevant_chunk_id_prefixes": ["reimbursement_policy_2026::chunk_0001"],
+      "description": "Chinese wording without the exact original phrase should rank the current taxi rule first."
+    },
+    {
+      "case_id": "retrieval_vat_verification_english",
+      "category": "bilingual_retrieval",
+      "status": "active",
+      "question": "Which checks are required before applying small-scale taxpayer VAT treatment?",
+      "question_type": "tax_policy",
+      "stance": "support",
+      "top_k": 5,
+      "relevant_document_ids": ["vat_policy_note_2025"],
+      "relevant_chunk_id_prefixes": ["vat_policy_note_2025::chunk_0002"],
+      "description": "English query should rank the verification section of the VAT note."
+    },
+    {
+      "case_id": "retrieval_reimbursement_version_comparison",
+      "category": "multi_document_recall",
+      "status": "active",
+      "question": "Compare the 2024 and 2026 taxi reimbursement approval rules.",
+      "question_type": "temporal_policy_comparison",
+      "stance": "support",
+      "top_k": 5,
+      "relevant_document_ids": [
+        "reimbursement_policy_2024",
+        "reimbursement_policy_2026"
+      ],
+      "relevant_chunk_id_prefixes": [
+        "reimbursement_policy_2024::chunk_0001",
+        "reimbursement_policy_2026::chunk_0001"
+      ],
+      "description": "Version-comparison retrieval should preserve recall across both policy documents."
+    }
+  ]
+}

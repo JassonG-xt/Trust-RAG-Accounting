@@ -1,8 +1,8 @@
-"""Phase 3B embedding layer.
+"""Embedding layer.
 
 The embeddings package owns the *vector representation* of text — a
-single Protocol (``EmbeddingProvider``) and one local, dependency-free
-implementation (``MockEmbeddingProvider``).
+single Protocol (``EmbeddingProvider``), a local dependency-free mock, and
+optional real local providers.
 
 Why a Protocol instead of an abstract base class:
 
@@ -22,11 +22,13 @@ Why a mock by default:
 
 from __future__ import annotations
 
-from .providers import EmbeddingProvider, get_embedding_provider
 from .mock_provider import MockEmbeddingProvider
+from .providers import EmbeddingProvider, get_embedding_provider
+from .sentence_transformers_provider import SentenceTransformersEmbeddingProvider
 
 __all__ = [
     "EmbeddingProvider",
     "MockEmbeddingProvider",
+    "SentenceTransformersEmbeddingProvider",
     "get_embedding_provider",
 ]

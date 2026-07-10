@@ -171,6 +171,27 @@ def test_scored_chunk_to_document_preserves_identity_and_scoring() -> None:
     assert md["score_breakdown"]["vector"] == pytest.approx(0.18)
 
 
+def test_rrf_audit_metadata_survives_document_round_trip() -> None:
+    chunk = _make_synthetic_scored_chunk(
+        metadata={
+            "fusion_method": "rrf",
+            "source_ranks": {"keyword": 1, "bm25": 2, "vector": 3},
+        }
+    )
+
+    document = scored_chunk_to_document(chunk)
+    evidence = document_to_evidence_dict(document, stance="support")
+
+    assert document.metadata["fusion_method"] == "rrf"
+    assert document.metadata["source_ranks"] == {
+        "keyword": 1,
+        "bm25": 2,
+        "vector": 3,
+    }
+    assert evidence["fusion_method"] == "rrf"
+    assert evidence["source_ranks"] == document.metadata["source_ranks"]
+
+
 def test_scored_chunk_to_document_carries_parent_document_metadata() -> None:
     chunk = _make_synthetic_scored_chunk()
     md = scored_chunk_to_document(chunk).metadata
@@ -260,6 +281,7 @@ def test_document_to_evidence_dict_fills_missing_metadata_safely() -> None:
         "metadata",
         "client_match",
         "stance",
+        "temporal",
         "malicious_penalty",
     ):
         assert bd[key] == 0.0
@@ -513,6 +535,7 @@ def test_runnable_breakdown_invariant(
                 "metadata",
                 "client_match",
                 "stance",
+                "temporal",
                 "malicious_penalty",
             )
         )

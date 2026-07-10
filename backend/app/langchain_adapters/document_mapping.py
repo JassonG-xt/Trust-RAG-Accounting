@@ -43,6 +43,7 @@ _BREAKDOWN_KEYS = (
     "metadata",
     "client_match",
     "stance",
+    "temporal",
     "malicious_penalty",
 )
 
@@ -80,6 +81,8 @@ def scored_chunk_to_document(chunk: ScoredChunk) -> Document:
         "score": chunk.score,
         "score_breakdown": chunk.score_breakdown.model_dump(),
         "retrieval_strategy": chunk.retrieval_strategy,
+        "fusion_method": chunk.metadata.get("fusion_method"),
+        "source_ranks": chunk.metadata.get("source_ranks", {}),
         "is_context_expansion": chunk.is_context_expansion,
         "expanded_from_chunk_id": chunk.expanded_from_chunk_id,
         "expansion_offset": chunk.expansion_offset,
@@ -147,6 +150,8 @@ def document_to_evidence_dict(
         "expansion_offset": md.get("expansion_offset"),
         "score_breakdown": breakdown,
         "retrieval_strategy": md.get("retrieval_strategy"),
+        "fusion_method": md.get("fusion_method"),
+        "source_ranks": md.get("source_ranks", {}),
     }
 
 

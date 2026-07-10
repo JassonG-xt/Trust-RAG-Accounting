@@ -60,6 +60,16 @@ jobs:
             --category-threshold client_specific=0.95 \
             --category-threshold citation_faithfulness=0.95
 
+      - name: Run retrieval eval gate
+        run: |
+          python -m backend.app.evals.retrieval_runner \
+            --cases backend/app/evals/cases/retrieval_eval_cases.json \
+            --out data/retrieval_eval_results.json \
+            --markdown-out data/retrieval_eval_report.md \
+            --only-status active \
+            --fail-on-regression \
+            --min-score 0.90
+
       - name: Run base eval for PR delta
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         run: |
@@ -140,3 +150,5 @@ jobs:
             data/eval_report.md
             data/eval_pr_comment.md
             data/eval_base_results.json
+            data/retrieval_eval_results.json
+            data/retrieval_eval_report.md

@@ -168,6 +168,8 @@ def _scored_chunk_to_evidence_dict(
         # Phase 3A retrieval explainability
         "score_breakdown": scored.score_breakdown.model_dump(),
         "retrieval_strategy": scored.retrieval_strategy,
+        "fusion_method": scored.metadata.get("fusion_method"),
+        "source_ranks": scored.metadata.get("source_ranks", {}),
     }
 
 

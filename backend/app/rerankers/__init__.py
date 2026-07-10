@@ -18,8 +18,8 @@ Operator paths:
 * ``RERANKER_PROVIDER=mock`` (default) — local mock.
 * ``RERANKER_PROVIDER=none`` — disable the rerank pass entirely.
   The retrieval chain degrades to Phase 3B's hybrid output.
-* ``RERANKER_PROVIDER=bge`` (future / Phase 3E) — placeholder
-  external adapter; raises until the model loading code is wired up.
+* ``RERANKER_PROVIDER=bge`` — local sentence-transformers CrossEncoder,
+  defaulting to ``BAAI/bge-reranker-v2-m3``.
 
 The reranker does **not** read from ``DocumentRepository``, embed
 anything, or call into LangGraph. Its surface is a single

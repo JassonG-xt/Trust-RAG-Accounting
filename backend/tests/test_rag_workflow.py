@@ -123,6 +123,7 @@ def test_bookkeeping_sop_query_routes_to_alpha_trading(client: TestClient) -> No
         "metadata",
         "client_match",
         "stance",
+        "temporal",
         "malicious_penalty",
     ):
         assert key in breakdown

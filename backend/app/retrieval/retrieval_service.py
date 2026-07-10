@@ -39,10 +39,11 @@ import logging
 from typing import Any
 
 from ..core.config import Settings, get_settings
-from ..embeddings import EmbeddingProvider, get_embedding_provider
+from ..embeddings.providers import EmbeddingProvider, get_embedding_provider
 from ..ingestion.models import DocumentChunk
 from ..vectorstore import InMemoryVectorStore, VectorStore
 from .bm25_retriever import BM25Retriever
+from .diversity import deduplicate_candidates, select_mmr
 from .filters import build_metadata_filter
 from .hybrid_retriever import HybridRetriever
 from .keyword_retriever import KeywordRetriever
@@ -92,6 +93,9 @@ class RetrievalService:
                 provider = embedding_provider or get_embedding_provider(
                     self._settings.embedding_provider,
                     dimension=self._settings.embedding_dimension,
+                    model_name=self._settings.embedding_model,
+                    device=self._settings.embedding_device,
+                    batch_size=self._settings.embedding_batch_size,
                 )
                 store = vector_store or self._build_vector_store(
                     dimension=provider.dimension
@@ -102,6 +106,8 @@ class RetrievalService:
                     vector_store=store,
                 )
             except Exception:
+                if self._is_production():
+                    raise
                 # Vector retrieval is a *bonus* signal — if the store
                 # or provider can't be constructed (e.g. Qdrant
                 # unreachable), log and degrade to Phase 3A behavior
@@ -120,6 +126,8 @@ class RetrievalService:
                 keyword_weight=_PHASE_3B_KEYWORD_WEIGHT,
                 bm25_weight=_PHASE_3B_BM25_WEIGHT,
                 vector_weight=_PHASE_3B_VECTOR_WEIGHT,
+                fusion_mode=self._settings.retrieval_fusion_mode,
+                rrf_k=self._settings.retrieval_rrf_k,
             )
         else:
             self._hybrid = HybridRetriever(
@@ -129,6 +137,8 @@ class RetrievalService:
                 keyword_weight=_PHASE_3A_KEYWORD_WEIGHT,
                 bm25_weight=_PHASE_3A_BM25_WEIGHT,
                 vector_weight=0.0,
+                fusion_mode=self._settings.retrieval_fusion_mode,
+                rrf_k=self._settings.retrieval_rrf_k,
             )
 
         # Phase 3C — optional reranker. Resolved lazily so this module
@@ -139,6 +149,9 @@ class RetrievalService:
         else:
             self._reranker = self._build_reranker()
         self._reranker_top_n = max(1, int(self._settings.reranker_top_n))
+        self._mmr_enabled = bool(self._settings.retrieval_enable_mmr)
+        self._mmr_lambda = float(self._settings.retrieval_mmr_lambda)
+        self._mmr_fetch_k = max(1, int(self._settings.retrieval_mmr_fetch_k))
 
     # -- Public --------------------------------------------------------------
 
@@ -160,10 +173,11 @@ class RetrievalService:
 
         # When the reranker is enabled, fetch a wider candidate pool
         # so the rerank pass has enough material to reorder.
+        wide_k = top_k
         if self._reranker is not None:
-            wide_k = max(top_k, self._reranker_top_n)
-        else:
-            wide_k = top_k
+            wide_k = max(wide_k, self._reranker_top_n)
+        if self._mmr_enabled:
+            wide_k = max(wide_k, self._mmr_fetch_k)
 
         candidates = self._hybrid.search(
             query,
@@ -172,10 +186,20 @@ class RetrievalService:
             stance=stance,
         )
 
+        candidates = deduplicate_candidates(candidates)
         if self._reranker is not None:
-            ranked = self._reranker.rerank(query, candidates, top_k=top_k)
+            ranked = self._reranker.rerank(query, candidates, top_k=wide_k)
         else:
-            ranked = candidates[:top_k]
+            ranked = candidates
+
+        if self._mmr_enabled:
+            ranked = select_mmr(
+                ranked,
+                top_k=top_k,
+                lambda_mult=self._mmr_lambda,
+            )
+        else:
+            ranked = ranked[:top_k]
         return self._expand_with_context_neighbors(
             ranked,
             include_malicious=include_malicious,
@@ -330,8 +354,13 @@ class RetrievalService:
             return create_reranker(
                 provider,
                 weight=float(self._settings.reranker_weight),
+                model_name=self._settings.reranker_model,
+                device=self._settings.reranker_device,
+                batch_size=self._settings.reranker_batch_size,
             )
         except Exception:
+            if self._is_production():
+                raise
             # Reranker is post-hoc precision tooling — never crash the
             # workflow because rerank init failed. Log and continue
             # without a reranker (behavior reverts to Phase 3B).
@@ -341,6 +370,12 @@ class RetrievalService:
                 provider,
             )
             return None
+
+    def _is_production(self) -> bool:
+        return (self._settings.app_env or "").strip().lower() in {
+            "production",
+            "prod",
+        }
 
 
 __all__ = ["RetrievalService"]

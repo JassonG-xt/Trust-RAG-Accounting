@@ -34,10 +34,10 @@ class Reranker(Protocol):
     def rerank(
         self,
         query: str,
-        candidates: "list[ScoredChunk]",
+        candidates: list[ScoredChunk],
         *,
         top_k: int | None = None,
-    ) -> "list[ScoredChunk]":
+    ) -> list[ScoredChunk]:
         ...
 
 
@@ -53,7 +53,7 @@ def create_reranker(
 
     * ``"mock"`` (default) → :class:`MockReranker`.
     * ``"none"`` / ``""`` / ``"off"`` / ``"disabled"`` → ``None``.
-    * ``"bge"`` / ``"external"`` → ``BGEReranker`` placeholder (Phase 3E).
+    * ``"bge"`` / ``"external"`` → local ``BGEReranker`` cross-encoder.
 
     Anything else raises :class:`ValueError` so a misconfigured
     deployment fails loud, not silent. Operators should never get a
@@ -68,15 +68,21 @@ def create_reranker(
         # to consumers who only need the contract.
         from .mock_reranker import MockReranker
 
-        return MockReranker(weight=weight, **kwargs)
+        return MockReranker(
+            weight=weight,
+            preserve_malicious_cap=kwargs.get("preserve_malicious_cap", True),
+        )
     if name in {"bge", "external"}:
         from .external_adapters import BGEReranker
 
-        return BGEReranker(model_name=kwargs.get("model_name", "BAAI/bge-reranker-base"))
+        return BGEReranker(
+            model_name=kwargs.get("model_name") or "BAAI/bge-reranker-v2-m3",
+            device=kwargs.get("device"),
+            batch_size=int(kwargs.get("batch_size", 8)),
+            weight=weight,
+        )
 
     raise ValueError(
         f"Unknown reranker provider {provider!r}. "
-        "Supported: 'mock' (default), 'none' (disabled). "
-        "Real reranker adapters (bge / cohere) are placeholders until "
-        "Phase 3E wires up actual model loading."
+        "Supported: 'mock' (default), 'bge', 'none' (disabled)."
     )

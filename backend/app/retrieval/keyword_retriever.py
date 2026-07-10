@@ -24,8 +24,8 @@ from __future__ import annotations
 from ..ingestion.models import DocumentChunk
 from .filters import passes_metadata_filter
 from .models import MetadataFilter, ScoreBreakdown, ScoredChunk
+from .temporal import is_chunk_active_as_of, parse_iso_date, temporal_score_for_chunk
 from .tokenizer import expand_query_terms, tokenize
-
 
 # A small, fixed score for the malicious-quarantine path. The number
 # matches the legacy ``_score_chunk`` value so that the existing
@@ -153,19 +153,14 @@ class KeywordRetriever:
             breakdown.malicious_penalty = -0.0  # explicit zero — the cap IS the penalty
             return breakdown
 
-        # Branch 2 — stance is a hard filter for non-malicious chunks.
-        # support → current versions; counter → expired versions.
-        # This preserves the Phase 2A behavior that
-        # reimbursement_policy_2024 (with valid_to set) lands in
-        # counter_evidence and reimbursement_policy_2026 lands in
-        # support_evidence.
-        is_expired = bool(chunk.valid_to)
-        if stance == "support" and is_expired:
-            return None
-        if stance == "counter" and not is_expired:
+        as_of = parse_iso_date(metadata_filter.as_of)
+        if stance == "counter" and is_chunk_active_as_of(chunk, as_of):
             return None
 
-        # Branch 3 — normal scoring.
+        # Branch 2 — normal scoring. Temporal validity is an
+        # explainable rank contribution, not a hard filter, so
+        # historical support queries can still surface the policy that
+        # was active at the requested date.
         chunk_tokens = self._chunk_tokens.get(chunk.chunk_id, set())
         overlap = chunk_tokens & query_terms
         if query_terms:
@@ -190,7 +185,12 @@ class KeywordRetriever:
         # Small stance reward (much smaller than the hard filter above).
         # Mostly there so the breakdown attributes "I'm a current rule
         # in support stance" non-zero credit.
-        breakdown.stance = 0.05
+        breakdown.stance = 0.05 if stance == "support" else 0.0
+        breakdown.temporal = temporal_score_for_chunk(
+            chunk,
+            as_of=as_of,
+            stance=stance,
+        )
 
         # Within-document stability nudge — earlier chunks get a tiny
         # boost so rank order is deterministic across runs when scores

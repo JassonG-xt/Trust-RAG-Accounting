@@ -297,6 +297,31 @@ def test_standard_accounting_query_takes_full_path() -> None:
     assert "alpha_trading_bookkeeping_sop_2026" in doc_ids
 
 
+def test_taxi_question_cites_taxi_rule_not_hotel() -> None:
+    """A 打车 (taxi) question must surface the Taxi sub-rule, not Hotel.
+
+    Regression: the answer generator picked the *largest* chunk in the
+    active policy doc (by content length) and discarded the retriever's
+    relevance ranking. The Taxi and Hotel sub-rules live in the same
+    2026 policy; Hotel is one character longer, so the taxi question was
+    answered with the hotel rule. The primary citation and the answer
+    prose must both be about taxi approval.
+    """
+
+    state = run_query("现在打车超过 100 元需要审批吗？")
+
+    citations = state.get("citations") or []
+    assert citations, "reimbursement query must produce citations"
+    assert citations[0].get("section_title") == "Taxi Expenses", (
+        "primary citation should be the Taxi sub-rule, got "
+        f"{citations[0].get('section_title')!r}"
+    )
+
+    answer = (state.get("answer") or "").lower()
+    assert "manager approval" in answer
+    assert "hotel" not in answer, "taxi question must not be answered with the hotel rule"
+
+
 # ===========================================================================
 # Group D — Prompt-injection document inspection stays on standard path
 # ===========================================================================
