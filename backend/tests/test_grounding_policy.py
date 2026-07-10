@@ -1,4 +1,5 @@
 from backend.app.core.config import Settings
+from backend.app.graph.grounding_policy import is_core_claim, resolve_grounding
 
 
 def test_self_correction_defaults_off():
@@ -8,14 +9,25 @@ def test_self_correction_defaults_off():
     assert s.groundedness_threshold == 0.5
 
 
-from backend.app.graph.grounding_policy import is_core_claim, resolve_grounding
-
-
 def test_is_core_claim_matches_primary_query_claim():
     # claims[0] is the primary decomposed query claim.
     query_claims = [{"text": "what is the taxi approval threshold"}, {"text": "side note"}]
     assert is_core_claim("The taxi approval threshold is 100 RMB.", query_claims) is True
     assert is_core_claim("Unrelated boilerplate sentence about filing.", query_claims) is False
+
+
+def test_is_core_claim_reads_claim_decomposer_schema():
+    query_claims = [
+        {
+            "claim_id": "claim_1",
+            "claim_text": "How many lunar colonies does Alpha Trading have?",
+            "polarity": "question",
+        }
+    ]
+
+    assert is_core_claim(
+        "Alpha Trading has seven lunar colonies.", query_claims
+    ) is True
 
 
 def test_resolve_grounding_done_when_all_grounded():

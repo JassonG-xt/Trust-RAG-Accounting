@@ -30,7 +30,14 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.app.graph.workflow import get_workflow, route_after_judge, run_query
+import backend.app.graph.workflow as workflow_module
+from backend.app.graph.state import initial_state
+from backend.app.graph.workflow import (
+    build_workflow,
+    get_workflow,
+    route_after_final_review,
+    run_query,
+)
 from backend.app.ingestion.ingest_sample_docs import ingest
 from backend.app.main import app as fastapi_app
 from backend.app.review import (
@@ -44,7 +51,6 @@ from backend.app.review import (
 from backend.app.review.models import summarize_evidence_for_review
 from backend.app.services.document_repository import reset_repository
 from backend.app.tracing import reset_local_trace_collector
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_DOCS = PROJECT_ROOT / "sample_docs"
@@ -121,7 +127,7 @@ def client() -> TestClient:
 
 
 def _make_state(**overrides: Any) -> dict[str, Any]:
-    """Stub the minimum state shape for policy / route_after_judge tests."""
+    """Stub the minimum state shape for final-review routing tests."""
 
     base: dict[str, Any] = {
         "question": "anything",
@@ -138,6 +144,14 @@ def _make_state(**overrides: Any) -> dict[str, Any]:
     }
     base.update(overrides)
     return base
+
+
+def _unsupported_grounding_answer(_state: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "answer": "Alpha Trading has seven lunar colonies.",
+        "citations": [],
+        "visited_nodes": ["answer_generator"],
+    }
 
 
 # ===========================================================================
@@ -418,7 +432,7 @@ def test_workflow_unsafe_request_does_not_create_review_handoff() -> None:
     assert state["review_queue_id"] is None
     assert state["human_review_required"] is False
     assert state["human_review_reasons"] == []
-    # Unsafe path still hits the four-node fast path (no review note added).
+    # Unsafe path remains retrieval-free and adds no review note.
     assert "Review queue id" not in (state["answer"] or "")
 
 
@@ -426,11 +440,127 @@ def test_workflow_high_confidence_bookkeeping_skips_review_handoff() -> None:
     state = run_query("Alpha Trading Co. 的餐饮发票应该怎么入账？")
 
     assert state["question_type"] == "bookkeeping_sop"
-    # Phase 5A standard path stays 9 nodes when no handoff fires.
+    # The standard path reaches final review but skips the handoff node.
     assert "human_review_handoff" not in state["visited_nodes"]
     assert state["review_queue_id"] is None
     # Confidence high, no hard gate fired.
     assert state["confidence"] >= 0.6
+
+
+def test_workflow_grounding_abstention_handoffs_after_answer_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A post-generation abstention must still enter the review queue."""
+
+    monkeypatch.setenv("TRUST_RAG_ENABLE_GROUNDEDNESS_SELF_CORRECTION", "true")
+
+    monkeypatch.setattr(
+        workflow_module,
+        "answer_generator",
+        _unsupported_grounding_answer,
+    )
+    state = build_workflow().invoke(
+        initial_state("How many lunar colonies does Alpha Trading have?")
+    )
+
+    assert state["grounding_status"] == "abstained"
+    assert state["needs_human_review"] is True
+    assert state["human_review_required"] is True
+    assert state["review_queue_id"] is not None
+    assert state["human_review_reasons"]
+
+    visited = state["visited_nodes"]
+    assert visited.index("answer_generator") < visited.index("groundedness_verifier")
+    assert visited.index("groundedness_verifier") < visited.index("final_review_router")
+    assert visited.index("final_review_router") < visited.index("human_review_handoff")
+    assert visited.index("human_review_handoff") < visited.index("response_finalizer")
+    assert state["review_queue_id"] in (state["answer"] or "")
+    assert (state["answer"] or "").count(
+        "This answer has been queued for human review."
+    ) == 1
+    assert "This has been routed for human review." not in (state["answer"] or "")
+
+
+@pytest.mark.parametrize(
+    ("env_name", "env_value", "expected_status"),
+    [
+        ("TRUSTRAG_HUMAN_REVIEW_ENABLED", "false", None),
+        ("TRUSTRAG_PUBLIC_DEMO_ENABLED", "true", "public_demo_not_persisted"),
+    ],
+)
+def test_grounding_abstention_does_not_claim_success_without_queue(
+    monkeypatch: pytest.MonkeyPatch,
+    env_name: str,
+    env_value: str,
+    expected_status: str | None,
+) -> None:
+    monkeypatch.setenv("TRUST_RAG_ENABLE_GROUNDEDNESS_SELF_CORRECTION", "true")
+    monkeypatch.setenv(env_name, env_value)
+    monkeypatch.setattr(
+        workflow_module,
+        "answer_generator",
+        _unsupported_grounding_answer,
+    )
+
+    state = build_workflow().invoke(
+        initial_state("How many lunar colonies does Alpha Trading have?")
+    )
+
+    assert state["grounding_status"] == "abstained"
+    assert state["review_queue_id"] is None
+    assert state.get("review_status") == expected_status
+    assert "This requires human review." in (state["answer"] or "")
+    assert "has been routed for human review" not in (state["answer"] or "")
+    assert "queued for human review" not in (state["answer"] or "")
+
+
+def test_grounding_abstention_handoff_failure_does_not_claim_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRUST_RAG_ENABLE_GROUNDEDNESS_SELF_CORRECTION", "true")
+    monkeypatch.setattr(
+        workflow_module,
+        "answer_generator",
+        _unsupported_grounding_answer,
+    )
+    store = get_review_checkpoint_store()
+
+    def fail_append(_checkpoint: ReviewCheckpoint) -> None:
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(store, "append", fail_append)
+
+    state = build_workflow().invoke(
+        initial_state("How many lunar colonies does Alpha Trading have?")
+    )
+
+    assert state["grounding_status"] == "abstained"
+    assert state["review_status"] == "handoff_failed"
+    assert state["review_queue_id"] is None
+    assert "This requires human review." in (state["answer"] or "")
+    assert "has been routed for human review" not in (state["answer"] or "")
+    assert "queued for human review" not in (state["answer"] or "")
+
+
+def test_workflow_handoff_failure_does_not_append_queue_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = get_review_checkpoint_store()
+
+    def fail_append(_checkpoint: ReviewCheckpoint) -> None:
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(store, "append", fail_append)
+    state = run_query("小规模纳税人现在增值税应该怎么处理？")
+
+    assert state["human_review_required"] is True
+    assert state["review_status"] == "handoff_failed"
+    assert state["review_queue_id"] is None
+    assert "Review queue id" not in (state["answer"] or "")
+    assert state["visited_nodes"][-2:] == [
+        "human_review_handoff",
+        "response_finalizer",
+    ]
 
 
 def test_workflow_reimbursement_temporal_handoff() -> None:
@@ -650,27 +780,27 @@ def test_api_public_demo_blocks_review_workflow_endpoints(
 
 
 # ===========================================================================
-# Group E — route_after_judge unit tests
+# Group E — final review router unit tests
 # ===========================================================================
 
 
-def test_route_after_judge_handoff_when_policy_fires() -> None:
+def test_route_after_final_review_handoff_when_policy_fires() -> None:
     assert (
-        route_after_judge(_make_state(question_type="tax_policy"))  # type: ignore[arg-type]
+        route_after_final_review(_make_state(question_type="tax_policy"))  # type: ignore[arg-type]
         == "human_review_handoff"
     )
 
 
-def test_route_after_judge_direct_when_no_reason() -> None:
+def test_route_after_final_review_direct_when_no_reason() -> None:
     assert (
-        route_after_judge(_make_state())  # type: ignore[arg-type]
+        route_after_final_review(_make_state())  # type: ignore[arg-type]
         == "answer_directly"
     )
 
 
-def test_route_after_judge_direct_for_unsafe_refusal() -> None:
+def test_route_after_final_review_direct_for_unsafe_refusal() -> None:
     assert (
-        route_after_judge(
+        route_after_final_review(
             _make_state(
                 question_type="unsafe_request",
                 judge_verdict={"conclusion": "refuse_unsafe"},
@@ -680,11 +810,11 @@ def test_route_after_judge_direct_for_unsafe_refusal() -> None:
     )
 
 
-def test_route_after_judge_direct_when_feature_disabled(
+def test_route_after_final_review_direct_when_feature_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("TRUSTRAG_HUMAN_REVIEW_ENABLED", "false")
     assert (
-        route_after_judge(_make_state(question_type="tax_policy"))  # type: ignore[arg-type]
+        route_after_final_review(_make_state(question_type="tax_policy"))  # type: ignore[arg-type]
         == "answer_directly"
     )

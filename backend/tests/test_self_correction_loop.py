@@ -96,7 +96,7 @@ def loop_on(monkeypatch):
 
 
 def test_flag_off_graph_has_no_verifier():
-    # Default (flag off): answer_generator goes straight to END.
+    # Default (flag off): answer_generator skips the verifier.
     wf = build_workflow()
     state = wf.invoke(initial_state("What is the current taxi approval threshold?"))
     assert "groundedness_verifier" not in (state.get("visited_nodes") or [])

@@ -83,10 +83,15 @@ flowchart TD
     TC --> CF[conflict_detector]
     CF --> SC
     SC --> JA[judge_agent]
-    JA -->|review required| HR[human_review_handoff]
-    JA -->|answer directly| AG[answer_generator]
-    HR --> AG
-    AG --> END([END])
+    JA --> AG[answer_generator]
+    AG -->|grounding disabled or unsafe refusal| FR[final_review_router]
+    AG -->|verify| GV[groundedness_verifier]
+    GV -->|regenerate| AG
+    GV -->|terminal| FR
+    FR -->|review required| HR[human_review_handoff]
+    FR -->|answer directly| RF[response_finalizer]
+    HR --> RF
+    RF --> END([END])
 ```
 
 Detailed design notes live in:

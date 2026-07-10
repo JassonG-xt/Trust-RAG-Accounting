@@ -13,26 +13,26 @@ standard ──> claim_decomposer -> support_retriever -> counter_retriever
                      -> safety_checker -> judge_agent -> answer_generator
 ```
 
-Phase 5B adds a *second* conditional edge after ``judge_agent``. When
+Phase 10A moves the human-review decision after answer generation and
+optional groundedness self-correction. When
 the policy in ``backend.app.review.handoff_policy.should_handoff_for_review``
 says the case needs human review (tax policy / invoice compliance /
 evidence conflict / temporal conflict / insufficient evidence /
 low confidence), the graph routes through a new
 ``human_review_handoff`` node that writes a content-safe checkpoint to
-a local JSONL queue. The case then continues to ``answer_generator``
-as normal — the queue id is appended to the answer text so the
-client sees the audit pointer.
+a local JSONL queue. ``response_finalizer`` then appends the queue id to
+the already-generated answer so the client sees the audit pointer.
 
 ```
-judge_agent
-   ├── human_review_required ─> human_review_handoff ─> answer_generator
-   └── answer_directly        ──────────────────────────> answer_generator
+judge_agent -> answer_generator -> optional groundedness loop
+   -> final_review_router
+      ├── human_review_required -> human_review_handoff -> response_finalizer
+      └── answer_directly ------------------------------> response_finalizer
 ```
 
 Crucially, ``unsafe_request`` / ``refuse_unsafe`` outcomes do NOT
 enter the review queue — the handoff policy excludes them. The
-unsafe path remains: ``query_analyzer -> safety_checker -> judge_agent
--> answer_generator`` (four nodes, no queue).
+unsafe path remains retrieval-free and does not enter the review queue.
 """
 
 from __future__ import annotations
@@ -48,19 +48,20 @@ from .nodes import (
     claim_decomposer,
     conflict_detector,
     counter_retriever,
+    final_review_router,
     groundedness_verifier,
     human_review_handoff,
     judge_agent,
     query_analyzer,
+    response_finalizer,
     safety_checker,
     support_retriever,
     temporal_checker,
 )
 from .state import TrustRAGState, initial_state
 
-
 # ---------------------------------------------------------------------------
-# Conditional routing (Phase 5A + 5B)
+# Conditional routing (Phase 5A + 10A)
 # ---------------------------------------------------------------------------
 
 
@@ -92,8 +93,8 @@ def route_after_query_analysis(state: TrustRAGState) -> str:
     return _STANDARD_BRANCH
 
 
-def route_after_judge(state: TrustRAGState) -> str:
-    """Phase 5B conditional edge.
+def route_after_final_review(state: TrustRAGState) -> str:
+    """Choose the final human-review branch after generation completes.
 
     Pure reader of the handoff policy. Returns ``"human_review_handoff"``
     when the policy says the case requires review, otherwise
@@ -126,7 +127,7 @@ def route_after_answer(state: TrustRAGState) -> str:
     Unsafe refusals carry no groundable factual claims — sending a refusal
     message through the verifier would flag its sentences as "ungrounded"
     and the loop would strip the refusal. So ``refuse_unsafe`` skips the
-    loop and goes straight to END; every other answer enters the verifier.
+    loop and goes straight to final review; every other answer enters the verifier.
     """
     conclusion = (state.get("judge_verdict") or {}).get("conclusion")
     if conclusion == "refuse_unsafe":
@@ -157,8 +158,10 @@ def build_workflow():
     graph.add_node("conflict_detector", conflict_detector)
     graph.add_node("safety_checker", safety_checker)
     graph.add_node("judge_agent", judge_agent)
+    graph.add_node("final_review_router", final_review_router)
     graph.add_node("human_review_handoff", human_review_handoff)
     graph.add_node("answer_generator", answer_generator)
+    graph.add_node("response_finalizer", response_finalizer)
 
     # Entry into query_analyzer.
     graph.add_edge(START, "query_analyzer")
@@ -183,30 +186,19 @@ def build_workflow():
     # Tail entry — both branches funnel into safety_checker -> judge_agent.
     graph.add_edge("safety_checker", "judge_agent")
 
-    # Phase 5B — conditional edge after judge: maybe human review handoff.
-    graph.add_conditional_edges(
-        "judge_agent",
-        route_after_judge,
-        {
-            _REVIEW_BRANCH: "human_review_handoff",
-            _DIRECT_BRANCH: "answer_generator",
-        },
-    )
-    # Both review and direct branches converge on answer_generator.
-    graph.add_edge("human_review_handoff", "answer_generator")
+    graph.add_edge("judge_agent", "answer_generator")
 
     # Phase 3 — groundedness self-correction loop, behind a default-OFF flag.
-    # When disabled the graph is byte-identical to Phase 5B (answer_generator
-    # -> END). When enabled, answer_generator routes through the verifier
-    # (except unsafe refusals, which skip straight to END), and the verifier
-    # either ends the loop or sends a critique back for regeneration.
+    # When enabled, answer_generator routes through the verifier (except
+    # unsafe refusals). The verifier either sends a critique back for
+    # regeneration or forwards the terminal answer to final review.
     if get_settings().enable_groundedness_self_correction:
         graph.add_node("groundedness_verifier", groundedness_verifier)
         graph.add_conditional_edges(
             "answer_generator",
             route_after_answer,
             {
-                _SKIP_GROUNDING_BRANCH: END,
+                _SKIP_GROUNDING_BRANCH: "final_review_router",
                 _VERIFY_BRANCH: "groundedness_verifier",
             },
         )
@@ -215,11 +207,22 @@ def build_workflow():
             route_after_grounding,
             {
                 _REGENERATE_BRANCH: "answer_generator",
-                _GROUNDING_DONE_BRANCH: END,
+                _GROUNDING_DONE_BRANCH: "final_review_router",
             },
         )
     else:
-        graph.add_edge("answer_generator", END)
+        graph.add_edge("answer_generator", "final_review_router")
+
+    graph.add_conditional_edges(
+        "final_review_router",
+        route_after_final_review,
+        {
+            _REVIEW_BRANCH: "human_review_handoff",
+            _DIRECT_BRANCH: "response_finalizer",
+        },
+    )
+    graph.add_edge("human_review_handoff", "response_finalizer")
+    graph.add_edge("response_finalizer", END)
 
     return graph.compile()
 
@@ -242,7 +245,7 @@ def run_query(question: str) -> dict:
 __all__ = [
     "build_workflow",
     "get_workflow",
-    "route_after_judge",
+    "route_after_final_review",
     "route_after_query_analysis",
     "run_query",
 ]

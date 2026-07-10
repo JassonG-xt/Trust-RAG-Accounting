@@ -7,7 +7,7 @@ The GitHub Actions workflow in `.github/workflows/ci.yml` runs the repository hy
 ```mermaid
 flowchart TD
     PR["Pull request or push to main"] --> HYGIENE["bash scripts/check_repo_hygiene.sh"]
-    HYGIENE --> INSTALL["pip install -e .[dev]"]
+    HYGIENE --> INSTALL["pip install -c constraints.txt -e .[dev]"]
     INSTALL --> INGEST["Ingest sample_docs"]
     INGEST --> EVAL["Run accounting eval gate"]
     EVAL --> BASE["Same-repo PR only:<br/>run base eval for delta"]

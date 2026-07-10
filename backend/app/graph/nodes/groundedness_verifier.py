@@ -28,7 +28,7 @@ from ..grounding_policy import resolve_grounding
 
 _ABSTAIN_MESSAGE = (
     "I can't answer this from the available evidence without risking an "
-    "unsupported claim. This has been routed for human review."
+    "unsupported claim. This requires human review."
 )
 
 

@@ -23,6 +23,7 @@ import importlib
 import pytest
 
 from backend.app.graph.nodes.answer_generator import answer_generator
+from backend.app.graph.nodes.response_finalizer import response_finalizer
 from backend.app.llm.answer_generator import CitationAwareLLMAnswerGenerator
 from backend.app.llm.mock_provider import MockLLMProvider
 from backend.app.llm.providers import LLMGenerationResponse
@@ -212,7 +213,9 @@ def test_node_llm_mode_metadata_present(monkeypatch) -> None:
 def test_node_llm_mode_review_note_preserved(monkeypatch) -> None:
     monkeypatch.setenv("LLM_ANSWER_MODE", "llm")
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    result = answer_generator(_evidence_state(review_queue_id="review_123"))
+    state = _evidence_state(review_queue_id="review_123")
+    generated = answer_generator(state)
+    result = response_finalizer({**state, **generated})
     assert "Review queue id: review_123" in result["answer"]
     assert f"[source:{_PRIMARY_CHUNK}]" in result["answer"]
 

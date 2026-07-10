@@ -34,10 +34,15 @@ flowchart TD
     TC --> CF[conflict_detector]
     CF --> SC
     SC --> JA[judge_agent]
-    JA -->|route_after_judge = human_review_handoff| HR[human_review_handoff]
-    JA -->|route_after_judge = answer_directly| AG[answer_generator]
-    HR --> AG
-    AG --> END([END])
+    JA --> AG[answer_generator]
+    AG -->|grounding disabled or unsafe refusal| FR[final_review_router]
+    AG -->|verify| GV[groundedness_verifier]
+    GV -->|regenerate| AG
+    GV -->|terminal| FR
+    FR -->|human_review_handoff| HR[human_review_handoff]
+    FR -->|answer_directly| RF[response_finalizer]
+    HR --> RF
+    RF --> END([END])
 ```
 
 ## Node Responsibilities
@@ -52,8 +57,11 @@ flowchart TD
 | `conflict_detector` | Detect policy-family conflicts. | Metadata comparison over retrieved evidence. |
 | `safety_checker` | Detect prompt injection and unsafe accounting intent. | Deterministic patterns plus document metadata. |
 | `judge_agent` | Produce conclusion, confidence, and review decision signals. | Rule-based judge. |
+| `groundedness_verifier` | Verify answer claims and request regeneration, degradation, or abstention. | Deterministic faithfulness primitives behind a default-off flag. |
+| `final_review_router` | Expose a traceable post-generation review decision point. | No-op state marker followed by the shared handoff policy. |
 | `human_review_handoff` | Persist content-safe review checkpoint locally. | JSONL queue under `data/`. |
 | `answer_generator` | Assemble refusal, insufficient-evidence, or citation-backed answer. | Deterministic templates. |
+| `response_finalizer` | Append the review queue pointer after handoff. | Deterministic response envelope. |
 
 ## Unsafe Fast-Path
 
@@ -64,12 +72,21 @@ flowchart LR
     Q[query_analyzer] --> SC[safety_checker]
     SC --> JA[judge_agent]
     JA --> AG[answer_generator]
+    AG --> FR[final_review_router]
+    FR --> RF[response_finalizer]
 ```
 
 The expected `visited_nodes` list is:
 
 ```python
-["query_analyzer", "safety_checker", "judge_agent", "answer_generator"]
+[
+    "query_analyzer",
+    "safety_checker",
+    "judge_agent",
+    "answer_generator",
+    "final_review_router",
+    "response_finalizer",
+]
 ```
 
 This route is used for tax evasion, invoice fabrication, voucher destruction, and regulator-bypass requests. It refuses the request and offers a compliant alternative without searching the document corpus.
@@ -89,6 +106,8 @@ All non-unsafe accounting questions use the evidence path:
     "safety_checker",
     "judge_agent",
     "answer_generator",
+    "final_review_router",
+    "response_finalizer",
 ]
 ```
 
@@ -96,7 +115,7 @@ Prompt-injection inspection questions stay on this path. The system needs retrie
 
 ## Human Review Handoff
 
-After `judge_agent`, `route_after_judge` decides whether the workflow should enter `human_review_handoff`.
+After answer generation and optional groundedness self-correction, `route_after_final_review` decides whether the workflow should enter `human_review_handoff`.
 
 Review triggers include:
 
@@ -140,6 +159,6 @@ Remote tracing is intentionally disabled by default.
 - The FastAPI response keeps existing fields stable.
 - The unsafe route never invokes retrieval nodes.
 - The standard route keeps the full evidence path.
-- Human-review handoff is additive and does not alter unsafe refusal behavior.
+- Human-review handoff runs after answer/self-correction so late abstentions are persisted without altering unsafe refusal behavior.
 - Retrieval scoring remains inside the retrieval service, not the LangChain adapter.
 - Eval and tests pin the route shapes.

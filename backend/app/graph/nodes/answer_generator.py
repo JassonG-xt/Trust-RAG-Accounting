@@ -298,7 +298,7 @@ def _wrap_llm_answer(body: str, state: TrustRAGState) -> str:
     compliance-critical disclaimers — especially the active-version
     disambiguation — are guaranteed regardless of which evidence chunk the
     model chose to cite. The review-queue pointer is appended later by
-    :func:`answer_generator`.
+    :func:`response_finalizer` after a successful handoff.
     """
 
     return " ".join([body, *_answer_envelope(state)])
@@ -394,19 +394,6 @@ def answer_generator(state: TrustRAGState) -> dict:
     # citation-validated LLM generation. Returns None in template mode (the
     # default) so the deterministic behavior above is preserved exactly.
     generation_metadata = _maybe_generate_with_llm(state, result, conclusion)
-
-    # Phase 5B — if the case entered the review queue, append a short
-    # audit pointer so the API client sees the queue id without
-    # parsing a separate field. The unsafe refusal path never enters
-    # the queue (review_queue_id stays None) so it remains untouched.
-    # Applied AFTER any LLM generation so the pointer is never model output.
-    queue_id = state.get("review_queue_id")
-    if queue_id:
-        review_note = (
-            f" This answer has been queued for human review. "
-            f"Review queue id: {queue_id}."
-        )
-        result["answer"] = (result.get("answer") or "") + review_note
 
     result["visited_nodes"] = ["answer_generator"]
     if generation_metadata is not None:

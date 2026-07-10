@@ -1,14 +1,14 @@
 """Phase 5B human review handoff node.
 
-Sits between ``judge_agent`` and ``answer_generator`` on the review
-branch of the LangGraph workflow. The conditional edge
-``route_after_judge`` decides whether this node runs at all — if it
+Sits between ``final_review_router`` and ``response_finalizer`` on the
+review branch of the LangGraph workflow. The conditional edge
+``route_after_final_review`` decides whether this node runs at all — if it
 runs, the case is *guaranteed* to require human review (the policy
 already said so).
 
 Why re-run the policy inside the node:
 
-* ``route_after_judge`` is a pure reader (LangGraph contract); it
+* ``route_after_final_review`` is a pure reader (LangGraph contract); it
   returns a branch label, not the reasons list. The node needs the
   reasons to write into the checkpoint, so it asks the policy again.
 * Both sites import the same ``should_handoff_for_review`` function,
