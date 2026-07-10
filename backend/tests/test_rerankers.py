@@ -15,24 +15,22 @@ adapter is exercised only via its expected ``ExternalRerankerNotConfiguredError`
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from backend.app.core.config import Settings
 from backend.app.ingestion.ingest_sample_docs import ingest
 from backend.app.rerankers import MockReranker, create_reranker
-from backend.app.rerankers.external_adapters import (
-    BGEReranker,
-    ExternalRerankerNotConfiguredError,
-)
+from backend.app.rerankers.external_adapters import BGEReranker
 from backend.app.retrieval import RetrievalService
 from backend.app.retrieval.models import ScoreBreakdown, ScoredChunk
 from backend.app.services.document_repository import (
     DocumentRepository,
     reset_repository,
 )
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_DOCS = PROJECT_ROOT / "sample_docs"
@@ -328,14 +326,74 @@ def test_create_reranker_returns_mock_by_default():
     assert reranker.name == "mock"
 
 
+def test_production_defaults_to_local_bge_reranker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("RERANKER_PROVIDER", raising=False)
+    monkeypatch.delenv("RERANKER_MODEL", raising=False)
+
+    settings = Settings()
+
+    assert settings.reranker_provider == "bge"
+    assert settings.reranker_model == "BAAI/bge-reranker-v2-m3"
+
+
 def test_create_reranker_raises_for_unknown_name():
     with pytest.raises(ValueError, match="Unknown reranker provider"):
         create_reranker("not-a-real-reranker")
 
 
-def test_bge_adapter_raises_until_phase_3e():
-    with pytest.raises(ExternalRerankerNotConfiguredError):
-        BGEReranker(model_name="anything")
+def test_bge_adapter_reranks_with_cross_encoder(monkeypatch: pytest.MonkeyPatch):
+    captured: dict[str, object] = {}
+
+    class FakeCrossEncoder:
+        def __init__(self, model_name: str, *, device: str | None = None):
+            captured["model_name"] = model_name
+            captured["device"] = device
+
+        def predict(self, pairs, **kwargs):
+            captured["pairs"] = pairs
+            captured["predict_kwargs"] = kwargs
+            raw_scores = [0.0, 2.0]
+            activation = kwargs.get("activation_fct")
+            if activation is None:
+                return [0.5, 0.8807970779778823]
+            return [activation(score) for score in raw_scores]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "sentence_transformers",
+        SimpleNamespace(CrossEncoder=FakeCrossEncoder),
+    )
+    reranker = BGEReranker(
+        model_name="BAAI/bge-reranker-v2-m3",
+        device="cpu",
+        batch_size=4,
+        weight=0.2,
+    )
+    candidates = [
+        _make_candidate("a", content="generic accounting text"),
+        _make_candidate("b", content="taxi approval over 100 RMB"),
+    ]
+
+    result = reranker.rerank("taxi approval", candidates)
+
+    assert reranker.name == "bge"
+    assert [candidate.chunk_id for candidate in result] == ["b", "a"]
+    assert captured["model_name"] == "BAAI/bge-reranker-v2-m3"
+    assert captured["device"] == "cpu"
+    predict_kwargs = captured["predict_kwargs"]
+    assert callable(predict_kwargs["activation_fct"])
+    assert predict_kwargs["batch_size"] == 4
+    assert predict_kwargs["convert_to_numpy"] is False
+    assert predict_kwargs["show_progress_bar"] is False
+    assert result[0].score_breakdown.reranker == pytest.approx(0.1762)
+    assert result[1].score_breakdown.reranker == pytest.approx(0.1)
+    for candidate in result:
+        assert candidate.score == pytest.approx(
+            round(candidate.score_breakdown.total(), 4)
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -365,6 +423,24 @@ def test_retrieval_service_can_disable_reranker_via_settings(chunks, monkeypatch
     # default of the new ScoreBreakdown field.
     for r in results:
         assert r.score_breakdown.reranker == 0.0
+
+
+def test_production_reranker_initialization_fails_closed(
+    chunks,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_create_reranker(*args, **kwargs):
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr("backend.app.rerankers.create_reranker", fail_create_reranker)
+    settings = Settings(
+        app_env="production",
+        retrieval_enable_vector=False,
+        reranker_provider="bge",
+    )
+
+    with pytest.raises(RuntimeError, match="model unavailable"):
+        RetrievalService(chunks, settings=settings)
 
 
 def test_retrieval_service_top_k_respected_after_rerank(chunks):

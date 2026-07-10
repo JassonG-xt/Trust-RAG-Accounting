@@ -20,38 +20,16 @@ versions. The selection rule is intentionally conservative:
 
 from __future__ import annotations
 
-import re
+from collections.abc import Iterable
 from datetime import date
-from typing import Iterable
 
 from ...core.config import get_settings
-from ..state import TrustRAGState
-
-_DEFAULT_AS_OF = date(2026, 5, 27)
-
-
-_HISTORICAL_YEAR_PATTERNS: tuple[tuple[re.Pattern, int], ...] = (
-    (re.compile(r"\b2024\b"), 2024),
-    (re.compile(r"\b2025\b"), 2025),
+from ...retrieval.temporal import (
+    infer_as_of_from_query,
+    is_active_as_of,
+    parse_iso_date,
 )
-
-
-def _parse_iso(value: str | None) -> date | None:
-    if not value:
-        return None
-    try:
-        return date.fromisoformat(value)
-    except ValueError:
-        return None
-
-
-def _detect_as_of(question: str) -> date:
-    if not question:
-        return _DEFAULT_AS_OF
-    for pattern, year in _HISTORICAL_YEAR_PATTERNS:
-        if pattern.search(question):
-            return date(year, 6, 30)
-    return _DEFAULT_AS_OF
+from ..state import TrustRAGState
 
 
 def _candidate_pool(state: TrustRAGState) -> list[dict]:
@@ -72,15 +50,11 @@ def _candidate_pool(state: TrustRAGState) -> list[dict]:
 
 
 def _is_active(record: dict, as_of: date) -> bool:
-    vf = _parse_iso(record.get("valid_from"))
-    vt = _parse_iso(record.get("valid_to"))
-    if vf is None:
-        return False
-    if vf > as_of:
-        return False
-    if vt is not None and vt < as_of:
-        return False
-    return True
+    return is_active_as_of(
+        valid_from=record.get("valid_from"),
+        valid_to=record.get("valid_to"),
+        as_of=as_of,
+    )
 
 
 def _group_by_family(records: Iterable[dict]) -> dict[str, list[dict]]:
@@ -142,7 +116,7 @@ def temporal_checker(state: TrustRAGState) -> dict:
         }
 
     question = state.get("question") or ""
-    as_of = _detect_as_of(question)
+    as_of = infer_as_of_from_query(question)
 
     pool = _candidate_pool(state)
 
@@ -155,7 +129,7 @@ def temporal_checker(state: TrustRAGState) -> dict:
             # Only count records whose valid_to has actually passed as
             # "expired"; records that simply haven't started yet are
             # treated as not-yet-active.
-            vt = _parse_iso(rec.get("valid_to"))
+            vt = parse_iso_date(rec.get("valid_to"))
             if vt is not None and vt < as_of:
                 expired_records.append(rec)
 
@@ -202,7 +176,7 @@ def temporal_checker(state: TrustRAGState) -> dict:
 
     latest_valid_from: date | None = None
     if selected_record:
-        latest_valid_from = _parse_iso(selected_record.get("valid_from"))
+        latest_valid_from = parse_iso_date(selected_record.get("valid_from"))
 
     expired_doc_ids = sorted({r.get("doc_id") for r in expired_records if r.get("doc_id")})
     outdated_versions = sorted(

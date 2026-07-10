@@ -608,6 +608,7 @@ def test_repository_breakdown_invariant_at_dict_layer(
             + bd["metadata"]
             + bd["client_match"]
             + bd["stance"]
+            + bd["temporal"]
             + bd["malicious_penalty"]
         )
         assert abs(hit["score"] - round(total, 4)) < 1e-3, hit

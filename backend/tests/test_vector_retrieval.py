@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from backend.app.core.config import Settings
 from backend.app.embeddings import MockEmbeddingProvider
 from backend.app.ingestion.ingest_sample_docs import ingest
 from backend.app.retrieval import (
@@ -25,6 +26,8 @@ from backend.app.retrieval import (
     KeywordRetriever,
     MetadataFilter,
     RetrievalService,
+    ScoreBreakdown,
+    ScoredChunk,
     VectorRetriever,
     build_metadata_filter,
 )
@@ -33,7 +36,6 @@ from backend.app.services.document_repository import (
     reset_repository,
 )
 from backend.app.vectorstore import InMemoryVectorStore
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_DOCS = PROJECT_ROOT / "sample_docs"
@@ -188,6 +190,126 @@ def test_hybrid_with_vector_uses_three_way_strategy(chunks, embedding_provider):
     assert results[0].retrieval_strategy == "hybrid_keyword_bm25_vector"
 
 
+def test_hybrid_uses_rrf_and_records_source_ranks(chunks, embedding_provider):
+    hybrid = HybridRetriever(
+        KeywordRetriever(chunks),
+        BM25Retriever(chunks),
+        VectorRetriever(chunks, embedding_provider=embedding_provider),
+    )
+
+    results = hybrid.search(
+        "Alpha Trading Co. 的餐饮发票应该怎么入账？",
+        metadata_filter=build_metadata_filter(
+            "Alpha Trading Co. 的餐饮发票应该怎么入账？",
+        ),
+    )
+
+    assert results[0].chunk_id == "alpha_trading_bookkeeping_sop_2026::chunk_0001"
+    assert results[0].metadata["fusion_method"] == "rrf"
+    source_ranks = results[0].metadata["source_ranks"]
+    assert source_ranks["keyword"] == 1
+    assert source_ranks["bm25"] == 1
+    assert source_ranks["vector"] >= 1
+
+
+def test_rrf_uses_exact_rank_formula_and_chunk_id_tiebreak() -> None:
+    def hit(chunk_id: str, component: str) -> ScoredChunk:
+        return ScoredChunk(
+            chunk_id=chunk_id,
+            document_id=f"doc_{chunk_id}",
+            content=f"content {chunk_id}",
+            score=0.9,
+            score_breakdown=ScoreBreakdown(**{component: 0.9}),
+            retrieval_strategy=component,
+            title=chunk_id,
+            version="v1",
+            document_type="policy",
+            source_path="<test>",
+        )
+
+    class StubRetriever:
+        def __init__(self, hits: list[ScoredChunk]) -> None:
+            self._hits = hits
+
+        def search(self, *args, **kwargs) -> list[ScoredChunk]:
+            return list(self._hits)
+
+    keyword = StubRetriever([hit("b", "keyword"), hit("a", "keyword")])
+    bm25 = StubRetriever([hit("a", "bm25"), hit("b", "bm25")])
+    hybrid = HybridRetriever(
+        keyword,  # type: ignore[arg-type]
+        bm25,  # type: ignore[arg-type]
+        None,
+        keyword_weight=0.5,
+        bm25_weight=0.5,
+        vector_weight=0.0,
+        fusion_mode="rrf",
+        rrf_k=60,
+    )
+
+    results = hybrid.search("query", top_k=2)
+
+    assert [result.chunk_id for result in results] == ["a", "b"]
+    assert results[0].score_breakdown.keyword == pytest.approx(0.4919)
+    assert results[0].score_breakdown.bm25 == pytest.approx(0.5)
+    assert results[0].score == pytest.approx(0.9919)
+    assert results[1].score == pytest.approx(results[0].score)
+
+
+def test_fusion_preserves_negative_temporal_score_from_present_hit() -> None:
+    candidate = ScoredChunk(
+        chunk_id="inactive",
+        document_id="inactive_doc",
+        content="expired policy",
+        score=0.8,
+        score_breakdown=ScoreBreakdown(keyword=0.8, temporal=-0.12),
+        retrieval_strategy="keyword",
+        title="Inactive",
+        version="v1",
+        document_type="policy",
+        source_path="<test>",
+    )
+
+    class StubRetriever:
+        def __init__(self, hits: list[ScoredChunk]) -> None:
+            self._hits = hits
+
+        def search(self, *args, **kwargs) -> list[ScoredChunk]:
+            return list(self._hits)
+
+    hybrid = HybridRetriever(
+        StubRetriever([candidate]),  # type: ignore[arg-type]
+        StubRetriever([]),  # type: ignore[arg-type]
+        None,
+        keyword_weight=0.5,
+        bm25_weight=0.5,
+        vector_weight=0.0,
+        fusion_mode="weighted",
+    )
+
+    result = hybrid.search("query", top_k=1)[0]
+
+    assert result.score_breakdown.temporal == pytest.approx(-0.12)
+    assert result.score == pytest.approx(0.28)
+    assert result.score == pytest.approx(round(result.score_breakdown.total(), 4))
+
+
+def test_retrieval_settings_preserve_weighted_fusion_in_demo() -> None:
+    settings = Settings()
+    assert settings.retrieval_fusion_mode == "weighted"
+    assert settings.retrieval_rrf_k == 60
+    assert settings.retrieval_mmr_lambda == pytest.approx(0.80)
+
+
+def test_retrieval_settings_default_to_rrf_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("RETRIEVAL_FUSION_MODE", raising=False)
+
+    assert Settings().retrieval_fusion_mode == "rrf"
+
+
 def test_hybrid_without_vector_keeps_phase_3a_strategy(chunks):
     kw = KeywordRetriever(chunks)
     bm = BM25Retriever(chunks)
@@ -274,3 +396,73 @@ def test_retrieval_service_breakdown_carries_vector_field(chunks):
     assert bd.vector >= 0.0
     # Total signal (keyword + bm25 + vector) is positive.
     assert bd.keyword + bd.bm25 + bd.vector > 0.0
+
+
+def test_retrieval_service_passes_sentence_transformers_settings_to_factory(
+    chunks,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, object] = {}
+
+    def fake_get_embedding_provider(
+        provider: str,
+        *,
+        dimension: int,
+        model_name: str | None,
+        device: str | None,
+        batch_size: int,
+    ):
+        captured.update(
+            {
+                "provider": provider,
+                "dimension": dimension,
+                "model_name": model_name,
+                "device": device,
+                "batch_size": batch_size,
+            }
+        )
+        return MockEmbeddingProvider(dimension=dimension)
+
+    monkeypatch.setattr(
+        "backend.app.retrieval.retrieval_service.get_embedding_provider",
+        fake_get_embedding_provider,
+    )
+    settings = Settings(
+        embedding_provider="sentence_transformers",
+        embedding_model="BAAI/bge-m3",
+        embedding_dimension=32,
+        embedding_device="cpu",
+        embedding_batch_size=4,
+    )
+
+    service = RetrievalService(chunks, settings=settings)
+
+    assert service.vector is not None
+    assert captured == {
+        "provider": "sentence_transformers",
+        "dimension": 32,
+        "model_name": "BAAI/bge-m3",
+        "device": "cpu",
+        "batch_size": 4,
+    }
+
+
+def test_production_embedding_initialization_fails_closed(
+    chunks,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_provider(*args, **kwargs):
+        raise RuntimeError("embedding model unavailable")
+
+    monkeypatch.setattr(
+        "backend.app.retrieval.retrieval_service.get_embedding_provider",
+        fail_provider,
+    )
+    settings = Settings(
+        app_env="production",
+        embedding_provider="sentence_transformers",
+        reranker_provider="none",
+    )
+
+    with pytest.raises(RuntimeError, match="embedding model unavailable"):
+        RetrievalService(chunks, settings=settings)

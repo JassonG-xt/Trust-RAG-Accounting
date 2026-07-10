@@ -44,7 +44,7 @@ from ..vectorstore import (
     metadata_filter_to_payload_filter,
 )
 from .models import MetadataFilter, ScoreBreakdown, ScoredChunk
-
+from .temporal import is_chunk_active_as_of, parse_iso_date, temporal_score_for_chunk
 
 _MALICIOUS_VECTOR_CAP = 0.15
 
@@ -250,6 +250,7 @@ class VectorRetriever:
         stance: str,
     ) -> ScoreBreakdown | None:
         breakdown = ScoreBreakdown()
+        as_of = parse_iso_date(metadata_filter.as_of)
 
         if chunk.is_malicious:
             # Quarantine path — only surface in counter, with a small
@@ -259,11 +260,7 @@ class VectorRetriever:
             breakdown.vector = _MALICIOUS_VECTOR_CAP
             return breakdown
 
-        # Stance hard filter for non-malicious chunks.
-        is_expired = bool(chunk.valid_to)
-        if stance == "support" and is_expired:
-            return None
-        if stance == "counter" and not is_expired:
+        if stance == "counter" and is_chunk_active_as_of(chunk, as_of):
             return None
 
         # Map the raw cosine-derived score (already in [0, 1] from the
@@ -285,6 +282,11 @@ class VectorRetriever:
         if metadata_filter.client and chunk.client == metadata_filter.client:
             breakdown.client_match = 0.05
 
-        breakdown.stance = 0.02
+        breakdown.stance = 0.02 if stance == "support" else 0.0
+        breakdown.temporal = temporal_score_for_chunk(
+            chunk,
+            as_of=as_of,
+            stance=stance,
+        )
 
         return breakdown

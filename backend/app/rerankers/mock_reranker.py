@@ -102,6 +102,7 @@ class MockReranker:
                 metadata=cand.score_breakdown.metadata,
                 client_match=cand.score_breakdown.client_match,
                 stance=cand.score_breakdown.stance,
+                temporal=cand.score_breakdown.temporal,
                 malicious_penalty=cand.score_breakdown.malicious_penalty,
             )
             new_total = max(0.0, new_breakdown.total())

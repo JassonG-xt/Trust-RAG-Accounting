@@ -122,3 +122,12 @@ def test_documented_workflow_uses_post_generation_review_routing() -> None:
     assert 'AG --> FR["final_review_router"]' in architecture
     assert 'FR --> POLICY["should_handoff_for_review"]' in architecture
     assert 'POLICY -->|no| AG[answer_generator]' not in architecture
+
+
+def test_ci_eval_documentation_includes_retrieval_gate() -> None:
+    docs = (REPO_ROOT / "docs" / "ci_eval_gate.md").read_text(encoding="utf-8")
+
+    assert "Run retrieval eval gate" in docs
+    assert "--min-score 0.90" in docs
+    assert "data/retrieval_eval_results.json" in docs
+    assert "data/retrieval_eval_report.md" in docs

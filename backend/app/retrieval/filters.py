@@ -23,7 +23,7 @@ import unicodedata
 
 from ..ingestion.models import DocumentChunk
 from .models import MetadataFilter
-
+from .temporal import infer_as_of_from_query
 
 # ---------------------------------------------------------------------------
 # Client aliases
@@ -200,7 +200,7 @@ def build_metadata_filter(
         policy_families=[],
         include_malicious=include_malicious,
         include_expired=True,
-        as_of=None,
+        as_of=infer_as_of_from_query(query).isoformat(),
     )
 
 

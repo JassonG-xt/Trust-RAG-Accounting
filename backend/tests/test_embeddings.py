@@ -12,8 +12,14 @@ The mock provider must be:
 
 from __future__ import annotations
 
+import builtins
 import math
+import sys
+import types
 
+import pytest
+
+from backend.app.core.config import Settings
 from backend.app.embeddings import MockEmbeddingProvider, get_embedding_provider
 
 
@@ -107,7 +113,155 @@ def test_factory_returns_mock_provider_by_default():
 
 
 def test_factory_raises_for_unknown_provider():
-    import pytest
-
     with pytest.raises(ValueError, match="Unknown embedding provider"):
         get_embedding_provider("not-a-real-provider")
+
+
+def test_settings_reads_sentence_transformers_embedding_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "sentence_transformers")
+    monkeypatch.delenv("EMBEDDING_DIMENSION", raising=False)
+    monkeypatch.setenv("EMBEDDING_MODEL", "BAAI/bge-m3")
+    monkeypatch.setenv("EMBEDDING_DEVICE", "cpu")
+    monkeypatch.setenv("EMBEDDING_BATCH_SIZE", "8")
+
+    settings = Settings()
+
+    assert settings.embedding_provider == "sentence_transformers"
+    assert settings.embedding_model == "BAAI/bge-m3"
+    assert settings.embedding_dimension == 1024
+    assert settings.embedding_device == "cpu"
+    assert settings.embedding_batch_size == 8
+
+
+def test_production_defaults_to_local_bge_m3(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    for name in ("EMBEDDING_PROVIDER", "EMBEDDING_MODEL", "EMBEDDING_DIMENSION"):
+        monkeypatch.delenv(name, raising=False)
+
+    settings = Settings()
+
+    assert settings.embedding_provider == "sentence_transformers"
+    assert settings.embedding_model == "BAAI/bge-m3"
+    assert settings.embedding_dimension == 1024
+
+
+def _install_fake_sentence_transformers(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    vector_size: int,
+) -> type:
+    class FakeSentenceTransformer:
+        calls: list[tuple[str, str | None]] = []
+        encode_calls: list[dict] = []
+
+        def __init__(self, model_name: str, device: str | None = None) -> None:
+            self.model_name = model_name
+            self.device = device
+            self.calls.append((model_name, device))
+
+        def encode(
+            self,
+            texts,
+            *,
+            batch_size: int,
+            normalize_embeddings: bool,
+            convert_to_numpy: bool,
+        ):
+            text_list = list(texts)
+            self.encode_calls.append(
+                {
+                    "texts": text_list,
+                    "batch_size": batch_size,
+                    "normalize_embeddings": normalize_embeddings,
+                    "convert_to_numpy": convert_to_numpy,
+                }
+            )
+            rows = []
+            for row_idx, _text in enumerate(text_list):
+                row = [0.0] * vector_size
+                row[row_idx % vector_size] = 1.0
+                rows.append(row)
+            return rows
+
+    fake_module = types.SimpleNamespace(SentenceTransformer=FakeSentenceTransformer)
+    monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
+    return FakeSentenceTransformer
+
+
+def test_factory_returns_sentence_transformers_provider_with_bge_m3_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_model = _install_fake_sentence_transformers(monkeypatch, vector_size=1024)
+
+    provider = get_embedding_provider("sentence_transformers")
+
+    assert provider.dimension == 1024
+    assert provider.embed_text("餐饮发票")[:3] == [1.0, 0.0, 0.0]
+    assert fake_model.calls == [("BAAI/bge-m3", None)]
+
+
+def test_sentence_transformers_provider_batches_and_normalizes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_model = _install_fake_sentence_transformers(monkeypatch, vector_size=4)
+    module = __import__(
+        "backend.app.embeddings.sentence_transformers_provider",
+        fromlist=["SentenceTransformersEmbeddingProvider"],
+    )
+    provider = module.SentenceTransformersEmbeddingProvider(
+        model_name="fake-model",
+        dimension=4,
+        batch_size=2,
+        device="cpu",
+    )
+
+    vectors = provider.embed_texts(["alpha", "beta"])
+
+    assert vectors == [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]
+    assert fake_model.calls == [("fake-model", "cpu")]
+    assert fake_model.encode_calls == [
+        {
+            "texts": ["alpha", "beta"],
+            "batch_size": 2,
+            "normalize_embeddings": True,
+            "convert_to_numpy": False,
+        }
+    ]
+
+
+def test_sentence_transformers_provider_rejects_dimension_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_sentence_transformers(monkeypatch, vector_size=3)
+    module = __import__(
+        "backend.app.embeddings.sentence_transformers_provider",
+        fromlist=["SentenceTransformersEmbeddingProvider"],
+    )
+    provider = module.SentenceTransformersEmbeddingProvider(
+        model_name="fake-model",
+        dimension=4,
+    )
+
+    with pytest.raises(ValueError, match="EMBEDDING_DIMENSION"):
+        provider.embed_text("alpha")
+
+
+def test_sentence_transformers_provider_missing_dependency_has_install_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delitem(sys.modules, "sentence_transformers", raising=False)
+    real_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "sentence_transformers":
+            raise ImportError("not installed")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    with pytest.raises(ImportError, match=r"\.\[embeddings\]"):
+        get_embedding_provider("sentence_transformers")

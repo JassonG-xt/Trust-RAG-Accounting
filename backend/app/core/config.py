@@ -46,11 +46,53 @@ def _optional_str_env(name: str) -> str | None:
     return raw or None
 
 
+def _is_production_env() -> bool:
+    return os.getenv("APP_ENV", "development").strip().lower() in {
+        "production",
+        "prod",
+    }
+
+
+def _default_embedding_provider() -> str:
+    configured = os.getenv("EMBEDDING_PROVIDER")
+    if configured is not None:
+        return configured
+    return "sentence_transformers" if _is_production_env() else "mock"
+
+
+def _default_embedding_model() -> str | None:
+    configured = _optional_str_env("EMBEDDING_MODEL")
+    if configured is not None:
+        return configured
+    return "BAAI/bge-m3" if _is_production_env() else None
+
+
 def _default_embedding_dimension() -> int:
-    provider = os.getenv("EMBEDDING_PROVIDER", "mock").strip().lower()
+    provider = _default_embedding_provider().strip().lower()
     if provider in {"sentence_transformers", "sentence-transformers", "bge_m3", "bge-m3"}:
         return 1024
     return 64
+
+
+def _default_retrieval_fusion_mode() -> str:
+    configured = os.getenv("RETRIEVAL_FUSION_MODE")
+    if configured is not None:
+        return configured
+    return "rrf" if _is_production_env() else "weighted"
+
+
+def _default_reranker_provider() -> str:
+    configured = os.getenv("RERANKER_PROVIDER")
+    if configured is not None:
+        return configured
+    return "bge" if _is_production_env() else "mock"
+
+
+def _default_reranker_model() -> str | None:
+    configured = _optional_str_env("RERANKER_MODEL")
+    if configured is not None:
+        return configured
+    return "BAAI/bge-reranker-v2-m3" if _is_production_env() else None
 
 
 @dataclass(frozen=True)
@@ -63,7 +105,7 @@ class Settings:
     # Provider selection — mock remains the deterministic default.
     llm_provider: str = field(default_factory=lambda: os.getenv("LLM_PROVIDER", "mock"))
     embedding_provider: str = field(
-        default_factory=lambda: os.getenv("EMBEDDING_PROVIDER", "mock")
+        default_factory=_default_embedding_provider
     )
 
     # Behavior knobs consumed by graph nodes.
@@ -100,8 +142,23 @@ class Settings:
     retrieval_enable_vector: bool = field(
         default_factory=lambda: _bool_env("RETRIEVAL_ENABLE_VECTOR", True)
     )
+    retrieval_fusion_mode: str = field(
+        default_factory=_default_retrieval_fusion_mode
+    )
+    retrieval_rrf_k: int = field(
+        default_factory=lambda: _int_env("RETRIEVAL_RRF_K", 60)
+    )
+    retrieval_enable_mmr: bool = field(
+        default_factory=lambda: _bool_env("RETRIEVAL_ENABLE_MMR", True)
+    )
+    retrieval_mmr_lambda: float = field(
+        default_factory=lambda: _float_env("RETRIEVAL_MMR_LAMBDA", 0.80)
+    )
+    retrieval_mmr_fetch_k: int = field(
+        default_factory=lambda: _int_env("RETRIEVAL_MMR_FETCH_K", 12)
+    )
     embedding_model: str | None = field(
-        default_factory=lambda: _optional_str_env("EMBEDDING_MODEL")
+        default_factory=_default_embedding_model
     )
     embedding_dimension: int = field(
         default_factory=lambda: _int_env(
@@ -132,13 +189,22 @@ class Settings:
     # post-hybrid precision pass exercises end-to-end without GPU /
     # network / torch. Operators disable it via RERANKER_PROVIDER=none.
     reranker_provider: str = field(
-        default_factory=lambda: os.getenv("RERANKER_PROVIDER", "mock")
+        default_factory=_default_reranker_provider
     )
     reranker_top_n: int = field(
         default_factory=lambda: _int_env("RERANKER_TOP_N", 12)
     )
     reranker_weight: float = field(
         default_factory=lambda: _float_env("RERANKER_WEIGHT", 0.15)
+    )
+    reranker_model: str | None = field(
+        default_factory=_default_reranker_model
+    )
+    reranker_device: str | None = field(
+        default_factory=lambda: _optional_str_env("RERANKER_DEVICE")
+    )
+    reranker_batch_size: int = field(
+        default_factory=lambda: _int_env("RERANKER_BATCH_SIZE", 8)
     )
 
     # Phase 4B — local tracing. Disabled by default. When enabled,
@@ -174,8 +240,9 @@ class Settings:
     trustrag_human_review_enabled: bool = field(
         default_factory=lambda: _bool_env("TRUSTRAG_HUMAN_REVIEW_ENABLED", True)
     )
-    # Public hosted demo mode. RAG queries remain enabled, but reviewer
-    # workflow endpoints and queue persistence are disabled for visitors.
+    # Public hosted demo mode. RAG queries remain enabled, but the reviewer
+    # workflow is read-only: cases can signal that human review would be
+    # required without persisting visitor questions to the local JSONL queue.
     trustrag_public_demo_enabled: bool = field(
         default_factory=lambda: _bool_env("TRUSTRAG_PUBLIC_DEMO_ENABLED", False)
     )
