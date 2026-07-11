@@ -10,16 +10,28 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import logging
+import re
+import time
+import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, Response
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.routing import Match
 
-from .core.config import get_settings
+from .auth import (
+    AuthenticationError,
+    RequestPrincipal,
+    StaticAuthenticator,
+    permission_for_request,
+)
+from .core.container import ApplicationContainer, build_application_container
 from .evals.history import EvalHistoryResponse, list_eval_history
 from .evals.models import EvalRunSummary
 from .evals.provider_benchmark_dashboard import (
@@ -31,10 +43,13 @@ from .evals.provider_benchmark_history import (
     list_provider_benchmark_history,
 )
 from .graph.workflow import run_query
+from .indexing import IndexGeneration, IndexJob, IndexJobSubmission
+from .request_context import bind_request_context
 from .review import (
     DEFAULT_LIMIT,
-    InvalidReviewTransitionError,
     MAX_LIMIT,
+    VALID_SORTS,
+    InvalidReviewTransitionError,
     ReviewActionFilter,
     ReviewActionHistoryResponse,
     ReviewActionRequest,
@@ -45,10 +60,6 @@ from .review import (
     ReviewQueueFilter,
     ReviewQueueResponse,
     ReviewQueueSummaryResponse,
-    ReviewService,
-    VALID_SORTS,
-    get_review_action_store,
-    get_review_checkpoint_store,
 )
 from .schemas.rag import (
     DemoConfigResponse,
@@ -59,11 +70,9 @@ from .schemas.rag import (
     HumanReviewSummary,
     RAGQueryRequest,
     RAGQueryResponse,
-    TracesResponse,
     TracesClearResponse,
+    TracesResponse,
 )
-from .services.document_repository import get_repository
-from .tracing import get_local_trace_collector
 
 logger = logging.getLogger("trust_rag.main")
 
@@ -72,9 +81,17 @@ FRONTEND_DIR = PROJECT_ROOT / "frontend"
 FRONTEND_INDEX = FRONTEND_DIR / "index.html"
 
 
-def create_app() -> FastAPI:
-    settings = get_settings()
+def create_app(container: ApplicationContainer | None = None) -> FastAPI:
+    container = container or build_application_container()
+    settings = container.settings
     logging.basicConfig(level=settings.log_level)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        try:
+            yield
+        finally:
+            container.telemetry.shutdown()
 
     app = FastAPI(
         title="TrustRAG",
@@ -85,7 +102,73 @@ def create_app() -> FastAPI:
             "with temporal validation, counter-evidence retrieval, and "
             "human-review boundaries. Phase 2A: real Markdown ingestion."
         ),
+        lifespan=lifespan,
     )
+    app.state.container = container
+
+    @app.middleware("http")
+    async def authorize_request(request: Request, call_next):
+        permission = permission_for_request(request.method, request.url.path)
+        if permission is None:
+            return await call_next(request)
+        authenticator = container.authenticator or StaticAuthenticator(
+            RequestPrincipal("local-admin", settings.tenant_id, frozenset({"admin"}))
+        )
+        authorization = request.headers.get("Authorization", "")
+        token = authorization[7:].strip() if authorization.startswith("Bearer ") else None
+        try:
+            principal = authenticator.authenticate(token)
+        except AuthenticationError:
+            return JSONResponse(status_code=401, content={"detail": "authentication required"})
+        if not container.authorization_policy.is_allowed(principal, permission):
+            return JSONResponse(status_code=403, content={"detail": "permission denied"})
+        request.state.principal = principal
+        return await call_next(request)
+
+    @app.middleware("http")
+    async def observe_request(request: Request, call_next):
+        supplied_request_id = request.headers.get("X-Request-ID", "")
+        request_id = (
+            supplied_request_id
+            if re.fullmatch(r"[A-Za-z0-9._-]{1,128}", supplied_request_id)
+            else str(uuid.uuid4())
+        )
+        request.state.request_id = request_id
+        route_template = _route_template(app, request)
+        attributes = {
+            "http.method": request.method,
+            "http.route": route_template,
+            "request_id": request_id,
+        }
+        started = time.perf_counter()
+        status_code = 500
+        with container.telemetry.span("http.request", attributes):
+            try:
+                response = await call_next(request)
+                status_code = response.status_code
+            except Exception:
+                container.telemetry.increment(
+                    "http.errors",
+                    attributes={
+                        "http.method": request.method,
+                        "http.route": route_template,
+                    },
+                )
+                raise
+        duration_ms = (time.perf_counter() - started) * 1000
+        metric_attributes = {
+            "http.method": request.method,
+            "http.route": route_template,
+            "http.status_code": status_code,
+        }
+        container.telemetry.increment("http.requests", attributes=metric_attributes)
+        container.telemetry.record(
+            "http.server.duration_ms",
+            duration_ms,
+            attributes=metric_attributes,
+        )
+        response.headers["X-Request-ID"] = request_id
+        return response
     if FRONTEND_DIR.exists():
         app.mount(
             "/dashboard/static",
@@ -97,9 +180,21 @@ def create_app() -> FastAPI:
     def healthz() -> HealthResponse:
         return HealthResponse()
 
+    @app.get("/readyz", tags=["meta"])
+    def readyz():
+        checks = {
+            name: _safe_readiness_check(check)
+            for name, check in container.readiness_checks.items()
+        }
+        ready = all(checks.values())
+        payload = {"status": "ready" if ready else "not_ready", "checks": checks}
+        if not ready:
+            return JSONResponse(status_code=503, content=payload)
+        return payload
+
     @app.get("/v1/demo/config", response_model=DemoConfigResponse, tags=["meta"])
     def demo_config() -> DemoConfigResponse:
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         public_demo = bool(current_settings.trustrag_public_demo_enabled)
         return DemoConfigResponse(
             public_demo_enabled=public_demo,
@@ -128,7 +223,7 @@ def create_app() -> FastAPI:
         upload / delete / update is exposed through HTTP in this phase.
         """
 
-        repository = get_repository()
+        repository = container.current_document_catalog()
         summaries = repository.describe()
         return DocumentsResponse(
             count=len(summaries),
@@ -138,9 +233,23 @@ def create_app() -> FastAPI:
         )
 
     @app.post("/v1/rag/query", response_model=RAGQueryResponse, tags=["rag"])
-    def rag_query(request: RAGQueryRequest) -> RAGQueryResponse:
+    def rag_query(request: RAGQueryRequest, http_request: Request) -> RAGQueryResponse:
         try:
-            state: dict[str, Any] = run_query(request.question)
+            principal: RequestPrincipal = http_request.state.principal
+            review_service = container.current_review_service()
+            with bind_request_context(
+                principal=principal,
+                checkpoint_repository=review_service.checkpoint_repository,
+            ):
+                with container.telemetry.span(
+                    "rag.workflow",
+                    {"request_id": http_request.state.request_id},
+                ):
+                    state: dict[str, Any] = run_query(
+                        request.question,
+                        tenant_id=principal.tenant_id,
+                        actor_id=principal.subject_id,
+                    )
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("workflow failed")
             raise HTTPException(status_code=500, detail="workflow failed") from exc
@@ -161,7 +270,7 @@ def create_app() -> FastAPI:
         dashboard.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         results_path = Path(current_settings.trustrag_eval_results_path)
         report_path = Path(current_settings.trustrag_eval_report_path)
         if not results_path.exists() and not report_path.exists():
@@ -227,7 +336,7 @@ def create_app() -> FastAPI:
         archives snapshots, or reaches out to GitHub artifacts.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         effective_limit = limit or max(1, current_settings.trustrag_eval_history_limit)
         return list_eval_history(
             Path(current_settings.trustrag_eval_history_dir),
@@ -248,7 +357,7 @@ def create_app() -> FastAPI:
         artifact (with per-case rows for the case table).
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         return load_provider_benchmark_artifacts(
             single_result_path=Path(
                 current_settings.trustrag_provider_benchmark_results_path
@@ -276,7 +385,7 @@ def create_app() -> FastAPI:
         it never runs a benchmark or reaches a real provider.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         effective_limit = limit or max(
             1, current_settings.trustrag_provider_benchmark_limit
         )
@@ -310,7 +419,7 @@ def create_app() -> FastAPI:
         the newest N.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         effective_limit = limit or max(
             1, current_settings.trustrag_provider_benchmark_history_limit
         )
@@ -330,10 +439,12 @@ def create_app() -> FastAPI:
         depending on a 404.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
+        if current_settings.app_env.strip().lower() in {"production", "prod"}:
+            raise HTTPException(status_code=404, detail="not found")
         if not current_settings.trustrag_trace_enabled:
             return TracesResponse(enabled=False, events=[])
-        collector = get_local_trace_collector()
+        collector = container.current_trace_collector()
         return TracesResponse(
             enabled=True,
             events=[event.model_dump() for event in collector.get_events()],
@@ -345,10 +456,12 @@ def create_app() -> FastAPI:
     def clear_traces() -> TracesClearResponse:
         """Clear the trace ring buffer. No-op when tracing is disabled."""
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
+        if current_settings.app_env.strip().lower() in {"production", "prod"}:
+            raise HTTPException(status_code=404, detail="not found")
         if not current_settings.trustrag_trace_enabled:
             return TracesClearResponse(enabled=False, cleared=0)
-        collector = get_local_trace_collector()
+        collector = container.current_trace_collector()
         cleared = len(collector.get_events())
         collector.clear()
         return TracesClearResponse(enabled=True, cleared=cleared)
@@ -376,7 +489,7 @@ def create_app() -> FastAPI:
         ``total`` to render pagination controls.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             return ReviewQueueResponse(
@@ -397,7 +510,7 @@ def create_app() -> FastAPI:
             has_actions=has_actions,
             sort=sort,
         )
-        service = _build_review_service()
+        service = container.current_review_service()
         page, total = service.list_queue(
             filter_spec, limit=limit, offset=offset
         )
@@ -431,7 +544,7 @@ def create_app() -> FastAPI:
         narrowed view. With no filters set, the result is global.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             return ReviewQueueSummaryResponse(
@@ -446,7 +559,7 @@ def create_app() -> FastAPI:
             # ``sort`` is irrelevant for an aggregate.
             sort="created_at_desc",
         )
-        return _build_review_service().summary(filter_spec)
+        return container.current_review_service().summary(filter_spec)
 
     @app.get(
         "/v1/review/queue/export.json",
@@ -469,7 +582,7 @@ def create_app() -> FastAPI:
         list endpoint's row shape once.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             raise HTTPException(status_code=404, detail="human review disabled")
@@ -481,7 +594,7 @@ def create_app() -> FastAPI:
             has_actions=has_actions,
             sort=sort,
         )
-        entries, _ = _build_review_service().list_queue(filter_spec)
+        entries, _ = container.current_review_service().list_queue(filter_spec)
         return ReviewQueueExportResponse(
             exported_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             count=len(entries),
@@ -507,7 +620,7 @@ def create_app() -> FastAPI:
         projection as :class:`ReviewQueueEntry`.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             raise HTTPException(status_code=404, detail="human review disabled")
@@ -519,7 +632,7 @@ def create_app() -> FastAPI:
             has_actions=has_actions,
             sort=sort,
         )
-        entries, _ = _build_review_service().list_queue(filter_spec)
+        entries, _ = container.current_review_service().list_queue(filter_spec)
         csv_text = _render_queue_csv(entries)
         return Response(
             content=csv_text,
@@ -536,14 +649,14 @@ def create_app() -> FastAPI:
     def get_review_queue_entry(review_queue_id: str):
         """Fetch a single review checkpoint by queue id, with current status."""
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             raise HTTPException(
                 status_code=404,
                 detail="human review disabled",
             )
-        service = _build_review_service()
+        service = container.current_review_service()
         entry = service.get_entry(review_queue_id)
         if entry is None:
             raise HTTPException(
@@ -560,13 +673,15 @@ def create_app() -> FastAPI:
     def clear_review_queue() -> ReviewClearResponse:
         """Clear the local review queue *and* the Phase 7B action log."""
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         _raise_if_public_demo(current_settings)
+        if current_settings.app_env.strip().lower() in {"production", "prod"}:
+            raise HTTPException(status_code=404, detail="not found")
         if not current_settings.trustrag_human_review_enabled:
             return ReviewClearResponse(
                 enabled=False, cleared=0, cleared_actions=0
             )
-        cleared_checkpoints, cleared_actions = _build_review_service().clear()
+        cleared_checkpoints, cleared_actions = container.current_review_service().clear()
         return ReviewClearResponse(
             enabled=True,
             cleared=cleared_checkpoints,
@@ -581,6 +696,7 @@ def create_app() -> FastAPI:
     def apply_review_action_endpoint(
         review_queue_id: str,
         request: ReviewActionRequest,
+        http_request: Request,
     ) -> ReviewActionResponse:
         """Phase 7B reviewer action endpoint.
 
@@ -590,16 +706,20 @@ def create_app() -> FastAPI:
         is a local demo workflow.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             raise HTTPException(
                 status_code=400,
                 detail="human review disabled",
             )
-        service = _build_review_service()
+        service = container.current_review_service()
         try:
-            return service.apply_action(review_queue_id, request)
+            principal: RequestPrincipal = http_request.state.principal
+            trusted_request = request.model_copy(
+                update={"reviewer": principal.subject_id}
+            )
+            return service.apply_action(review_queue_id, trusted_request)
         except ReviewCheckpointNotFoundError as exc:
             raise HTTPException(
                 status_code=404,
@@ -630,14 +750,14 @@ def create_app() -> FastAPI:
         before paging.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             raise HTTPException(
                 status_code=404,
                 detail="human review disabled",
             )
-        service = _build_review_service()
+        service = container.current_review_service()
         if service.get_checkpoint(review_queue_id) is None:
             raise HTTPException(
                 status_code=404,
@@ -661,7 +781,116 @@ def create_app() -> FastAPI:
             actions=page,
         )
 
+    @app.post(
+        "/v1/admin/index/jobs",
+        response_model=IndexJob,
+        status_code=202,
+        tags=["admin"],
+    )
+    def submit_index_job(request: IndexJobSubmission) -> IndexJob:
+        if container.index_jobs is None:
+            raise HTTPException(status_code=503, detail="index job storage unavailable")
+        return container.index_jobs.submit(**request.model_dump())
+
+    @app.post(
+        "/v1/admin/index/jobs/upload",
+        response_model=IndexJob,
+        status_code=202,
+        tags=["admin"],
+    )
+    async def upload_index_source(
+        http_request: Request,
+        file: Annotated[UploadFile, File()],
+        idempotency_key: Annotated[str, Form()],
+        metadata_json: Annotated[str, Form()] = "{}",
+    ) -> IndexJob:
+        if container.index_jobs is None or container.source_object_store is None:
+            raise HTTPException(status_code=503, detail="production indexing unavailable")
+        filename = Path(file.filename or "").name
+        if Path(filename).suffix.lower() not in {".md", ".pdf", ".docx"}:
+            raise HTTPException(status_code=422, detail="unsupported document format")
+        try:
+            metadata = json.loads(metadata_json)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail="metadata_json is invalid") from exc
+        if not isinstance(metadata, dict):
+            raise HTTPException(status_code=422, detail="metadata_json must be an object")
+        if Path(filename).suffix.lower() in {".pdf", ".docx"}:
+            required = ("title", "version", "document_type")
+            missing = [
+                field
+                for field in required
+                if not str(metadata.get(field) or "").strip()
+            ]
+            if missing:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"metadata_json missing required fields: {', '.join(missing)}",
+                )
+        content = await _read_upload_limited(
+            file,
+            max_bytes=container.current_settings().max_upload_bytes,
+        )
+        principal: RequestPrincipal = http_request.state.principal
+        stored = container.source_object_store.put(
+            tenant_id=principal.tenant_id,
+            filename=filename,
+            content=content,
+            content_type=file.content_type or "application/octet-stream",
+        )
+        return container.index_jobs.submit(
+            operation="upsert",
+            idempotency_key=idempotency_key,
+            source_uri=stored.uri,
+            document_id=metadata.get("document_id") or Path(filename).stem,
+            payload={
+                "filename": filename,
+                "metadata": metadata,
+                "checksum": stored.checksum,
+            },
+        )
+
+    @app.get(
+        "/v1/admin/index/jobs/{job_id}",
+        response_model=IndexJob,
+        tags=["admin"],
+    )
+    def get_index_job(job_id: str) -> IndexJob:
+        if container.index_jobs is None:
+            raise HTTPException(status_code=503, detail="index job storage unavailable")
+        job = container.index_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="index job not found")
+        return job
+
+    @app.get(
+        "/v1/admin/index/generations",
+        response_model=list[IndexGeneration],
+        tags=["admin"],
+    )
+    def list_index_generations() -> list[IndexGeneration]:
+        if container.index_generations is None:
+            raise HTTPException(status_code=503, detail="index generation storage unavailable")
+        return container.index_generations.list_generations()
+
     return app
+
+
+def _route_template(app: FastAPI, request: Request) -> str:
+    for route in app.router.routes:
+        match, _ = route.matches(request.scope)
+        if match is Match.FULL:
+            return str(getattr(route, "path", "unmatched"))
+    return "unmatched"
+
+
+async def _read_upload_limited(file: UploadFile, *, max_bytes: int) -> bytes:
+    content = bytearray()
+    while chunk := await file.read(1024 * 1024):
+        content.extend(chunk)
+        if len(content) > max_bytes:
+            raise HTTPException(status_code=413, detail="uploaded document is too large")
+    return bytes(content)
 
 
 def _build_queue_filter(
@@ -701,6 +930,13 @@ def _raise_if_public_demo(settings) -> None:
             status_code=403,
             detail="review workflow is disabled in public demo mode",
         )
+
+
+def _safe_readiness_check(check) -> bool:
+    try:
+        return bool(check())
+    except Exception:
+        return False
 
 
 _CSV_COLUMNS = [
@@ -758,20 +994,6 @@ def _render_queue_csv(entries) -> str:
         }
         writer.writerow({key: csv_safe_cell(value) for key, value in row.items()})
     return buffer.getvalue()
-
-
-def _build_review_service() -> ReviewService:
-    """Build a :class:`ReviewService` from the process-wide singletons.
-
-    Kept as a function rather than a module-level instance so tests
-    that swap the singletons via ``monkeypatch`` see fresh stores on
-    every request.
-    """
-
-    return ReviewService(
-        checkpoint_store=get_review_checkpoint_store(),
-        action_store=get_review_action_store(),
-    )
 
 
 def _state_to_response(state: dict[str, Any]) -> RAGQueryResponse:

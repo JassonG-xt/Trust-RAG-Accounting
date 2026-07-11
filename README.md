@@ -12,7 +12,7 @@ Current showcase status:
 
 | Signal | Status |
 |---|---|
-| Phase | 9C - Dashboard and deployment polish |
+| Phase | 10D - Production persistence, identity, indexing, and observability |
 | Tests | See the CI badge and reproducible commands below |
 | Eval gate | 29/29 active accounting cases passing, score `1.000` |
 | CI | Green on `main` |
@@ -282,7 +282,7 @@ See [`docs/dashboard.md`](docs/dashboard.md) and [`docs/demo_walkthrough.md`](do
 
 ## Roadmap
 
-Completed through Phase 9C:
+Completed through Phase 10D:
 
 - Accounting verticalization.
 - Multi-format ingestion and chunking.
@@ -299,13 +299,22 @@ Completed through Phase 9C:
 - Repository governance docs, release checklist, maintenance guide, PR/issue templates, and forbidden-file hygiene check.
 - Deployment guide, operations runbook, configuration reference, deploy readiness check, and production-like local run helper.
 - Small-server systemd/nginx/environment examples with constrained runtime dependencies.
+- Postgres persistence with Alembic migrations and idempotent JSON/JSONL import.
+- OIDC/JWT identity, centralized viewer/reviewer/admin authorization, and trusted audit actors.
+- S3-backed asynchronous indexing with durable jobs, leases, generation switching, Qdrant isolation, and repair checks.
+- OpenTelemetry OTLP traces/metrics, request correlation, readiness checks, and production verification tooling.
 
 Next realistic phases:
 
 - Future: GitHub Pages showcase or release assets, if useful.
-- Future: Postgres persistence for review and document metadata.
-- Future: authentication and authorization for reviewer actions.
 - Future: streaming generation, tool calling, and optional real-provider benchmark artifacts.
+
+The hosted showcase intentionally remains the zero-dependency public-demo
+profile. The production profile is documented in
+[`docs/production_persistence.md`](docs/production_persistence.md),
+[`docs/authentication.md`](docs/authentication.md),
+[`docs/production_indexing.md`](docs/production_indexing.md), and
+[`docs/production_observability.md`](docs/production_observability.md).
 
 Full roadmap: [`docs/roadmap.md`](docs/roadmap.md).
 

@@ -234,11 +234,16 @@ def get_workflow():
     return build_workflow()
 
 
-def run_query(question: str) -> dict:
+def run_query(
+    question: str,
+    *,
+    tenant_id: str = "local",
+    actor_id: str = "local-admin",
+) -> dict:
     """Convenience entry point used by the FastAPI route and tests."""
 
     workflow = get_workflow()
-    state = initial_state(question)
+    state = initial_state(question, tenant_id=tenant_id, actor_id=actor_id)
     return workflow.invoke(state)
 
 

@@ -31,12 +31,13 @@ from typing import Any
 
 from .models import VectorRecord, VectorSearchResult
 
-
 _INSTALL_HINT = (
     "qdrant-client is not installed. Install the optional extra:\n"
     "    pip install 'trust-rag[qdrant]'\n"
     "and set VECTOR_STORE=qdrant + QDRANT_URL in your environment."
 )
+_CLIENT_SCOPE_FIELD = "_trustrag_client_scope"
+_FIRM_WIDE_CLIENT = "__trustrag_firm_wide__"
 
 
 class QdrantVectorStore:
@@ -87,6 +88,38 @@ class QdrantVectorStore:
     def dimension(self) -> int:
         return self._dimension
 
+    def ensure_collection(self) -> None:
+        try:
+            from qdrant_client.http.models import (  # type: ignore[import-not-found]
+                Distance,
+                VectorParams,
+            )
+        except ImportError as exc:  # pragma: no cover
+            raise ImportError(_INSTALL_HINT) from exc
+
+        if not self._client.collection_exists(self._collection_name):
+            self._client.create_collection(
+                collection_name=self._collection_name,
+                vectors_config=VectorParams(
+                    size=self._dimension,
+                    distance=Distance.COSINE,
+                ),
+            )
+            return
+
+        info = self._client.get_collection(collection_name=self._collection_name)
+        vectors = info.config.params.vectors
+        if isinstance(vectors, dict):
+            raise RuntimeError(
+                "Qdrant named vectors are not supported; configure one unnamed vector"
+            )
+        configured_size = getattr(vectors, "size", None)
+        if configured_size != self._dimension:
+            raise RuntimeError(
+                f"Qdrant collection dimension {configured_size!r} does not match "
+                f"configured dimension {self._dimension}"
+            )
+
     def upsert(self, records: list[VectorRecord]) -> None:
         # Lazy import keeps the default install free of qdrant deps.
         try:
@@ -96,14 +129,21 @@ class QdrantVectorStore:
         except ImportError as exc:  # pragma: no cover
             raise ImportError(_INSTALL_HINT) from exc
 
-        points = [
-            PointStruct(
-                id=r.id,
-                vector=r.vector,
-                payload=dict(r.payload),
+        points = []
+        for record in records:
+            payload = dict(record.payload)
+            payload[_CLIENT_SCOPE_FIELD] = (
+                _FIRM_WIDE_CLIENT
+                if payload.get("client") is None
+                else payload["client"]
             )
-            for r in records
-        ]
+            points.append(
+                PointStruct(
+                    id=record.id,
+                    vector=record.vector,
+                    payload=payload,
+                )
+            )
         self._client.upsert(collection_name=self._collection_name, points=points)
 
     def search(
@@ -114,12 +154,21 @@ class QdrantVectorStore:
         payload_filter: dict[str, Any] | None = None,
     ) -> list[VectorSearchResult]:
         qfilter = _payload_filter_to_qdrant(payload_filter)
-        raw = self._client.search(
-            collection_name=self._collection_name,
-            query_vector=query_vector,
-            limit=top_k,
-            query_filter=qfilter,
-        )
+        if hasattr(self._client, "query_points"):
+            response = self._client.query_points(
+                collection_name=self._collection_name,
+                query=query_vector,
+                limit=top_k,
+                query_filter=qfilter,
+            )
+            raw = response.points
+        else:  # qdrant-client < 1.10
+            raw = self._client.search(
+                collection_name=self._collection_name,
+                query_vector=query_vector,
+                limit=top_k,
+                query_filter=qfilter,
+            )
         return [
             VectorSearchResult(
                 id=str(point.id),
@@ -128,6 +177,49 @@ class QdrantVectorStore:
             )
             for point in raw
         ]
+
+    def delete(
+        self,
+        *,
+        ids: list[str] | None = None,
+        payload_filter: dict[str, Any] | None = None,
+    ) -> int:
+        if ids is None and payload_filter is None:
+            raise ValueError("delete requires ids or payload_filter")
+        try:
+            from qdrant_client.http.models import (  # type: ignore[import-not-found]
+                FilterSelector,
+                PointIdsList,
+            )
+        except ImportError as exc:  # pragma: no cover
+            raise ImportError(_INSTALL_HINT) from exc
+
+        if ids is not None:
+            selector = PointIdsList(points=ids)
+            deleted_count = len(ids)
+        else:
+            selector = FilterSelector(filter=_payload_filter_to_qdrant(payload_filter))
+            deleted_count = self.count(payload_filter)
+        self._client.delete(
+            collection_name=self._collection_name,
+            points_selector=selector,
+        )
+        return deleted_count
+
+    def count(self, payload_filter: dict[str, Any] | None = None) -> int:
+        result = self._client.count(
+            collection_name=self._collection_name,
+            count_filter=_payload_filter_to_qdrant(payload_filter),
+            exact=True,
+        )
+        return int(result.count)
+
+    def health(self) -> bool:
+        try:
+            self._client.get_collection(collection_name=self._collection_name)
+        except Exception:
+            return False
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -160,17 +252,13 @@ def _payload_filter_to_qdrant(payload_filter: dict[str, Any] | None):
         if key.endswith("_any_of"):
             field = key[: -len("_any_of")]
             values = list(expected) if isinstance(expected, (list, tuple, set)) else []
-            # Qdrant's MatchAny doesn't speak null directly, but the
-            # "value is None or in [...]" semantic is uncommon at the
-            # vector store layer because client-aware filtering is
-            # already enforced at the metadata layer above. We pass
-            # only the non-None values; the strict ``None`` allowance
-            # for firm-wide chunks is handled by storing firm-wide
-            # records with ``client="__firm_wide__"`` if the operator
-            # opts in (see docs/architecture.md Phase 3B notes).
-            non_null = [v for v in values if v is not None]
-            if non_null:
-                must.append(FieldCondition(key=field, match=MatchAny(any=non_null)))
+            if field == "client":
+                field = _CLIENT_SCOPE_FIELD
+                values = [
+                    _FIRM_WIDE_CLIENT if value is None else value for value in values
+                ]
+            if values:
+                must.append(FieldCondition(key=field, match=MatchAny(any=values)))
             continue
 
         must.append(FieldCondition(key=key, match=MatchValue(value=expected)))

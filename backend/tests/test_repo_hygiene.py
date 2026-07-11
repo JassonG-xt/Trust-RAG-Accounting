@@ -105,7 +105,7 @@ def test_dependency_compatibility_bounds_are_declared() -> None:
     ci_workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
         encoding="utf-8"
     )
-    assert 'pip install -c constraints.txt -e ".[dev]"' in ci_workflow
+    assert 'pip install -c constraints.txt -e ".[dev,production]"' in ci_workflow
 
 
 def test_documented_workflow_uses_post_generation_review_routing() -> None:

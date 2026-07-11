@@ -25,11 +25,15 @@ from __future__ import annotations
 
 import logging
 import secrets
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any
 
-from .checkpoint_store import LocalReviewActionStore, LocalReviewCheckpointStore
+from ..persistence.protocols import (
+    ReviewActionRepository,
+    ReviewCheckpointRepository,
+)
 from .models import (
     ReviewAction,
     ReviewActionRequest,
@@ -38,10 +42,7 @@ from .models import (
     ReviewQueueEntry,
     ReviewQueueSummaryResponse,
 )
-from .state_machine import (
-    InvalidReviewTransitionError,
-    apply_review_action,
-)
+from .state_machine import apply_review_action
 
 logger = logging.getLogger(__name__)
 
@@ -141,11 +142,15 @@ class ReviewService:
 
     def __init__(
         self,
-        checkpoint_store: LocalReviewCheckpointStore,
-        action_store: LocalReviewActionStore,
+        checkpoint_store: ReviewCheckpointRepository,
+        action_store: ReviewActionRepository,
     ) -> None:
         self._checkpoints = checkpoint_store
         self._actions = action_store
+
+    @property
+    def checkpoint_repository(self) -> ReviewCheckpointRepository:
+        return self._checkpoints
 
     # -- queue reads ---------------------------------------------------------
 
@@ -260,12 +265,13 @@ class ReviewService:
         # bad pairs — the caller (FastAPI handler) translates that
         # into a 400 response.
         new_status = apply_review_action(previous_status, request.action_type)
+        request_payload = request.model_dump()
 
         action = ReviewAction(
             action_id=self._mint_action_id(),
             review_queue_id=review_queue_id,
             action_type=request.action_type,
-            reviewer=request.reviewer,
+            reviewer=request_payload.get("reviewer"),
             note=request.note,
             rewritten_answer=request.rewritten_answer,
             previous_status=previous_status,

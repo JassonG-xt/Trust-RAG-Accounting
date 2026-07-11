@@ -31,7 +31,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-
 ReviewActionType = Literal[
     "approve",
     "reject",
@@ -185,7 +184,14 @@ class ReviewActionRequest(BaseModel):
     """
 
     action_type: ReviewActionType
-    reviewer: str | None = None
+    reviewer: str | None = Field(
+        default=None,
+        deprecated=True,
+        description=(
+            "Deprecated and ignored by authenticated HTTP routes; reviewer identity "
+            "comes from the trusted request principal."
+        ),
+    )
     note: str | None = None
     rewritten_answer: str | None = None
 

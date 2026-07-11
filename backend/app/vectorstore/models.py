@@ -61,3 +61,17 @@ class VectorStore(Protocol):
         payload_filter: dict[str, Any] | None = None,
     ) -> list[VectorSearchResult]:
         ...
+
+    def delete(
+        self,
+        *,
+        ids: list[str] | None = None,
+        payload_filter: dict[str, Any] | None = None,
+    ) -> int:
+        ...
+
+    def count(self, payload_filter: dict[str, Any] | None = None) -> int:
+        ...
+
+    def health(self) -> bool:
+        ...

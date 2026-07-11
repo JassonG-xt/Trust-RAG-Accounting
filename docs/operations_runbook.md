@@ -10,6 +10,29 @@ curl -s http://localhost:8000/healthz
 
 Expected result includes a healthy status JSON response.
 
+Production readiness is separate:
+
+```bash
+curl -s http://localhost:8000/readyz
+```
+
+It returns `503` when a configured Postgres, S3, or Qdrant dependency is not
+ready.
+
+## Production Rollout
+
+```bash
+pip install -e '.[production,embeddings,reranker]'
+alembic upgrade head
+trustrag-import-legacy --help
+trustrag-index-worker --once
+trustrag-verify-production
+```
+
+Switch traffic only after `trustrag-verify-production` exits zero. Keep legacy
+JSON/JSONL files read-only for one release so the adapter can be rolled back
+without deleting Postgres data.
+
 ## Document Ingestion
 
 ```bash
@@ -84,8 +107,9 @@ Clear local review state by deleting generated files:
 rm -f data/review_queue.jsonl data/review_actions.jsonl
 ```
 
-Reviewer actions append to `data/review_actions.jsonl`. The action log is local
-demo data, not a production audit or authorization system.
+Reviewer actions append to `data/review_actions.jsonl` in local mode. Production
+stores authenticated, append-only actions in Postgres. The production queue
+cannot be globally cleared through the public API.
 
 ## Dashboard
 
@@ -142,3 +166,7 @@ benchmarks, or a live server.
 - If provider benchmark trends are empty, archive a provider benchmark snapshot.
 - `AGENTS.md` is local-only and should not be tracked.
 - Never commit `.env` or real provider keys.
+- If index jobs accumulate, inspect job status/attempt count and run one worker
+  with `trustrag-index-worker --once`; do not switch generations manually.
+- If verification reports index drift, submit a `reconcile` or `reindex` job
+  and keep the previous active generation serving traffic.

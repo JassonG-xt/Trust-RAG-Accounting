@@ -6,6 +6,8 @@
 - Sample document ingestion passes.
 - Eval gate passes.
 - `python -m pytest backend/tests` passes.
+- `alembic upgrade head` succeeds on an empty database.
+- `trustrag-verify-production` succeeds before production traffic is switched.
 - Provider benchmark mock passes if provider or benchmark code changed.
 - `bash scripts/check_repo_hygiene.sh` passes.
 - `bash scripts/check_deploy_readiness.sh` passes.

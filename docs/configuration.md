@@ -13,6 +13,78 @@ Do not commit real `.env` files.
 | `APP_ENV` | `development` | Local environment label. |
 | `LOG_LEVEL` | `INFO` | Python logging level. |
 
+## Production Persistence
+
+Install the production adapters with `pip install -e '.[production]'` and run
+`alembic upgrade head` before selecting Postgres.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `TRUSTRAG_STORAGE_BACKEND` | `local` | `local` keeps JSON/JSONL; `postgres` enables durable review persistence. |
+| `DATABASE_URL` | unset | Required when the storage backend is `postgres`; use a `postgresql+psycopg://` URL in production. |
+| `TRUSTRAG_TENANT_ID` | `local` | Trusted single-organization storage scope. Never take this value from a query body. |
+| `TRUSTRAG_SOURCE_STORE` | `local` | `s3` enables immutable source-file storage for asynchronous indexing. |
+| `TRUSTRAG_S3_BUCKET` | unset | Required when source storage is `s3`. |
+| `TRUSTRAG_S3_ENDPOINT_URL` | unset | Optional S3-compatible endpoint such as MinIO. |
+| `TRUSTRAG_S3_REGION` | unset | Optional S3 region. Credentials use the standard AWS credential chain. |
+| `TRUSTRAG_MAX_UPLOAD_BYTES` | `26214400` | Maximum source upload size; oversized requests return HTTP `413` before S3/job writes. |
+| `TRUSTRAG_INDEX_JOB_LEASE_SECONDS` | `300` | Initial and renewed worker lease duration. |
+| `TRUSTRAG_INDEX_JOB_HEARTBEAT_SECONDS` | `30` | Lease-renewal interval; must be lower than the lease duration. |
+
+Legacy local stores can be imported idempotently after the schema migration:
+
+```bash
+trustrag-import-legacy \
+  --database-url "$DATABASE_URL" \
+  --tenant-id accounting-firm \
+  --generation-id initial-import \
+  --documents data/trustrag_documents.json \
+  --chunks data/trustrag_chunks.json \
+  --checkpoints data/review_queue.jsonl \
+  --actions data/review_actions.jsonl
+```
+
+Rerunning the command does not duplicate document checksums, chunk identities,
+review queue IDs, or action IDs. Keep the local files read-only until database
+counts and checksums have been verified.
+
+## Authentication and Authorization
+
+| Variable | Default | Notes |
+|---|---|---|
+| `TRUSTRAG_AUTH_MODE` | `local` | `local` uses a fixed development principal; production uses `oidc`. |
+| `TRUSTRAG_OIDC_ISSUER` | unset | Expected JWT issuer. Required for OIDC. |
+| `TRUSTRAG_OIDC_AUDIENCE` | unset | Expected JWT audience. Required for OIDC. |
+| `TRUSTRAG_OIDC_JWKS_URL` | unset | Identity-provider JWKS endpoint. Required for OIDC. |
+| `TRUSTRAG_OIDC_ROLES_CLAIM` | `roles` | Claim containing `viewer`, `reviewer`, or `admin`. |
+| `TRUSTRAG_OIDC_TENANT_CLAIM` | `tenant_id` | Claim that must match `TRUSTRAG_TENANT_ID`. |
+
+The backend accepts RS256 bearer tokens only. Reviewer identity is always the
+verified JWT `sub`; the deprecated `reviewer` request field is ignored.
+
+## Index Worker
+
+The production worker requires Postgres, S3, Qdrant and a configured embedding
+provider. After running migrations, start it independently from the API:
+
+```bash
+trustrag-index-worker
+```
+
+Use `trustrag-index-worker --once` for cron jobs, deployment checks, or manual
+queue draining. See [production_indexing.md](production_indexing.md).
+
+## Production Telemetry
+
+| Variable | Default | Notes |
+|---|---|---|
+| `TRUSTRAG_TELEMETRY_MODE` | `noop` | `local` uses the debug collector; `otlp` exports production traces and metrics. |
+| `TRUSTRAG_OTLP_ENDPOINT` | unset | Required for `otlp`; base HTTP endpoint for `/v1/traces` and `/v1/metrics`. |
+| `TRUSTRAG_TELEMETRY_SERVICE_NAME` | `trust-rag-backend` | OTel resource service name. |
+
+`/healthz` reports process liveness. `/readyz` checks configured Postgres, S3
+and Qdrant dependencies and returns `503` when any check fails.
+
 ## Document and Chunk Stores
 
 The ingestion CLI writes document and chunk stores to explicit output paths:

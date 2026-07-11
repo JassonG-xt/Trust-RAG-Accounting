@@ -101,6 +101,68 @@ class Settings:
 
     app_env: str = field(default_factory=lambda: os.getenv("APP_ENV", "development"))
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
+    storage_backend: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_STORAGE_BACKEND", "local")
+    )
+    database_url: str | None = field(
+        default_factory=lambda: _optional_str_env("DATABASE_URL")
+    )
+    tenant_id: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_TENANT_ID", "local")
+    )
+    source_store_backend: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_SOURCE_STORE", "local")
+    )
+    max_upload_bytes: int = field(
+        default_factory=lambda: _int_env(
+            "TRUSTRAG_MAX_UPLOAD_BYTES",
+            25 * 1024 * 1024,
+        )
+    )
+    index_job_lease_seconds: int = field(
+        default_factory=lambda: _int_env("TRUSTRAG_INDEX_JOB_LEASE_SECONDS", 300)
+    )
+    index_job_heartbeat_seconds: float = field(
+        default_factory=lambda: _float_env("TRUSTRAG_INDEX_JOB_HEARTBEAT_SECONDS", 30.0)
+    )
+    s3_bucket: str | None = field(
+        default_factory=lambda: _optional_str_env("TRUSTRAG_S3_BUCKET")
+    )
+    s3_endpoint_url: str | None = field(
+        default_factory=lambda: _optional_str_env("TRUSTRAG_S3_ENDPOINT_URL")
+    )
+    s3_region: str | None = field(
+        default_factory=lambda: _optional_str_env("TRUSTRAG_S3_REGION")
+    )
+    auth_mode: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_AUTH_MODE", "local")
+    )
+    oidc_issuer: str | None = field(
+        default_factory=lambda: _optional_str_env("TRUSTRAG_OIDC_ISSUER")
+    )
+    oidc_audience: str | None = field(
+        default_factory=lambda: _optional_str_env("TRUSTRAG_OIDC_AUDIENCE")
+    )
+    oidc_jwks_url: str | None = field(
+        default_factory=lambda: _optional_str_env("TRUSTRAG_OIDC_JWKS_URL")
+    )
+    oidc_roles_claim: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_OIDC_ROLES_CLAIM", "roles")
+    )
+    oidc_tenant_claim: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_OIDC_TENANT_CLAIM", "tenant_id")
+    )
+    telemetry_mode: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_TELEMETRY_MODE", "noop")
+    )
+    otlp_endpoint: str | None = field(
+        default_factory=lambda: _optional_str_env("TRUSTRAG_OTLP_ENDPOINT")
+    )
+    telemetry_service_name: str = field(
+        default_factory=lambda: os.getenv(
+            "TRUSTRAG_TELEMETRY_SERVICE_NAME", "trust-rag-backend"
+        )
+    )
 
     # Provider selection — mock remains the deterministic default.
     llm_provider: str = field(default_factory=lambda: os.getenv("LLM_PROVIDER", "mock"))
@@ -374,6 +436,72 @@ class Settings:
     anthropic_model: str | None = field(
         default_factory=lambda: _optional_str_env("ANTHROPIC_MODEL")
     )
+
+    def validate_persistence(self) -> None:
+        backend = self.storage_backend.strip().lower()
+        if backend not in {"local", "postgres"}:
+            raise ValueError(
+                "TRUSTRAG_STORAGE_BACKEND must be either 'local' or 'postgres'"
+            )
+        if not self.tenant_id.strip():
+            raise ValueError("TRUSTRAG_TENANT_ID must not be empty")
+        if backend == "postgres" and not self.database_url:
+            raise ValueError(
+                "TRUSTRAG_STORAGE_BACKEND=postgres requires DATABASE_URL"
+            )
+        source_backend = self.source_store_backend.strip().lower()
+        if source_backend not in {"local", "s3"}:
+            raise ValueError("TRUSTRAG_SOURCE_STORE must be either 'local' or 's3'")
+        if source_backend == "s3" and not self.s3_bucket:
+            raise ValueError("TRUSTRAG_SOURCE_STORE=s3 requires TRUSTRAG_S3_BUCKET")
+        if self.max_upload_bytes <= 0:
+            raise ValueError("TRUSTRAG_MAX_UPLOAD_BYTES must be positive")
+        if self.index_job_lease_seconds <= 0:
+            raise ValueError("TRUSTRAG_INDEX_JOB_LEASE_SECONDS must be positive")
+        if not 0 < self.index_job_heartbeat_seconds < self.index_job_lease_seconds:
+            raise ValueError(
+                "TRUSTRAG_INDEX_JOB_HEARTBEAT_SECONDS must be positive and less "
+                "than TRUSTRAG_INDEX_JOB_LEASE_SECONDS"
+            )
+        auth_mode = self.auth_mode.strip().lower()
+        if auth_mode not in {"local", "oidc"}:
+            raise ValueError("TRUSTRAG_AUTH_MODE must be either 'local' or 'oidc'")
+        if auth_mode == "oidc" and not all(
+            (self.oidc_issuer, self.oidc_audience, self.oidc_jwks_url)
+        ):
+            raise ValueError(
+                "TRUSTRAG_AUTH_MODE=oidc requires issuer, audience and JWKS URL"
+            )
+        telemetry_mode = self.telemetry_mode.strip().lower()
+        if telemetry_mode not in {"noop", "local", "otlp"}:
+            raise ValueError("TRUSTRAG_TELEMETRY_MODE must be noop, local, or otlp")
+        if telemetry_mode == "otlp" and not self.otlp_endpoint:
+            raise ValueError("TRUSTRAG_TELEMETRY_MODE=otlp requires TRUSTRAG_OTLP_ENDPOINT")
+
+    def validate_runtime(self) -> None:
+        self.validate_persistence()
+        if self.app_env.strip().lower() not in {"production", "prod"}:
+            return
+        if self.trustrag_public_demo_enabled:
+            return
+        if self.storage_backend.strip().lower() != "postgres":
+            raise ValueError("Production requires Postgres persistence")
+        if self.source_store_backend.strip().lower() != "s3":
+            raise ValueError("Production indexing requires S3 source storage")
+        if self.auth_mode.strip().lower() != "oidc":
+            raise ValueError("Production requires OIDC authentication")
+        if self.vector_store.strip().lower() != "qdrant" or not self.qdrant_url:
+            raise ValueError("Production requires Qdrant vector storage")
+        if self.telemetry_mode.strip().lower() != "otlp":
+            raise ValueError("Production requires OTLP telemetry")
+        if self.embedding_provider.strip().lower() in {"", "mock"}:
+            raise ValueError("Production requires a real embedding provider")
+        if not self.embedding_model:
+            raise ValueError("Production embedding model must be configured")
+        if self.reranker_provider.strip().lower() in {"", "mock", "none", "off"}:
+            raise ValueError("Production requires a real reranker")
+        if not self.reranker_model:
+            raise ValueError("Production reranker model must be configured")
 
 
 def get_settings() -> Settings:

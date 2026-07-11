@@ -109,6 +109,38 @@ class InMemoryVectorStore:
         hits.sort(key=lambda h: (-h.score, h.id))
         return hits[:top_k]
 
+    def delete(
+        self,
+        *,
+        ids: list[str] | None = None,
+        payload_filter: dict[str, Any] | None = None,
+    ) -> int:
+        if ids is None and payload_filter is None:
+            raise ValueError("delete requires ids or payload_filter")
+        selected_ids = set(ids or self._records)
+        removed = 0
+        for record_id in list(selected_ids):
+            record = self._records.get(record_id)
+            if record is None:
+                continue
+            if payload_filter and not _passes_filter(record.payload, payload_filter):
+                continue
+            del self._records[record_id]
+            removed += 1
+        return removed
+
+    def count(self, payload_filter: dict[str, Any] | None = None) -> int:
+        if not payload_filter:
+            return len(self._records)
+        return sum(
+            1
+            for record in self._records.values()
+            if _passes_filter(record.payload, payload_filter)
+        )
+
+    def health(self) -> bool:
+        return True
+
 
 # ---------------------------------------------------------------------------
 # Filter DSL evaluation

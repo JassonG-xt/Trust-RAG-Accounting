@@ -43,6 +43,7 @@ from ..vectorstore import (
     VectorStore,
     metadata_filter_to_payload_filter,
 )
+from .filters import passes_metadata_filter
 from .models import MetadataFilter, ScoreBreakdown, ScoredChunk
 from .temporal import is_chunk_active_as_of, parse_iso_date, temporal_score_for_chunk
 
@@ -104,6 +105,9 @@ class VectorRetriever:
         chunks: list[DocumentChunk],
         embedding_provider: EmbeddingProvider,
         vector_store: VectorStore | None = None,
+        *,
+        secure_payload_filter: dict | None = None,
+        index_chunks: bool = True,
     ) -> None:
         self._embedding_provider = embedding_provider
         self._chunks: list[DocumentChunk] = list(chunks)
@@ -116,8 +120,10 @@ class VectorRetriever:
         if vector_store is None:
             vector_store = InMemoryVectorStore(dimension=embedding_provider.dimension)
         self._store: VectorStore = vector_store
+        self._secure_payload_filter = dict(secure_payload_filter or {})
 
-        self._index_chunks()
+        if index_chunks:
+            self._index_chunks()
 
     # -- Indexing ------------------------------------------------------------
 
@@ -132,7 +138,7 @@ class VectorRetriever:
             VectorRecord(
                 id=chunk.chunk_id,
                 vector=vec,
-                payload=_chunk_payload(chunk),
+                payload={**_chunk_payload(chunk), **self._secure_payload_filter},
             )
             for chunk, vec in zip(self._chunks, vectors, strict=False)
         ]
@@ -160,6 +166,7 @@ class VectorRetriever:
             return []
 
         payload_filter = metadata_filter_to_payload_filter(metadata_filter)
+        payload_filter.update(self._secure_payload_filter)
 
         # Fetch a wider candidate pool so the stance / malicious
         # post-filter has results left to choose from.
@@ -173,10 +180,12 @@ class VectorRetriever:
         retrieval_strategy = self._strategy_name()
         results: list[ScoredChunk] = []
         for hit in hits:
-            chunk = self._chunks_by_id.get(hit.id)
+            chunk = self._chunks_by_id.get(str(hit.payload.get("chunk_id") or hit.id))
             if chunk is None:
                 # Vector store has a hit we no longer have a chunk for —
                 # treat as a stale record and skip rather than guess.
+                continue
+            if not passes_metadata_filter(chunk, metadata_filter):
                 continue
 
             breakdown = self._build_breakdown(chunk, hit.score, metadata_filter, stance)

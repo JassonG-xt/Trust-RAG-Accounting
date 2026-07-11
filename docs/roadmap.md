@@ -31,6 +31,10 @@ TrustRAG Accounting is phase-gated by tests and evals, not dates. Each phase is 
 | 8E | Complete | Local provider benchmark trend snapshots + read-only history API and dashboard trend panel (compact summaries only; no per-case rows; never a CI gate). |
 | 9A | Complete | Repository hardening and release hygiene: governance docs, release checklist, maintenance guide, templates, hygiene script, and CI hygiene check. |
 | 9B | Complete | Deployment and operations guide: deployment docs, operations runbook, configuration reference, deploy readiness check, and production-like local run helper. |
+| 10A | Complete | Application persistence seams, Postgres schema/adapters, Alembic, S3 source storage, and idempotent legacy import. |
+| 10B | Complete | OIDC/JWT trusted identity, centralized RBAC, tenant propagation, and authenticated review audit actors. |
+| 10C | Complete | Durable indexing jobs, worker leases/retries, generation switching, active Postgres catalog, and Qdrant hard filters. |
+| 10D | Complete | OpenTelemetry OTLP traces/metrics, request correlation, readiness, production invariants, and rollout verification. |
 
 Recent validated baselines:
 
@@ -62,6 +66,9 @@ are intentionally preserved rather than rewritten to the current gate size.
 - Local provider benchmark trend snapshots (compact summaries) with a read-only history API + dashboard trend panel. See [provider_benchmark_history.md](provider_benchmark_history.md).
 - Repository governance, release checklist, maintenance guide, PR/issue templates, and CI repository hygiene check.
 - Deployment guide, operations runbook, configuration reference, deploy readiness check, and production-like local run helper.
+- Optional production profile using Postgres, S3-compatible object storage, Qdrant, OIDC and OpenTelemetry.
+- Durable, authenticated review audit records and tenant-scoped retrieval.
+- Asynchronous document indexing with crash recovery and consistency reconciliation.
 
 ## Near-Term Next Steps
 
@@ -74,18 +81,6 @@ are intentionally preserved rather than rewritten to the current gate size.
 
 - Add screenshots or static showcase assets if the portfolio presentation needs them.
 - Capture assets from the local app or real GitHub UI; do not invent them.
-
-### Future: Postgres persistence
-
-- Add durable storage behind the existing review and document-store seams.
-- Preserve the local JSONL path for offline demos and tests.
-- Avoid changing review state-machine semantics.
-
-### Future: Authentication and authorization
-
-- Protect reviewer actions.
-- Distinguish reviewer identity from the current local free-text reviewer field.
-- Keep demo mode simple and explicit.
 
 ### Future: Optional generation improvements
 
@@ -108,5 +103,5 @@ are intentionally preserved rather than rewritten to the current gate size.
 - No real client data in this repository.
 - No default real LLM calls.
 - No default external API calls.
-- No authentication system in the local dashboard yet.
+- The local dashboard uses a fixed development identity; production uses OIDC.
 - No database dependency for local demos.

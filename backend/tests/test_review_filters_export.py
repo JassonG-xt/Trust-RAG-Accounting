@@ -21,7 +21,6 @@ from __future__ import annotations
 import csv
 import io
 from pathlib import Path
-from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -512,9 +511,11 @@ def test_api_queue_filter_by_reviewer(client: TestClient) -> None:
         json={"action_type": "approve", "reviewer": "bob"},
     )
 
-    payload = client.get("/v1/review/queue?reviewer=alice").json()
-    assert payload["total"] == 1
-    assert payload["entries"][0]["review_queue_id"] == q1
+    spoofed = client.get("/v1/review/queue?reviewer=alice").json()
+    trusted = client.get("/v1/review/queue?reviewer=local-admin").json()
+    assert spoofed["total"] == 0
+    assert trusted["total"] == 2
+    assert {entry["review_queue_id"] for entry in trusted["entries"]} == {q1, q2}
 
 
 def test_api_queue_pagination(client: TestClient) -> None:
@@ -578,7 +579,7 @@ def test_api_actions_filter_404_for_missing_id(client: TestClient) -> None:
 
 def test_api_summary_endpoint(client: TestClient) -> None:
     q1 = _enqueue(client, "小规模纳税人现在增值税应该怎么处理？")
-    q2 = _enqueue(
+    _enqueue(
         client,
         "Beta Catering Ltd. 没有明确服务描述的配送发票能直接入账吗？",
     )

@@ -87,7 +87,7 @@ def test_readme_has_live_rag_demo_button_to_hosted_dashboard() -> None:
     assert "free Render instance may cold start" in text
     assert "fictional sample docs" in text
     assert "not accounting or tax advice" in text
-    assert "| Phase | 9C" in text
+    assert "| Phase | 10D" in text
     assert "passing locally" not in text
     assert "- Phase 9C:" not in text
 
@@ -110,3 +110,30 @@ def test_production_deployment_docs_use_runtime_constraints_not_dev_extra() -> N
         "sudo -u trustrag env PYTHON=.venv/bin/python bash scripts/run_eval_gate.sh"
         in small_server
     )
+
+
+def test_ci_runs_production_adapters_with_postgres_and_optional_dependencies() -> None:
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    )
+    job = workflow["jobs"]["production-adapters"]
+    commands = "\n".join(
+        str(step.get("run") or "") for step in job["steps"]
+    )
+
+    assert "postgres" in job["services"]
+    assert '.[dev,production]' in commands
+    assert "alembic upgrade head" in commands
+    assert "test_postgres_persistence.py" in commands
+    assert "test_vectorstore_lifecycle.py" in commands
+
+
+def test_ci_full_backend_suite_installs_production_dependencies() -> None:
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    )
+    job = workflow["jobs"]["backend-tests-and-evals"]
+    commands = "\n".join(str(step.get("run") or "") for step in job["steps"])
+
+    assert "python -m pytest backend/tests" in commands
+    assert '.[dev,production]' in commands

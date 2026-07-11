@@ -137,7 +137,35 @@ flowchart LR
     ACTIONS --> LOG["data/review_actions.jsonl"]
 ```
 
-The local review store is a demo mechanism, not a production audit system. It has no authentication, authorization, database, or workflow replay.
+The filesystem review store remains the local/public-demo implementation. The
+production implementation writes tenant-scoped checkpoints and append-only
+actions to Postgres, locks state transitions, and takes reviewer identity from
+the verified OIDC principal rather than the request body.
+
+## Production Profile
+
+```mermaid
+flowchart LR
+    OIDC[OIDC provider] --> API[FastAPI + AuthorizationPolicy]
+    API --> PG[(Postgres)]
+    API --> S3[(S3 source objects)]
+    API --> JOBS[index_jobs]
+    WORKER[Index worker] --> JOBS
+    WORKER --> PG
+    WORKER --> Q[(Qdrant)]
+    API --> Q
+    API --> OTLP[OpenTelemetry OTLP]
+    WORKER --> OTLP
+```
+
+- `ApplicationContainer` owns implementation assembly; local and production
+  adapters implement the same persistence and telemetry interfaces.
+- Every durable row and vector query is scoped by trusted `tenant_id`; the
+  accounting `client` field is not an authorization boundary.
+- Index writes use staging generations. Queries read only the active
+  generation, so Postgres and Qdrant never need a distributed transaction.
+- Original source files are checksum-addressed in S3-compatible storage.
+- OIDC roles map centrally to viewer, reviewer, and admin permissions.
 
 ## Answer Generation
 
@@ -197,18 +225,13 @@ The dashboard is a thin client over existing local APIs:
 - `GET /v1/evals/history`
 - `GET /v1/debug/traces`
 
-There is no frontend build step, package manager, external chart library, CDN, telemetry, or framework dependency.
+There is no frontend build step, package manager, external chart library, or
+CDN dependency. The local profile uses no remote telemetry; the production
+profile can export OTLP signals.
 
 ## Boundaries
 
-This architecture deliberately avoids:
-
-- Real LLM calls by default.
-- Real external APIs.
-- Database persistence.
-- Authentication and authorization.
-- Production accounting decisions.
-- OCR or invoice image recognition.
-- GitHub API artifact import for history.
-
-Those are future production concerns, not Phase 8A scope.
+The default demo still avoids real external dependencies and real LLM calls.
+The optional production profile adds durable infrastructure and identity, but
+the project still does not make autonomous production accounting decisions,
+perform OCR, or replace qualified review.
