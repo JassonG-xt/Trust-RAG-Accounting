@@ -31,7 +31,8 @@ The worker never mutates the active corpus in place:
 3. Parse and validate the source, then rebuild the tenant corpus.
 4. Write generation-scoped chunks and Qdrant points.
 5. Compare Postgres chunk, vector and lexical counts.
-6. Atomically mark the generation active only when counts match.
+6. Atomically mark the generation active and publish document current/tombstone
+   state only when counts match.
 
 Queries load only the tenant's active generation. Qdrant filters always include
 trusted `tenant_id` and `generation_id`; neither can be supplied by a query.

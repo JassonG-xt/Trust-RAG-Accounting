@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import yaml
-from sqlalchemy import Engine, and_, delete, insert, select, update
+from sqlalchemy import Engine, and_, delete, insert, select
 
 from ..embeddings import EmbeddingProvider
 from ..ingestion import AccountingDocument, DocumentChunk, chunk_documents
@@ -43,6 +43,8 @@ class ProductionDocumentIndexer:
 
     def build(self, job: IndexJob, generation_id: str) -> IndexBuildResult:
         chunks = self._load_active_chunks()
+        document_projection = None
+        tombstone_document_id = None
         if job.operation == "upsert":
             document = self._load_uploaded_document(job)
             active_generation = self._active_generation_id()
@@ -68,10 +70,19 @@ class ProductionDocumentIndexer:
                 )
             new_chunks = chunk_documents([document])
             chunks = [chunk for chunk in chunks if chunk.document_id != document.document_id]
-            version_id = self._upsert_document(
+            version_id = self._stage_document_version(
                 document,
                 source_uri=job.source_uri or "",
             )
+            document_projection = {
+                "document_id": document.document_id,
+                "version_id": version_id,
+                "title": document.title,
+                "document_type": document.document_type,
+                "client": document.client,
+                "metadata_json": document.model_dump(mode="json", exclude={"content"}),
+                "updated_at": document.ingested_at,
+            }
             for chunk in new_chunks:
                 chunk.metadata["_version_id"] = version_id
             chunks.extend(new_chunks)
@@ -79,7 +90,7 @@ class ProductionDocumentIndexer:
             if not job.document_id:
                 raise ValueError("delete index job requires document_id")
             chunks = [chunk for chunk in chunks if chunk.document_id != job.document_id]
-            self._tombstone_document(job.document_id)
+            tombstone_document_id = job.document_id
         elif job.operation not in {"reindex", "reconcile"}:
             raise ValueError(f"unsupported index operation: {job.operation!r}")
 
@@ -94,6 +105,8 @@ class ProductionDocumentIndexer:
             catalog_count=catalog_count,
             vector_count=vector_count,
             lexical_count=len(chunks),
+            document_projection=document_projection,
+            tombstone_document_id=tombstone_document_id,
         )
 
     def discard_generation(self, generation_id: str) -> None:
@@ -207,7 +220,7 @@ class ProductionDocumentIndexer:
             chunks.append(DocumentChunk.model_validate({**payload, "content": content}))
         return chunks
 
-    def _upsert_document(
+    def _stage_document_version(
         self,
         document: AccountingDocument,
         *,
@@ -224,34 +237,20 @@ class ProductionDocumentIndexer:
                     )
                 )
             ).scalar_one_or_none()
-            values = {
-                "current_version_id": version_id,
-                "title": document.title,
-                "document_type": document.document_type,
-                "client": document.client,
-                "tombstoned": False,
-                "metadata_json": metadata,
-                "updated_at": document.ingested_at,
-            }
             if exists is None:
                 connection.execute(
                     insert(documents).values(
                         tenant_id=self._tenant_id,
                         document_id=document.document_id,
+                        current_version_id=None,
+                        title=document.title,
+                        document_type=document.document_type,
+                        client=document.client,
+                        tombstoned=True,
+                        metadata_json=metadata,
                         created_at=document.ingested_at,
-                        **values,
+                        updated_at=document.ingested_at,
                     )
-                )
-            else:
-                connection.execute(
-                    update(documents)
-                    .where(
-                        and_(
-                            documents.c.tenant_id == self._tenant_id,
-                            documents.c.document_id == document.document_id,
-                        )
-                    )
-                    .values(**values)
                 )
             version_exists = connection.execute(
                 select(document_versions.c.version_id).where(
@@ -276,21 +275,6 @@ class ProductionDocumentIndexer:
                     )
                 )
         return version_id
-
-    def _tombstone_document(self, document_id: str) -> None:
-        with self._engine.begin() as connection:
-            result = connection.execute(
-                update(documents)
-                .where(
-                    and_(
-                        documents.c.tenant_id == self._tenant_id,
-                        documents.c.document_id == document_id,
-                    )
-                )
-                .values(tombstoned=True)
-            )
-        if not result.rowcount:
-            raise KeyError(f"document {document_id!r} not found")
 
     def _write_generation(
         self,

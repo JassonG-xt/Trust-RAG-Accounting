@@ -28,7 +28,7 @@ from backend.app.indexing.worker import run_worker_once
 from backend.app.main import create_app
 from backend.app.persistence import StoredObject
 from backend.app.persistence.document_catalog import PostgresDocumentCatalog
-from backend.app.persistence.schema import document_chunks
+from backend.app.persistence.schema import document_chunks, documents
 from backend.app.persistence.sqlalchemy import create_schema
 from backend.app.review import LocalReviewActionStore, LocalReviewCheckpointStore, ReviewService
 from backend.app.tracing import LocalTraceCollector
@@ -90,6 +90,28 @@ class _HeartbeatJobs(PostgresIndexJobRepository):
         return renewed
 
 
+class _LostLeaseJobs(PostgresIndexJobRepository):
+    def __init__(self, engine: Engine, *, tenant_id: str, lease_lost: Event) -> None:
+        super().__init__(engine, tenant_id=tenant_id)
+        self._lease_lost = lease_lost
+
+    def renew_lease(self, *args, **kwargs):
+        self._lease_lost.set()
+        raise IndexLeaseLostError("lease reclaimed")
+
+
+class _FailingAfterLeaseLossIndexer:
+    def __init__(self, lease_lost: Event) -> None:
+        self._lease_lost = lease_lost
+
+    def build(self, job, generation_id: str) -> IndexBuildResult:
+        assert self._lease_lost.wait(timeout=2)
+        raise RuntimeError("build failed after lease loss")
+
+    def discard_generation(self, generation_id: str) -> None:
+        return None
+
+
 class _Telemetry:
     def __init__(self) -> None:
         self.counters = []
@@ -122,7 +144,7 @@ class _DriftingVectorStore(InMemoryVectorStore):
 
     def count(self, payload_filter=None) -> int:
         actual = super().count(payload_filter)
-        return max(0, actual - 1) if self.force_mismatch else actual
+        return actual + 1 if self.force_mismatch else actual
 
 
 class _Documents:
@@ -338,6 +360,50 @@ def test_stale_worker_cannot_activate_generation_after_reclaim(engine: Engine) -
 
     assert generations.get_active().generation_id == active.generation_id
     assert generations.get_required(staging.generation_id).status == "staging"
+
+
+def test_expired_worker_cannot_mark_job_failed(engine: Engine) -> None:
+    jobs = PostgresIndexJobRepository(engine, tenant_id="tenant-a")
+    jobs.submit(operation="reindex", idempotency_key="reindex-1")
+    now = datetime.now(UTC)
+    claimed = jobs.claim_next(worker_id="worker-1", now=now, lease_seconds=30)
+
+    with pytest.raises(IndexLeaseLostError):
+        jobs.fail(
+            claimed.job_id,
+            error_code="RuntimeError",
+            error_summary="indexing failed: RuntimeError",
+            max_attempts=3,
+            retry_delay_seconds=30,
+            worker_id="worker-1",
+            attempt_count=claimed.attempt_count,
+            now=now + timedelta(seconds=31),
+        )
+
+    assert jobs.get_required(claimed.job_id).status == "running"
+
+
+def test_build_failure_after_heartbeat_loss_does_not_fail_job(engine: Engine) -> None:
+    lease_lost = Event()
+    jobs = _LostLeaseJobs(
+        engine,
+        tenant_id="tenant-a",
+        lease_lost=lease_lost,
+    )
+    generations = PostgresIndexGenerationRepository(engine, tenant_id="tenant-a")
+    coordinator = IndexingCoordinator(
+        jobs,
+        generations,
+        _FailingAfterLeaseLossIndexer(lease_lost),
+        lease_seconds=60,
+        heartbeat_seconds=0.01,
+    )
+    coordinator.submit(operation="reindex", idempotency_key="reindex-1")
+
+    current = coordinator.process_next(worker_id="worker-1")
+
+    assert current and current.status == "running"
+    assert generations.list_generations()[0].status == "discarded"
 
 
 def test_coordinator_renews_lease_during_long_index_build(engine: Engine) -> None:
@@ -611,6 +677,14 @@ small taxpayer VAT rule
     assert restarted_catalog.search("small taxpayer VAT", top_k=1)[0]["doc_id"] == (
         "policy-1"
     )
+    with engine.connect() as connection:
+        active_version_id = connection.execute(
+            document_chunks.select()
+            .where(document_chunks.c.generation_id == completed.generation_id)
+        ).one().version_id
+        document_row = connection.execute(documents.select()).one()
+        assert document_row.current_version_id == active_version_id
+        assert document_row.tombstoned is False
     vectors.force_mismatch = False
     assert vectors.count(
         {"tenant_id": "tenant-a", "generation_id": failed_update.generation_id}
@@ -639,6 +713,19 @@ small taxpayer VAT rule
     assert retried_update and retried_update.status == "succeeded"
     assert retried_update.generation_id != completed.generation_id
     assert retried_catalog.describe()[0]["version"] == "2.0"
+
+    vectors.force_mismatch = True
+    coordinator.submit(
+        operation="delete",
+        idempotency_key="delete-failed",
+        document_id="policy-1",
+    )
+    failed_delete = coordinator.process_next(worker_id="worker-1")
+
+    assert failed_delete and failed_delete.status == "failed"
+    with engine.connect() as connection:
+        assert connection.execute(documents.select()).one().tombstoned is False
+    vectors.force_mismatch = False
 
     coordinator.submit(
         operation="delete",

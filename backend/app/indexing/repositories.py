@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import Engine, and_, insert, or_, select, text, update
 
-from ..persistence.schema import index_generations, index_jobs
+from ..persistence.schema import documents, index_generations, index_jobs
 from .models import IndexGeneration, IndexJob
 
 
@@ -205,6 +205,8 @@ class PostgresIndexJobRepository:
         generation_id: str,
         worker_id: str,
         attempt_count: int,
+        document_projection: dict | None = None,
+        tombstone_document_id: str | None = None,
     ) -> IndexJob:
         now = _iso()
         with self._engine.begin() as connection:
@@ -257,6 +259,43 @@ class PostgresIndexJobRepository:
                 )
                 .values(status="active", activated_at=now)
             )
+            if document_projection is not None:
+                projection_result = connection.execute(
+                    update(documents)
+                    .where(
+                        and_(
+                            documents.c.tenant_id == self._tenant_id,
+                            documents.c.document_id
+                            == document_projection["document_id"],
+                        )
+                    )
+                    .values(
+                        current_version_id=document_projection["version_id"],
+                        title=document_projection["title"],
+                        document_type=document_projection["document_type"],
+                        client=document_projection["client"],
+                        tombstoned=False,
+                        metadata_json=document_projection["metadata_json"],
+                        updated_at=document_projection["updated_at"],
+                    )
+                )
+                if not projection_result.rowcount:
+                    raise KeyError(
+                        f"document {document_projection['document_id']!r} not found"
+                    )
+            if tombstone_document_id is not None:
+                tombstone_result = connection.execute(
+                    update(documents)
+                    .where(
+                        and_(
+                            documents.c.tenant_id == self._tenant_id,
+                            documents.c.document_id == tombstone_document_id,
+                        )
+                    )
+                    .values(tombstoned=True, updated_at=now)
+                )
+                if not tombstone_result.rowcount:
+                    raise KeyError(f"document {tombstone_document_id!r} not found")
             connection.execute(
                 update(index_jobs)
                 .where(
@@ -305,9 +344,10 @@ class PostgresIndexJobRepository:
         retry_delay_seconds: int,
         worker_id: str,
         attempt_count: int,
+        now: datetime | None = None,
     ) -> IndexJob:
-        now = datetime.now(UTC)
-        now_iso = _iso(now)
+        current = now or datetime.now(UTC)
+        now_iso = _iso(current)
         with self._engine.begin() as connection:
             current_attempt = connection.execute(
                 select(index_jobs.c.attempt_count)
@@ -318,6 +358,7 @@ class PostgresIndexJobRepository:
                         index_jobs.c.status == "running",
                         index_jobs.c.lease_owner == worker_id,
                         index_jobs.c.attempt_count == attempt_count,
+                        index_jobs.c.lease_expires_at > now_iso,
                     )
                 )
                 .with_for_update()
@@ -338,7 +379,7 @@ class PostgresIndexJobRepository:
                     next_attempt_at=(
                         None
                         if terminal
-                        else _iso(now + timedelta(seconds=retry_delay_seconds))
+                        else _iso(current + timedelta(seconds=retry_delay_seconds))
                     ),
                     lease_owner=None,
                     lease_expires_at=None,

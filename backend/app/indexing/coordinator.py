@@ -23,6 +23,8 @@ class IndexBuildResult:
     vector_count: int
     lexical_count: int
     no_op: bool = False
+    document_projection: dict | None = None
+    tombstone_document_id: str | None = None
 
     @property
     def is_consistent(self) -> bool:
@@ -146,11 +148,19 @@ class IndexingCoordinator:
                     heartbeat_seconds=self._heartbeat_seconds,
                 )
                 heartbeat.start()
+                result: IndexBuildResult | None = None
+                build_error: Exception | None = None
                 try:
-                    result = self._indexer.build(job, generation.generation_id)
+                    try:
+                        result = self._indexer.build(job, generation.generation_id)
+                    except Exception as exc:
+                        build_error = exc
                 finally:
                     heartbeat.stop()
                 heartbeat.raise_if_lost()
+                if build_error is not None:
+                    raise build_error
+                assert result is not None
                 if not result.is_consistent:
                     raise IndexReconciliationError(
                         "index counts differ: "
@@ -183,6 +193,8 @@ class IndexingCoordinator:
                     generation_id=generation.generation_id,
                     worker_id=worker_id,
                     attempt_count=job.attempt_count,
+                    document_projection=result.document_projection,
+                    tombstone_document_id=result.tombstone_document_id,
                 )
                 self._increment(
                     "index.jobs.succeeded",
