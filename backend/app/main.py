@@ -19,7 +19,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from .core.config import get_settings
+from .core.container import ApplicationContainer, build_application_container
 from .evals.history import EvalHistoryResponse, list_eval_history
 from .evals.models import EvalRunSummary
 from .evals.provider_benchmark_dashboard import (
@@ -33,8 +33,9 @@ from .evals.provider_benchmark_history import (
 from .graph.workflow import run_query
 from .review import (
     DEFAULT_LIMIT,
-    InvalidReviewTransitionError,
     MAX_LIMIT,
+    VALID_SORTS,
+    InvalidReviewTransitionError,
     ReviewActionFilter,
     ReviewActionHistoryResponse,
     ReviewActionRequest,
@@ -45,10 +46,6 @@ from .review import (
     ReviewQueueFilter,
     ReviewQueueResponse,
     ReviewQueueSummaryResponse,
-    ReviewService,
-    VALID_SORTS,
-    get_review_action_store,
-    get_review_checkpoint_store,
 )
 from .schemas.rag import (
     DemoConfigResponse,
@@ -59,11 +56,9 @@ from .schemas.rag import (
     HumanReviewSummary,
     RAGQueryRequest,
     RAGQueryResponse,
-    TracesResponse,
     TracesClearResponse,
+    TracesResponse,
 )
-from .services.document_repository import get_repository
-from .tracing import get_local_trace_collector
 
 logger = logging.getLogger("trust_rag.main")
 
@@ -72,8 +67,9 @@ FRONTEND_DIR = PROJECT_ROOT / "frontend"
 FRONTEND_INDEX = FRONTEND_DIR / "index.html"
 
 
-def create_app() -> FastAPI:
-    settings = get_settings()
+def create_app(container: ApplicationContainer | None = None) -> FastAPI:
+    container = container or build_application_container()
+    settings = container.settings
     logging.basicConfig(level=settings.log_level)
 
     app = FastAPI(
@@ -86,6 +82,7 @@ def create_app() -> FastAPI:
             "human-review boundaries. Phase 2A: real Markdown ingestion."
         ),
     )
+    app.state.container = container
     if FRONTEND_DIR.exists():
         app.mount(
             "/dashboard/static",
@@ -99,7 +96,7 @@ def create_app() -> FastAPI:
 
     @app.get("/v1/demo/config", response_model=DemoConfigResponse, tags=["meta"])
     def demo_config() -> DemoConfigResponse:
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         public_demo = bool(current_settings.trustrag_public_demo_enabled)
         return DemoConfigResponse(
             public_demo_enabled=public_demo,
@@ -128,7 +125,7 @@ def create_app() -> FastAPI:
         upload / delete / update is exposed through HTTP in this phase.
         """
 
-        repository = get_repository()
+        repository = container.current_document_catalog()
         summaries = repository.describe()
         return DocumentsResponse(
             count=len(summaries),
@@ -161,7 +158,7 @@ def create_app() -> FastAPI:
         dashboard.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         results_path = Path(current_settings.trustrag_eval_results_path)
         report_path = Path(current_settings.trustrag_eval_report_path)
         if not results_path.exists() and not report_path.exists():
@@ -227,7 +224,7 @@ def create_app() -> FastAPI:
         archives snapshots, or reaches out to GitHub artifacts.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         effective_limit = limit or max(1, current_settings.trustrag_eval_history_limit)
         return list_eval_history(
             Path(current_settings.trustrag_eval_history_dir),
@@ -248,7 +245,7 @@ def create_app() -> FastAPI:
         artifact (with per-case rows for the case table).
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         return load_provider_benchmark_artifacts(
             single_result_path=Path(
                 current_settings.trustrag_provider_benchmark_results_path
@@ -276,7 +273,7 @@ def create_app() -> FastAPI:
         it never runs a benchmark or reaches a real provider.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         effective_limit = limit or max(
             1, current_settings.trustrag_provider_benchmark_limit
         )
@@ -310,7 +307,7 @@ def create_app() -> FastAPI:
         the newest N.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         effective_limit = limit or max(
             1, current_settings.trustrag_provider_benchmark_history_limit
         )
@@ -330,10 +327,10 @@ def create_app() -> FastAPI:
         depending on a 404.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         if not current_settings.trustrag_trace_enabled:
             return TracesResponse(enabled=False, events=[])
-        collector = get_local_trace_collector()
+        collector = container.current_trace_collector()
         return TracesResponse(
             enabled=True,
             events=[event.model_dump() for event in collector.get_events()],
@@ -345,10 +342,10 @@ def create_app() -> FastAPI:
     def clear_traces() -> TracesClearResponse:
         """Clear the trace ring buffer. No-op when tracing is disabled."""
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         if not current_settings.trustrag_trace_enabled:
             return TracesClearResponse(enabled=False, cleared=0)
-        collector = get_local_trace_collector()
+        collector = container.current_trace_collector()
         cleared = len(collector.get_events())
         collector.clear()
         return TracesClearResponse(enabled=True, cleared=cleared)
@@ -376,7 +373,7 @@ def create_app() -> FastAPI:
         ``total`` to render pagination controls.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             return ReviewQueueResponse(
@@ -397,7 +394,7 @@ def create_app() -> FastAPI:
             has_actions=has_actions,
             sort=sort,
         )
-        service = _build_review_service()
+        service = container.current_review_service()
         page, total = service.list_queue(
             filter_spec, limit=limit, offset=offset
         )
@@ -431,7 +428,7 @@ def create_app() -> FastAPI:
         narrowed view. With no filters set, the result is global.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             return ReviewQueueSummaryResponse(
@@ -446,7 +443,7 @@ def create_app() -> FastAPI:
             # ``sort`` is irrelevant for an aggregate.
             sort="created_at_desc",
         )
-        return _build_review_service().summary(filter_spec)
+        return container.current_review_service().summary(filter_spec)
 
     @app.get(
         "/v1/review/queue/export.json",
@@ -469,7 +466,7 @@ def create_app() -> FastAPI:
         list endpoint's row shape once.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             raise HTTPException(status_code=404, detail="human review disabled")
@@ -481,7 +478,7 @@ def create_app() -> FastAPI:
             has_actions=has_actions,
             sort=sort,
         )
-        entries, _ = _build_review_service().list_queue(filter_spec)
+        entries, _ = container.current_review_service().list_queue(filter_spec)
         return ReviewQueueExportResponse(
             exported_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             count=len(entries),
@@ -507,7 +504,7 @@ def create_app() -> FastAPI:
         projection as :class:`ReviewQueueEntry`.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             raise HTTPException(status_code=404, detail="human review disabled")
@@ -519,7 +516,7 @@ def create_app() -> FastAPI:
             has_actions=has_actions,
             sort=sort,
         )
-        entries, _ = _build_review_service().list_queue(filter_spec)
+        entries, _ = container.current_review_service().list_queue(filter_spec)
         csv_text = _render_queue_csv(entries)
         return Response(
             content=csv_text,
@@ -536,14 +533,14 @@ def create_app() -> FastAPI:
     def get_review_queue_entry(review_queue_id: str):
         """Fetch a single review checkpoint by queue id, with current status."""
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             raise HTTPException(
                 status_code=404,
                 detail="human review disabled",
             )
-        service = _build_review_service()
+        service = container.current_review_service()
         entry = service.get_entry(review_queue_id)
         if entry is None:
             raise HTTPException(
@@ -560,13 +557,13 @@ def create_app() -> FastAPI:
     def clear_review_queue() -> ReviewClearResponse:
         """Clear the local review queue *and* the Phase 7B action log."""
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             return ReviewClearResponse(
                 enabled=False, cleared=0, cleared_actions=0
             )
-        cleared_checkpoints, cleared_actions = _build_review_service().clear()
+        cleared_checkpoints, cleared_actions = container.current_review_service().clear()
         return ReviewClearResponse(
             enabled=True,
             cleared=cleared_checkpoints,
@@ -590,14 +587,14 @@ def create_app() -> FastAPI:
         is a local demo workflow.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             raise HTTPException(
                 status_code=400,
                 detail="human review disabled",
             )
-        service = _build_review_service()
+        service = container.current_review_service()
         try:
             return service.apply_action(review_queue_id, request)
         except ReviewCheckpointNotFoundError as exc:
@@ -630,14 +627,14 @@ def create_app() -> FastAPI:
         before paging.
         """
 
-        current_settings = get_settings()
+        current_settings = container.current_settings()
         _raise_if_public_demo(current_settings)
         if not current_settings.trustrag_human_review_enabled:
             raise HTTPException(
                 status_code=404,
                 detail="human review disabled",
             )
-        service = _build_review_service()
+        service = container.current_review_service()
         if service.get_checkpoint(review_queue_id) is None:
             raise HTTPException(
                 status_code=404,
@@ -758,20 +755,6 @@ def _render_queue_csv(entries) -> str:
         }
         writer.writerow({key: csv_safe_cell(value) for key, value in row.items()})
     return buffer.getvalue()
-
-
-def _build_review_service() -> ReviewService:
-    """Build a :class:`ReviewService` from the process-wide singletons.
-
-    Kept as a function rather than a module-level instance so tests
-    that swap the singletons via ``monkeypatch`` see fresh stores on
-    every request.
-    """
-
-    return ReviewService(
-        checkpoint_store=get_review_checkpoint_store(),
-        action_store=get_review_action_store(),
-    )
 
 
 def _state_to_response(state: dict[str, Any]) -> RAGQueryResponse:

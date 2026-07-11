@@ -25,11 +25,15 @@ from __future__ import annotations
 
 import logging
 import secrets
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any
 
-from .checkpoint_store import LocalReviewActionStore, LocalReviewCheckpointStore
+from ..persistence.protocols import (
+    ReviewActionRepository,
+    ReviewCheckpointRepository,
+)
 from .models import (
     ReviewAction,
     ReviewActionRequest,
@@ -38,10 +42,7 @@ from .models import (
     ReviewQueueEntry,
     ReviewQueueSummaryResponse,
 )
-from .state_machine import (
-    InvalidReviewTransitionError,
-    apply_review_action,
-)
+from .state_machine import apply_review_action
 
 logger = logging.getLogger(__name__)
 
@@ -141,8 +142,8 @@ class ReviewService:
 
     def __init__(
         self,
-        checkpoint_store: LocalReviewCheckpointStore,
-        action_store: LocalReviewActionStore,
+        checkpoint_store: ReviewCheckpointRepository,
+        action_store: ReviewActionRepository,
     ) -> None:
         self._checkpoints = checkpoint_store
         self._actions = action_store
