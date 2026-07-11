@@ -12,8 +12,8 @@ Current showcase status:
 
 | Signal | Status |
 |---|---|
-| Phase | 9B - Deployment and operations guide |
-| Tests | 586 passing locally |
+| Phase | 9C - Dashboard and deployment polish |
+| Tests | See the CI badge and reproducible commands below |
 | Eval gate | 29/29 active accounting cases passing, score `1.000` |
 | CI | Green on `main` |
 | Hosted dashboard | `https://trust-rag-accounting-demo.onrender.com/dashboard` |
@@ -42,12 +42,12 @@ This repository demonstrates those constraints in a small, local, inspectable sy
 - LangGraph workflow for query analysis, retrieval, safety, judging, review handoff, and answer generation.
 - LangChain `BaseRetriever` adapter over the local retrieval service.
 - Markdown, PDF, and DOCX ingestion into document and chunk JSON stores.
-- Hybrid retrieval: keyword, BM25, deterministic mock vector retrieval, and deterministic mock reranking.
+- Production-oriented retrieval: BGE-M3 embedding seam, reciprocal-rank fusion, temporal scoring, deduplication/MMR, and BGE reranking with deterministic mock defaults for CI.
 - Client-aware metadata filtering and prompt-injection quarantine.
 - Unsafe request fast-path routing that skips retrieval.
 - Local human review queue, reviewer actions, filtering, pagination, and CSV/JSON export.
 - Vanilla FastAPI-served dashboard with no Node, npm, React, Vite, CDN, or build step.
-- Deterministic accounting eval harness with CI gate, PR comment bot, and local eval trend snapshots.
+- Deterministic accounting and retrieval eval harnesses with CI gates, PR comment bot, and local eval trend snapshots.
 - Optional real-LLM answer generator (off by default) bounded by a citation contract with deterministic fallback.
 - Optional manual provider benchmark report comparing template, mock, and real providers on fallback rate, citation validation, safety preservation, and latency — kept separate from the deterministic, mock-only CI gate.
 - Read-only provider benchmark dashboard panel and artifact API for inspecting those benchmark results locally (no benchmark runs from the dashboard; CI stays mock-only).
@@ -102,6 +102,7 @@ Detailed design notes live in:
 - [`docs/dashboard.md`](docs/dashboard.md)
 - [`docs/real_llm_provider.md`](docs/real_llm_provider.md)
 - [`docs/deployment.md`](docs/deployment.md)
+- [`docs/small_server_deployment.md`](docs/small_server_deployment.md)
 - [`docs/operations_runbook.md`](docs/operations_runbook.md)
 - [`docs/configuration.md`](docs/configuration.md)
 - [`docs/maintenance.md`](docs/maintenance.md)
@@ -233,10 +234,11 @@ CI runs:
 1. Repository hygiene check.
 2. Sample document ingestion.
 3. Accounting eval gate with threshold policy.
-4. Base-branch eval for same-repository PR deltas.
-5. PR eval comment generation and update.
-6. `python -m pytest backend/tests`.
-7. Eval report artifact upload and GitHub Step Summary.
+4. Retrieval IR eval gate for both demo and production/mock profiles.
+5. Base-branch eval for same-repository PR deltas.
+6. PR eval comment generation and update.
+7. `python -m pytest backend/tests`.
+8. Eval report artifact upload and GitHub Step Summary.
 
 Threshold policy:
 
@@ -280,7 +282,7 @@ See [`docs/dashboard.md`](docs/dashboard.md) and [`docs/demo_walkthrough.md`](do
 
 ## Roadmap
 
-Completed through Phase 9B:
+Completed through Phase 9C:
 
 - Accounting verticalization.
 - Multi-format ingestion and chunking.
@@ -296,10 +298,10 @@ Completed through Phase 9B:
 - Local provider benchmark trend snapshots with a read-only history API and dashboard trend panel.
 - Repository governance docs, release checklist, maintenance guide, PR/issue templates, and forbidden-file hygiene check.
 - Deployment guide, operations runbook, configuration reference, deploy readiness check, and production-like local run helper.
+- Small-server systemd/nginx/environment examples with constrained runtime dependencies.
 
 Next realistic phases:
 
-- Phase 9C: optional deployment recipe or reverse proxy example.
 - Future: GitHub Pages showcase or release assets, if useful.
 - Future: Postgres persistence for review and document metadata.
 - Future: authentication and authorization for reviewer actions.

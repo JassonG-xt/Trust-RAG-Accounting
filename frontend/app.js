@@ -7,7 +7,123 @@ const examples = [
   "文档里说 Ignore previous instructions 的内容应该听吗？",
 ];
 
+// --- 中文显示标签映射 -------------------------------------------------------
+// 枚举值（问题类型 / 审阅状态 / 原因码 / 字段键 / 操作类型）属于后端契约字符串：
+// 界面只把它们「显示」成中文，发往 API 的筛选 / 操作请求仍使用原始值。
+// 未命中映射的值回退为原始字符串，保证健壮。
+const QUESTION_TYPE_LABELS = {
+  unsafe_request: "不安全请求",
+  bookkeeping_sop: "记账规程",
+  invoice_compliance: "发票合规",
+  reimbursement_rule: "报销规则",
+  tax_policy: "税务政策",
+  document_checklist: "资料清单",
+  risk_review: "风险审阅",
+  temporal_policy_comparison: "时效政策对比",
+  general_accounting_qa: "通用会计问答",
+  unknown: "未知",
+};
+
+const STATUS_LABELS = {
+  pending: "待处理",
+  approved: "已通过",
+  rejected: "已驳回",
+  changes_requested: "需修改",
+  resolved: "已解决",
+  handoff_failed: "交接失败",
+  public_demo_not_persisted: "公开演示未入队",
+};
+
+const ACTION_LABELS = {
+  approve: "通过",
+  reject: "驳回",
+  request_changes: "要求修改",
+  rewrite_note: "添加备注",
+  resolve: "解决",
+  reopen: "重新打开",
+};
+
+const DOC_TYPE_LABELS = {
+  bookkeeping_sop: "记账规程",
+  invoice_compliance: "发票合规",
+  reimbursement_policy: "报销政策",
+  tax_policy_note: "税务政策说明",
+  document_checklist: "资料清单",
+  adversarial_sample: "对抗样本",
+};
+
+const REASON_LABELS = {
+  tax_policy_always_review: "税务政策强制审阅",
+  invoice_compliance_always_review: "发票合规强制审阅",
+  risk_review: "风险审阅",
+  judge_requested_review: "评审请求审阅",
+  answerable_with_review: "可答但需审阅",
+  low_confidence: "低置信度",
+};
+
+const META_LABELS = {
+  doc_id: "文档标识",
+  document_id: "文档 ID",
+  chunk_id: "分块 ID",
+  section: "章节",
+  source: "来源",
+  source_path: "来源路径",
+  valid_from: "生效起",
+  valid_to: "生效止",
+  client: "客户",
+  version: "版本",
+  policy_family: "政策族",
+  malicious: "恶意标记",
+  retrieval_strategy: "检索策略",
+  score_breakdown: "分数明细",
+  review_queue_id: "队列 ID",
+  question_type: "问题类型",
+  reasons: "原因",
+  created_at: "创建时间",
+  confidence: "置信度",
+  actions: "操作数",
+  last_action_at: "最近操作时间",
+  timestamp: "时间戳",
+  tags: "标签",
+  input: "输入",
+  output: "输出",
+};
+
+function labelQuestionType(value) {
+  if (!value) return QUESTION_TYPE_LABELS.unknown;
+  return QUESTION_TYPE_LABELS[value] || value;
+}
+
+function labelStatus(value) {
+  return STATUS_LABELS[value] || value || "待处理";
+}
+
+function labelAction(value) {
+  return ACTION_LABELS[value] || value;
+}
+
+function labelDocType(value) {
+  return DOC_TYPE_LABELS[value] || value;
+}
+
+function labelReason(value) {
+  return REASON_LABELS[value] || value;
+}
+
+function labelReasons(list) {
+  return (list || []).map(labelReason).join("、");
+}
+
+function metaLabel(key) {
+  return META_LABELS[key] || key;
+}
+
 const state = {
+  demoConfig: {
+    public_demo_enabled: false,
+    review_queue_enabled: true,
+    demo_mode_label: "Local full demo",
+  },
   documents: null,
   review: null,
   reviewSummary: null,
@@ -18,11 +134,6 @@ const state = {
   providerBenchmarkList: null,
   providerBenchmarkHistory: null,
   query: null,
-  demoConfig: {
-    public_demo_enabled: false,
-    review_queue_enabled: true,
-    demo_mode_label: "Local full demo",
-  },
   actionHistory: {},
   actionStatus: {},
   reviewFilters: {
@@ -66,12 +177,9 @@ function bindReviewFilters() {
   const resetBtn = $("review-filter-reset");
   if (resetBtn) {
     resetBtn.addEventListener("click", () => {
+      if (!reviewQueueEnabled()) return;
       resetReviewFilters();
-      if (reviewQueueEnabled()) {
-        refreshReview();
-      } else {
-        renderPublicDemoReviewDisabled();
-      }
+      refreshReview();
     });
   }
   const exportJson = $("review-export-json");
@@ -86,10 +194,7 @@ function bindReviewFilters() {
 
 let _reviewFilterTimer = null;
 function scheduleReviewFilterUpdate() {
-  if (!reviewQueueEnabled()) {
-    renderPublicDemoReviewDisabled();
-    return;
-  }
+  if (!reviewQueueEnabled()) return;
   if (_reviewFilterTimer) clearTimeout(_reviewFilterTimer);
   _reviewFilterTimer = setTimeout(() => {
     readReviewFiltersFromForm();
@@ -145,10 +250,7 @@ function reviewFilterQueryString({includePaging = true} = {}) {
 }
 
 function downloadExport(format) {
-  if (!reviewQueueEnabled()) {
-    renderPublicDemoReviewDisabled();
-    return;
-  }
+  if (!reviewQueueEnabled()) return;
   const qs = reviewFilterQueryString({includePaging: false});
   const suffix = format === "csv" ? "csv" : "json";
   const url = `/v1/review/queue/export.${suffix}${qs ? `?${qs}` : ""}`;
@@ -157,7 +259,7 @@ function downloadExport(format) {
 
 function renderExamples() {
   const list = $("example-list");
-  list.innerHTML = "";
+  list.replaceChildren();
   examples.forEach((question) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -173,26 +275,28 @@ function renderExamples() {
 
 async function refreshAll() {
   await refreshDemoConfig();
-  const reviewRefresh = reviewQueueEnabled()
-    ? refreshReview()
-    : Promise.resolve(renderPublicDemoReviewDisabled());
-  await Promise.allSettled([
+  const tasks = [
     refreshHealth(),
     refreshDocuments(),
-    reviewRefresh,
     refreshEval(),
     refreshEvalHistory(),
     refreshTraces(),
     refreshProviderBenchmark(),
     refreshProviderBenchmarkHistory(),
-  ]);
+  ];
+  if (reviewQueueEnabled()) {
+    tasks.push(refreshReview());
+  } else {
+    renderPublicDemoReviewDisabled();
+  }
+  await Promise.allSettled(tasks);
 }
 
 async function refreshPanel(name) {
   if (name === "documents") return refreshDocuments();
   if (name === "review") {
-    if (reviewQueueEnabled()) return refreshReview();
-    return renderPublicDemoReviewDisabled();
+    if (!reviewQueueEnabled()) return renderPublicDemoReviewDisabled();
+    return refreshReview();
   }
   if (name === "eval") return refreshEval();
   if (name === "eval-history") return refreshEvalHistory();
@@ -201,25 +305,9 @@ async function refreshPanel(name) {
   if (name === "provider-trend") return refreshProviderBenchmarkHistory();
 }
 
-async function refreshHealth() {
-  const status = $("backend-status");
-  try {
-    const data = await fetchJson("/healthz");
-    status.textContent = data.status === "ok" ? "Online" : "Unknown";
-    status.className = "stat-value";
-  } catch (error) {
-    status.textContent = "Offline";
-    status.className = "stat-value";
-  }
-}
-
 async function refreshDemoConfig() {
   try {
-    const data = await fetchJson("/v1/demo/config");
-    state.demoConfig = {
-      ...state.demoConfig,
-      ...data,
-    };
+    state.demoConfig = await fetchJson("/v1/demo/config");
   } catch (error) {
     state.demoConfig = {
       public_demo_enabled: false,
@@ -230,34 +318,63 @@ async function refreshDemoConfig() {
   applyDemoConfigToUi();
 }
 
-function publicDemoEnabled() {
-  return Boolean(state.demoConfig?.public_demo_enabled);
-}
-
-function reviewQueueEnabled() {
-  return state.demoConfig?.review_queue_enabled !== false;
-}
-
 function applyDemoConfigToUi() {
+  const modeLabel = state.demoConfig.demo_mode_label || "Local full demo";
   document.body.dataset.publicDemo = publicDemoEnabled() ? "true" : "false";
-  document.body.dataset.reviewQueueEnabled = reviewQueueEnabled() ? "true" : "false";
+  document.body.dataset.demoModeLabel = modeLabel;
+  const pill = $("demo-mode-pill");
+  if (pill) {
+    pill.textContent = modeLabel;
+  }
   setReviewControlsEnabled(reviewQueueEnabled());
 }
 
+function publicDemoEnabled() {
+  return Boolean(state.demoConfig && state.demoConfig.public_demo_enabled);
+}
+
+function reviewQueueEnabled() {
+  return !state.demoConfig || state.demoConfig.review_queue_enabled !== false;
+}
+
 function setReviewControlsEnabled(enabled) {
-  const selectors = [
-    "[data-refresh=\"review\"]",
-    "#review-export-json",
-    "#review-export-csv",
-    "#review-filter-reset",
-    "#review-filters input",
-    "#review-filters select",
-  ];
-  document.querySelectorAll(selectors.join(",")).forEach((element) => {
-    if ("disabled" in element) {
-      element.disabled = !enabled;
-    }
+  ["review-filters", "review-export-json", "review-export-csv"].forEach((id) => {
+    const node = $(id);
+    if (!node) return;
+    node.hidden = !enabled;
+    if ("disabled" in node) node.disabled = !enabled;
   });
+  document.querySelectorAll('[data-refresh="review"]').forEach((button) => {
+    button.hidden = !enabled;
+    button.disabled = !enabled;
+  });
+}
+
+function renderPublicDemoReviewDisabled() {
+  state.review = {enabled: false, entries: [], total: 0};
+  state.reviewSummary = null;
+  renderSummary(
+    $("review-summary"),
+    "Public read-only demo",
+    "warn",
+    "公开演示仅开放 RAG 查询、证据、引用、时效、安全、文档和评测查看；审阅队列写操作已关闭。",
+  );
+  $("review-list").replaceChildren(makeEmptyNode("reviewer workflow disabled in public demo mode."));
+  $("review-pager").replaceChildren();
+  $("review-summary-cards").replaceChildren();
+  setReviewControlsEnabled(false);
+}
+
+async function refreshHealth() {
+  const status = $("backend-status");
+  try {
+    const data = await fetchJson("/healthz");
+    status.textContent = data.status === "ok" ? "在线" : "未知";
+    status.dataset.state = data.status === "ok" ? "online" : "warn";
+  } catch (error) {
+    status.textContent = "离线";
+    status.dataset.state = "offline";
+  }
 }
 
 async function refreshDocuments() {
@@ -267,8 +384,8 @@ async function refreshDocuments() {
     $("chunk-count").textContent = String(state.documents.chunk_count ?? 0);
     renderDocuments(state.documents);
   } catch (error) {
-    $("documents-summary").textContent = `Documents unavailable: ${messageOf(error)}`;
-    $("documents-list").innerHTML = emptyHtml("No document data available.");
+    $("documents-summary").textContent = `文档不可用：${messageOf(error)}`;
+    $("documents-list").replaceChildren(makeEmptyNode("无可用文档数据。"));
   }
 }
 
@@ -290,10 +407,10 @@ async function refreshReview() {
     renderReview(queueData);
     renderReviewPager(queueData);
   } catch (error) {
-    $("review-summary").textContent = `Review queue unavailable: ${messageOf(error)}`;
-    $("review-list").innerHTML = emptyHtml("No review queue data available.");
-    $("review-pager").innerHTML = "";
-    $("review-summary-cards").innerHTML = "";
+    $("review-summary").textContent = `审阅队列不可用：${messageOf(error)}`;
+    $("review-list").replaceChildren(makeEmptyNode("无可用审阅队列数据。"));
+    $("review-pager").replaceChildren();
+    $("review-summary-cards").replaceChildren();
   }
 }
 
@@ -302,9 +419,9 @@ async function refreshEval() {
     state.eval = await fetchJson("/v1/evals/latest");
     renderEval(state.eval);
   } catch (error) {
-    $("eval-summary").innerHTML = badge("Missing eval report", "warn");
-    $("eval-categories").innerHTML = "";
-    $("eval-markdown").textContent = `Eval endpoint unavailable: ${messageOf(error)}`;
+    $("eval-summary").replaceChildren(makeBadge("缺少评测报告", "warn"));
+    $("eval-categories").replaceChildren();
+    $("eval-markdown").textContent = `评测接口不可用：${messageOf(error)}`;
   }
 }
 
@@ -313,10 +430,10 @@ async function refreshEvalHistory() {
     state.evalHistory = await fetchJson("/v1/evals/history");
     renderEvalHistory(state.evalHistory);
   } catch (error) {
-    $("eval-trend-summary").innerHTML = badge("Eval history unavailable", "warn");
-    $("eval-trend-metrics").innerHTML = "";
-    $("eval-sparkline").innerHTML = "";
-    $("eval-trend-categories").innerHTML = emptyHtml(`History endpoint unavailable: ${messageOf(error)}`);
+    $("eval-trend-summary").replaceChildren(makeBadge("评测历史不可用", "warn"));
+    $("eval-trend-metrics").replaceChildren();
+    $("eval-sparkline").replaceChildren();
+    $("eval-trend-categories").replaceChildren(makeEmptyNode(`历史接口不可用：${messageOf(error)}`));
   }
 }
 
@@ -325,8 +442,8 @@ async function refreshTraces() {
     state.traces = await fetchJson("/v1/debug/traces");
     renderTraces(state.traces);
   } catch (error) {
-    $("trace-summary").textContent = `Traces unavailable: ${messageOf(error)}`;
-    $("trace-list").innerHTML = emptyHtml("No trace data available.");
+    $("trace-summary").textContent = `追踪不可用：${messageOf(error)}`;
+    $("trace-list").replaceChildren(makeEmptyNode("无可用追踪数据。"));
   }
 }
 
@@ -344,9 +461,7 @@ async function refreshProviderBenchmark() {
   }
 }
 
-// The provider benchmark panel is built with DOM nodes + textContent (not
-// innerHTML) so artifact-sourced strings can never be parsed as markup —
-// XSS-safe by construction, no sanitizer dependency.
+// Artifact-sourced strings only reach DOM nodes through textContent.
 function elx(tag, {className, text} = {}) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -360,6 +475,60 @@ function makeBadge(text, tone = "neutral") {
 
 function makeEmptyNode(text) {
   return elx("div", {className: "empty", text});
+}
+
+function renderSummary(container, badgeText, tone, summaryText = "") {
+  const children = [makeBadge(badgeText, tone)];
+  if (summaryText) {
+    children.push(elx("span", {className: "summary-text", text: summaryText}));
+  }
+  container.replaceChildren(...children);
+}
+
+function makeMetadataNodes(values) {
+  return Object.entries(values).map(([label, value]) => {
+    const row = elx("div");
+    row.append(
+      elx("dt", {text: label}),
+      elx("dd", {text: value ?? "无"}),
+    );
+    return row;
+  });
+}
+
+function makeItemNode({title, badgeText, meta = {}, preview = ""}) {
+  const article = elx("article", {className: "item"});
+  const titleRow = elx("div", {className: "item-title"});
+  titleRow.appendChild(elx("span", {text: title}));
+  if (badgeText) titleRow.appendChild(makeBadge(badgeText));
+
+  const metaRow = elx("div", {className: "item-meta"});
+  const entries = Object.entries(meta).filter(
+    ([, value]) => value !== undefined && value !== null && value !== "",
+  );
+  if (!entries.length) {
+    metaRow.appendChild(elx("span", {text: "无元数据。"}));
+  } else {
+    entries.forEach(([key, value]) => {
+      const row = elx("span");
+      row.append(
+        elx("strong", {text: `${metaLabel(key)}：`}),
+        elx("span", {className: "mono", text: value}),
+      );
+      metaRow.appendChild(row);
+    });
+  }
+  article.append(titleRow, metaRow);
+
+  if (preview) {
+    const details = elx("details", {className: "details-block"});
+    details.append(
+      elx("summary", {text: "内容预览"}),
+      elx("div", {className: "content-preview", text: truncate(preview, 320)}),
+    );
+    article.appendChild(details);
+  }
+  return article;
 }
 
 function makeBenchmarkTable(headers, rows, extraClass = "") {
@@ -384,12 +553,12 @@ function makeBenchmarkTable(headers, rows, extraClass = "") {
 }
 
 function renderProviderBenchmarkError(message) {
-  $("provider-benchmark-summary").replaceChildren(makeBadge("Provider benchmark unavailable", "warn"));
+  $("provider-benchmark-summary").replaceChildren(makeBadge("提供方基准不可用", "warn"));
   $("provider-benchmark-cards").replaceChildren();
   $("provider-benchmark-providers").replaceChildren();
   $("provider-benchmark-categories").replaceChildren();
-  $("provider-benchmark-cases").replaceChildren(makeEmptyNode(`Endpoint unavailable: ${message}`));
-  $("provider-benchmark-markdown").textContent = "No report loaded.";
+  $("provider-benchmark-cases").replaceChildren(makeEmptyNode(`接口不可用：${message}`));
+  $("provider-benchmark-markdown").textContent = "尚未加载报告。";
 }
 
 function renderProviderBenchmark(latest, list) {
@@ -402,42 +571,42 @@ function renderProviderBenchmark(latest, list) {
   [cards, providers, categories, cases].forEach((node) => node.replaceChildren());
 
   if (!latest || !latest.available || !latest.latest) {
-    summaryLine.replaceChildren(makeBadge("No provider benchmark artifact", "warn"));
+    summaryLine.replaceChildren(makeBadge("无提供方基准产物", "warn"));
     cases.replaceChildren(
-      makeEmptyNode("No provider benchmark artifact found. Run: bash scripts/run_provider_benchmark.sh mock")
+      makeEmptyNode("未找到提供方基准产物。请运行：bash scripts/run_provider_benchmark.sh mock")
     );
     markdown.textContent =
-      "Run bash scripts/run_provider_benchmark.sh mock to generate a local benchmark artifact.";
+      "运行 bash scripts/run_provider_benchmark.sh mock 生成本地基准产物。";
     return;
   }
 
   const summary = latest.latest;
   const passed = Number(summary.failed || 0) === 0;
   summaryLine.replaceChildren(
-    makeBadge(summary.provider || "provider", passed ? "pass" : "warn"),
+    makeBadge(summary.provider || "提供方", passed ? "pass" : "warn"),
     elx("span", {
       className: "summary-text",
-      text: ` score ${formatScore(summary.score)}, ${summary.passed ?? 0}/${summary.total ?? 0} cases, source ${summary.source || "results"}`,
+      text: ` 分数 ${formatScore(summary.score)}，${summary.passed ?? 0}/${summary.total ?? 0} 个用例，来源 ${summary.source || "results"}`,
     })
   );
   renderBenchmarkCards(cards, summary);
   renderBenchmarkProviders(providers, (list && list.artifacts) || []);
   renderBenchmarkCategories(categories, summary.by_category || {});
   renderBenchmarkCases(cases, summary.results || []);
-  markdown.textContent = latest.markdown_report || "No Markdown report available.";
+  markdown.textContent = latest.markdown_report || "无可用 Markdown 报告。";
 }
 
 function renderBenchmarkCards(container, summary) {
   const cards = [
-    ["Provider", summary.provider || "—", "neutral"],
-    ["Model", summary.model || "—", "neutral"],
-    ["Score", formatScore(summary.score), Number(summary.failed || 0) === 0 ? "pass" : "warn"],
-    ["Fallback rate", formatPct(summary.fallback_rate), Number(summary.fallback_rate || 0) > 0 ? "warn" : "pass"],
-    ["Citation valid", formatPct(summary.citation_validation_rate), "pass"],
-    ["Invalid citations", summary.invalid_citation_count ?? 0, Number(summary.invalid_citation_count || 0) ? "fail" : "neutral"],
-    ["Provider errors", summary.provider_error_count ?? 0, Number(summary.provider_error_count || 0) ? "fail" : "neutral"],
-    ["Avg latency", formatMs(summary.avg_latency_ms), "neutral"],
-    ["P95 latency", formatMs(summary.p95_latency_ms), "neutral"],
+    ["提供方", summary.provider || "—", "neutral"],
+    ["模型", summary.model || "—", "neutral"],
+    ["分数", formatScore(summary.score), Number(summary.failed || 0) === 0 ? "pass" : "warn"],
+    ["回退率", formatPct(summary.fallback_rate), Number(summary.fallback_rate || 0) > 0 ? "warn" : "pass"],
+    ["引用有效", formatPct(summary.citation_validation_rate), "pass"],
+    ["无效引用", summary.invalid_citation_count ?? 0, Number(summary.invalid_citation_count || 0) ? "fail" : "neutral"],
+    ["提供方错误", summary.provider_error_count ?? 0, Number(summary.provider_error_count || 0) ? "fail" : "neutral"],
+    ["平均延迟", formatMs(summary.avg_latency_ms), "neutral"],
+    ["P95 延迟", formatMs(summary.p95_latency_ms), "neutral"],
   ];
   container.replaceChildren(
     ...cards.map(([label, value, tone]) => {
@@ -466,9 +635,9 @@ function renderBenchmarkProviders(container, artifacts) {
     a.source || "",
   ]);
   container.replaceChildren(
-    elx("h3", {className: "table-caption", text: `Artifacts (${artifacts.length})`}),
+    elx("h3", {className: "table-caption", text: `产物 (${artifacts.length})`}),
     makeBenchmarkTable(
-      ["Provider", "Model", "Score", "Fallback", "Citation valid", "Avg latency", "Source"],
+      ["提供方", "模型", "分数", "回退", "引用有效", "平均延迟", "来源"],
       rows
     )
   );
@@ -493,9 +662,9 @@ function renderBenchmarkCategories(container, categories) {
     ];
   });
   container.replaceChildren(
-    elx("h3", {className: "table-caption", text: "By category"}),
+    elx("h3", {className: "table-caption", text: "按类别"}),
     makeBenchmarkTable(
-      ["Category", "Total", "Passed", "Failed", "Score", "Fallback", "Citation valid"],
+      ["类别", "总数", "通过", "失败", "分数", "回退", "引用有效"],
       rows
     )
   );
@@ -503,25 +672,25 @@ function renderBenchmarkCategories(container, categories) {
 
 function renderBenchmarkCases(container, results) {
   if (!results.length) {
-    container.replaceChildren(makeEmptyNode("No per-case rows in this artifact."));
+    container.replaceChildren(makeEmptyNode("该产物无逐用例数据。"));
     return;
   }
   const rows = results.map((r) => [
     r.case_id || "",
     r.category || "",
-    makeBadge(r.passed ? "pass" : "fail", r.passed ? "pass" : "fail"),
+    makeBadge(r.passed ? "通过" : "失败", r.passed ? "pass" : "fail"),
     formatScore(r.score),
     formatBool(r.llm_used),
     formatBool(r.fallback_used),
     r.fallback_reason || "—",
-    r.citation_valid === null || r.citation_valid === undefined ? "n/a" : formatBool(r.citation_valid),
+    r.citation_valid === null || r.citation_valid === undefined ? "不适用" : formatBool(r.citation_valid),
     formatMs(r.latency_ms),
     (r.failure_reasons || []).join("; ") || "—",
   ]);
   container.replaceChildren(
-    elx("h3", {className: "table-caption", text: `Cases (${results.length})`}),
+    elx("h3", {className: "table-caption", text: `用例 (${results.length})`}),
     makeBenchmarkTable(
-      ["Case", "Category", "Passed", "Score", "LLM", "Fallback", "Reason", "Citation", "Latency", "Failures"],
+      ["用例", "类别", "通过", "分数", "LLM", "回退", "原因", "引用", "延迟", "失败项"],
       rows,
       "benchmark-case-table"
     )
@@ -530,24 +699,23 @@ function renderBenchmarkCases(container, results) {
 
 function formatPct(value) {
   const number = Number(value);
-  if (!Number.isFinite(number)) return "n/a";
+  if (!Number.isFinite(number)) return "不适用";
   return `${(number * 100).toFixed(1)}%`;
 }
 
 function formatMs(value) {
-  if (value === null || value === undefined) return "n/a";
+  if (value === null || value === undefined) return "不适用";
   const number = Number(value);
-  if (!Number.isFinite(number)) return "n/a";
+  if (!Number.isFinite(number)) return "不适用";
   return `${number.toFixed(1)} ms`;
 }
 
 function formatBool(value) {
-  return value ? "yes" : "no";
+  return value ? "是" : "否";
 }
 
 // --- Phase 8E: provider benchmark trends ----------------------------------
-// Same DOM-construction approach as the 8D panel (no innerHTML); the sparklines
-// are built with createElementNS so artifact strings are never parsed as markup.
+// Sparklines use createElementNS so artifact strings are never parsed as markup.
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 function svgEl(tag, attrs = {}) {
@@ -566,9 +734,9 @@ async function refreshProviderBenchmarkHistory() {
 }
 
 function renderProviderTrendError(message) {
-  $("provider-trend-summary").replaceChildren(makeBadge("Provider benchmark history unavailable", "warn"));
+  $("provider-trend-summary").replaceChildren(makeBadge("提供方基准历史不可用", "warn"));
   $("provider-trend-metrics").replaceChildren();
-  $("provider-trend-sparklines").replaceChildren(makeEmptyNode(`Endpoint unavailable: ${message}`));
+  $("provider-trend-sparklines").replaceChildren(makeEmptyNode(`接口不可用：${message}`));
   $("provider-trend-table").replaceChildren();
 }
 
@@ -581,10 +749,10 @@ function renderProviderBenchmarkHistory(data) {
 
   const snapshots = (data && data.snapshots) || [];
   if (!data || !data.available || !snapshots.length) {
-    summaryLine.replaceChildren(makeBadge("No provider benchmark history", "warn"));
+    summaryLine.replaceChildren(makeBadge("无提供方基准历史", "warn"));
     charts.replaceChildren(
       makeEmptyNode(
-        "No provider benchmark history found. Run: bash scripts/run_provider_benchmark.sh mock then bash scripts/archive_provider_benchmark_snapshot.sh"
+        "未找到提供方基准历史。请运行：bash scripts/run_provider_benchmark.sh mock 然后 bash scripts/archive_provider_benchmark_snapshot.sh"
       )
     );
     return;
@@ -593,10 +761,10 @@ function renderProviderBenchmarkHistory(data) {
   const latest = data.latest || snapshots[snapshots.length - 1];
   const passed = Number(latest.failed || 0) === 0;
   summaryLine.replaceChildren(
-    makeBadge(latest.provider || "provider", passed ? "pass" : "warn"),
+    makeBadge(latest.provider || "提供方", passed ? "pass" : "warn"),
     elx("span", {
       className: "summary-text",
-      text: ` latest score ${formatScore(latest.score)} · ${snapshots.length} snapshots · ${latest.created_at || ""}`,
+      text: ` 最新分数 ${formatScore(latest.score)} · ${snapshots.length} 个快照 · ${latest.created_at || ""}`,
     })
   );
   renderProviderTrendMetrics(metrics, data, latest);
@@ -609,12 +777,12 @@ function renderProviderTrendMetrics(container, data, latest) {
   const fallbackDelta = data.fallback_rate_delta_latest;
   const citationDelta = data.citation_validation_rate_delta_latest;
   const cards = [
-    {label: "Snapshots", value: data.count ?? 0, tone: "neutral"},
-    {label: "Latest provider", value: latest.provider || "—", tone: "neutral"},
-    {label: "Latest score", value: formatScore(latest.score), tone: Number(latest.failed || 0) === 0 ? "pass" : "fail"},
-    {label: "Score delta", value: formatDelta(scoreDelta), tone: deltaTone(scoreDelta)},
-    {label: "Fallback delta", value: formatDeltaPct(fallbackDelta), tone: deltaTone(fallbackDelta, {invert: true})},
-    {label: "Citation delta", value: formatDeltaPct(citationDelta), tone: deltaTone(citationDelta)},
+    {label: "快照数", value: data.count ?? 0, tone: "neutral"},
+    {label: "最新提供方", value: latest.provider || "—", tone: "neutral"},
+    {label: "最新分数", value: formatScore(latest.score), tone: Number(latest.failed || 0) === 0 ? "pass" : "fail"},
+    {label: "分数变化", value: formatDelta(scoreDelta), tone: deltaTone(scoreDelta)},
+    {label: "回退变化", value: formatDeltaPct(fallbackDelta), tone: deltaTone(fallbackDelta, {invert: true})},
+    {label: "引用变化", value: formatDeltaPct(citationDelta), tone: deltaTone(citationDelta)},
   ];
   container.replaceChildren(
     ...cards.map((card) => {
@@ -633,9 +801,9 @@ function renderProviderTrendCharts(container, snapshots) {
   const fallbacks = snapshots.map((s) => Number(s.fallback_rate) || 0);
   const citations = snapshots.map((s) => Number(s.citation_validation_rate) || 0);
   container.replaceChildren(
-    makeTrendChart("Score", scores, {label: "Provider benchmark score trend"}),
-    makeTrendChart("Fallback rate", fallbacks, {label: "Provider benchmark fallback rate trend"}),
-    makeTrendChart("Citation validation rate", citations, {label: "Provider benchmark citation validation trend"})
+    makeTrendChart("分数", scores, {label: "提供方基准分数趋势"}),
+    makeTrendChart("回退率", fallbacks, {label: "提供方基准回退率趋势"}),
+    makeTrendChart("引用验证率", citations, {label: "提供方基准引用验证率趋势"})
   );
 }
 
@@ -661,11 +829,11 @@ function renderProviderTrendTable(container, snapshots) {
       s.git_commit || "—",
     ]);
   container.replaceChildren(
-    elx("h3", {className: "table-caption", text: `History (${snapshots.length})`}),
+    elx("h3", {className: "table-caption", text: `历史 (${snapshots.length})`}),
     makeBenchmarkTable(
       [
-        "Created At", "Provider", "Model", "Score", "Fallback", "Citation valid",
-        "Invalid", "Errors", "Avg latency", "P95 latency", "Commit",
+        "创建时间", "提供方", "模型", "分数", "回退", "引用有效",
+        "无效", "错误", "平均延迟", "P95 延迟", "提交",
       ],
       rows,
       "benchmark-case-table"
@@ -682,7 +850,7 @@ function makeTrendChart(title, values, opts) {
   return wrap;
 }
 
-function makeSparkline(values, {label = "trend", domainMax = 1} = {}) {
+function makeSparkline(values, {label = "趋势", domainMax = 1} = {}) {
   const width = 320;
   const height = 72;
   const pad = 8;
@@ -719,21 +887,21 @@ function deltaTone(value, {invert = false} = {}) {
 }
 
 function formatDeltaPct(value) {
-  if (value === null || value === undefined) return "N/A";
+  if (value === null || value === undefined) return "不适用";
   const number = Number(value);
-  if (!Number.isFinite(number)) return "N/A";
+  if (!Number.isFinite(number)) return "不适用";
   return `${number > 0 ? "+" : ""}${(number * 100).toFixed(1)}pp`;
 }
 
 async function runQuery() {
   const question = $("question-input").value.trim();
   if (!question) {
-    $("query-status").textContent = "Enter a question first.";
+    $("query-status").textContent = "请先输入问题。";
     return;
   }
 
   $("run-query").disabled = true;
-  $("query-status").textContent = "Running query...";
+  $("query-status").textContent = "查询中…";
   try {
     const data = await fetchJson("/v1/rag/query", {
       method: "POST",
@@ -742,13 +910,16 @@ async function runQuery() {
     });
     state.query = data;
     renderQuery(data);
-    $("query-status").textContent = "Query complete.";
-    const reviewRefresh = reviewQueueEnabled()
-      ? refreshReview()
-      : Promise.resolve(renderPublicDemoReviewDisabled());
-    await Promise.allSettled([reviewRefresh, refreshTraces()]);
+    $("query-status").textContent = "查询完成。";
+    const followUpTasks = [refreshTraces()];
+    if (reviewQueueEnabled()) {
+      followUpTasks.push(refreshReview());
+    } else {
+      renderPublicDemoReviewDisabled();
+    }
+    await Promise.allSettled(followUpTasks);
   } catch (error) {
-    $("query-status").textContent = `Query failed: ${messageOf(error)}`;
+    $("query-status").textContent = `查询失败：${messageOf(error)}`;
   } finally {
     $("run-query").disabled = false;
   }
@@ -763,36 +934,44 @@ async function fetchJson(url, options = {}) {
 }
 
 function renderQuery(data) {
-  $("answer-text").textContent = data.answer || "No answer returned.";
-  $("answer-badges").innerHTML = [
-    badge(data.question_type || "unknown", data.question_type === "unsafe_request" ? "fail" : "pass"),
-    data.needs_human_review ? badge("Review required", "warn") : badge("No review", "pass"),
-    data.safety_analysis?.unsafe_request_detected ? badge("Unsafe request", "fail") : "",
-    data.safety_analysis?.prompt_injection_detected ? badge("Prompt injection", "fail") : "",
-  ].join("");
+  $("answer-text").textContent = data.answer || "未返回回答。";
+  const answerBadges = [
+    makeBadge(labelQuestionType(data.question_type), data.question_type === "unsafe_request" ? "fail" : "pass"),
+    data.needs_human_review ? makeBadge("需人工审阅", "warn") : makeBadge("无需审阅", "pass"),
+  ];
+  if (data.safety_analysis?.unsafe_request_detected) {
+    answerBadges.push(makeBadge("检测到不安全请求", "fail"));
+  }
+  if (data.safety_analysis?.prompt_injection_detected) {
+    answerBadges.push(makeBadge("检测到提示注入", "fail"));
+  }
+  $("answer-badges").replaceChildren(...answerBadges);
 
   const review = data.human_review || {};
-  $("answer-metadata").innerHTML = metadataHtml({
-    Confidence: formatScore(data.confidence),
-    "Question type": data.question_type || "unknown",
-    "Review status": review.status || (review.required ? "pending" : "not required"),
-    "Queue id": review.review_queue_id || "none",
-    "Review reasons": (review.reasons || []).join(", ") || "none",
-    Errors: (data.errors || []).join(", ") || "none",
-  });
+  $("answer-metadata").replaceChildren(...makeMetadataNodes({
+    "置信度": formatScore(data.confidence),
+    "问题类型": labelQuestionType(data.question_type),
+    "审阅状态": review.status ? labelStatus(review.status) : (review.required ? "待处理" : "无需审阅"),
+    "队列 ID": review.review_queue_id || "无",
+    "审阅原因": labelReasons(review.reasons) || "无",
+    "错误": (data.errors || []).join("，") || "无",
+  }));
   $("safety-json").textContent = pretty(data.safety_analysis || {});
   $("temporal-json").textContent = pretty(data.temporal_analysis || {});
   $("conflict-json").textContent = pretty(data.conflict_analysis || {});
-  $("citations-list").innerHTML = renderCitations(data.citations || []);
-  $("support-list").innerHTML = renderEvidenceList(data.support_evidence || []);
-  $("counter-list").innerHTML = renderEvidenceList(data.counter_evidence || []);
+  renderCitations($("citations-list"), data.citations || []);
+  renderEvidenceList($("support-list"), data.support_evidence || []);
+  renderEvidenceList($("counter-list"), data.counter_evidence || []);
 }
 
-function renderCitations(citations) {
-  if (!citations.length) return emptyHtml("No citations returned.");
-  return citations.map((citation) => itemHtml({
-    title: citation.title || citation.doc_id || "Citation",
-    badgeText: citation.version || "citation",
+function renderCitations(container, citations) {
+  if (!citations.length) {
+    container.replaceChildren(makeEmptyNode("未返回引用。"));
+    return;
+  }
+  container.replaceChildren(...citations.map((citation) => makeItemNode({
+    title: citation.title || citation.doc_id || "引用",
+    badgeText: citation.version || "引用",
     meta: {
       doc_id: citation.doc_id,
       document_id: citation.document_id,
@@ -803,13 +982,16 @@ function renderCitations(citations) {
       client: citation.client,
     },
     preview: citation.snippet,
-  })).join("");
+  })));
 }
 
-function renderEvidenceList(items) {
-  if (!items.length) return emptyHtml("No evidence returned.");
-  return items.map((item) => itemHtml({
-    title: item.title || item.doc_id || "Evidence",
+function renderEvidenceList(container, items) {
+  if (!items.length) {
+    container.replaceChildren(makeEmptyNode("未返回证据。"));
+    return;
+  }
+  container.replaceChildren(...items.map((item) => makeItemNode({
+    title: item.title || item.doc_id || "证据",
     badgeText: formatScore(item.score),
     meta: {
       chunk_id: item.chunk_id,
@@ -821,17 +1003,17 @@ function renderEvidenceList(items) {
       client: item.client,
     },
     preview: item.content,
-  })).join("");
+  })));
 }
 
 function renderDocuments(data) {
   const docs = data.documents || [];
   $("documents-summary").textContent =
-    `${data.count ?? docs.length} documents, ${data.chunk_count ?? 0} chunks, source: ${data.source || "unknown"}`;
-  $("documents-list").innerHTML = docs.length
-    ? docs.map((doc) => itemHtml({
+    `${data.count ?? docs.length} 篇文档，${data.chunk_count ?? 0} 个分块，来源：${data.source || "未知"}`;
+  const nodes = docs.length
+    ? docs.map((doc) => makeItemNode({
         title: doc.title || doc.document_id,
-        badgeText: doc.document_type,
+        badgeText: labelDocType(doc.document_type),
         meta: {
           document_id: doc.document_id,
           client: doc.client,
@@ -840,10 +1022,11 @@ function renderDocuments(data) {
           valid_from: doc.valid_from,
           valid_to: doc.valid_to,
           source_path: doc.source_path,
-          malicious: doc.is_malicious ? "yes" : "no",
+          malicious: doc.is_malicious ? "是" : "否",
         },
-      })).join("")
-    : emptyHtml("No documents loaded.");
+      }))
+    : [makeEmptyNode("尚未加载文档。")];
+  $("documents-list").replaceChildren(...nodes);
 }
 
 function renderReview(data) {
@@ -852,8 +1035,8 @@ function renderReview(data) {
     return;
   }
   if (!data.enabled) {
-    $("review-summary").innerHTML = badge("Review disabled", "warn");
-    $("review-list").innerHTML = emptyHtml("Human review handoff is disabled.");
+    $("review-summary").replaceChildren(makeBadge("审阅已禁用", "warn"));
+    $("review-list").replaceChildren(makeEmptyNode("人工审阅交接已禁用。"));
     return;
   }
   const entries = data.entries || [];
@@ -863,110 +1046,95 @@ function renderReview(data) {
   const pageEnd = Math.min(offset + entries.length, total);
   const filterDescr = filterDescription(data.filters || {}, data.sort);
   const summaryParts = [
-    `${total} matching checkpoints`,
-    total ? `showing ${offset + 1}–${pageEnd}` : null,
+    `${total} 个匹配检查点`,
+    total ? `显示 ${offset + 1}–${pageEnd}` : null,
     filterDescr,
   ].filter(Boolean);
   $("review-summary").textContent = summaryParts.join(" · ");
   if (!entries.length) {
     if (total === 0 && !filterDescr) {
-      $("review-list").innerHTML = emptyHtml(
-        "No review checkpoints in the queue. Run a tax_policy or invoice_compliance query to populate it."
-      );
+      $("review-list").replaceChildren(makeEmptyNode(
+        "队列中暂无审阅检查点。运行 tax_policy 或 invoice_compliance 查询以填充。",
+      ));
     } else {
-      $("review-list").innerHTML = emptyHtml(
-        "No entries match the current filters."
-      );
+      $("review-list").replaceChildren(makeEmptyNode("没有符合当前筛选条件的条目。"));
     }
     return;
   }
-  $("review-list").innerHTML = entries
-    .map((entry) => reviewEntryHtml(entry))
-    .join("");
-}
-
-function renderPublicDemoReviewDisabled() {
-  state.review = {enabled: false, entries: [], count: 0, total: 0};
-  state.reviewSummary = null;
-  $("review-summary").innerHTML = badge("Public read-only demo", "warn");
-  $("review-list").innerHTML = emptyHtml(
-    "Public demo keeps RAG query, evidence, citations, temporal analysis, safety analysis, documents, and eval viewers available; reviewer workflow is disabled."
-  );
-  $("review-pager").innerHTML = "";
-  $("review-summary-cards").innerHTML = "";
+  $("review-list").replaceChildren(...entries.map((entry) => makeReviewEntryNode(entry)));
 }
 
 function filterDescription(filters, sort) {
   const parts = [];
-  if (filters.status) parts.push(`status=${filters.status}`);
-  if (filters.question_type) parts.push(`type=${filters.question_type}`);
-  if (filters.reason) parts.push(`reason=${filters.reason}`);
-  if (filters.reviewer) parts.push(`reviewer=${filters.reviewer}`);
-  if (filters.has_actions) parts.push("has_actions=true");
-  if (sort && sort !== "created_at_desc") parts.push(`sort=${sort}`);
-  return parts.length ? `filters: ${parts.join(", ")}` : "";
+  if (filters.status) parts.push(`状态=${labelStatus(filters.status)}`);
+  if (filters.question_type) parts.push(`类型=${filters.question_type}`);
+  if (filters.reason) parts.push(`原因=${filters.reason}`);
+  if (filters.reviewer) parts.push(`审阅人=${filters.reviewer}`);
+  if (filters.has_actions) parts.push("含操作记录");
+  if (sort && sort !== "created_at_desc") parts.push(`排序=${sort}`);
+  return parts.length ? `筛选：${parts.join("，")}` : "";
 }
 
 function renderReviewSummary(data) {
   const container = $("review-summary-cards");
   if (!container) return;
   if (!data || !data.enabled) {
-    container.innerHTML = "";
+    container.replaceChildren();
     return;
   }
   const byStatus = data.by_status || {};
   const cards = [
-    {label: "Total", value: data.total ?? 0, tone: "neutral"},
-    {label: "Pending", value: byStatus.pending ?? 0, tone: "warn"},
-    {label: "Approved", value: byStatus.approved ?? 0, tone: "pass"},
-    {label: "Rejected", value: byStatus.rejected ?? 0, tone: "fail"},
-    {label: "Changes", value: byStatus.changes_requested ?? 0, tone: "warn"},
-    {label: "Resolved", value: byStatus.resolved ?? 0, tone: "pass"},
+    {label: "总数", value: data.total ?? 0, tone: "neutral"},
+    {label: "待处理", value: byStatus.pending ?? 0, tone: "warn"},
+    {label: "已通过", value: byStatus.approved ?? 0, tone: "pass"},
+    {label: "已驳回", value: byStatus.rejected ?? 0, tone: "fail"},
+    {label: "需修改", value: byStatus.changes_requested ?? 0, tone: "warn"},
+    {label: "已解决", value: byStatus.resolved ?? 0, tone: "pass"},
   ];
-  container.innerHTML = cards
-    .map(
-      (c) => `<div class="summary-card ${escapeHtml(c.tone)}">
-        <span class="summary-card-label">${escapeHtml(c.label)}</span>
-        <span class="summary-card-value">${escapeHtml(c.value)}</span>
-      </div>`
-    )
-    .join("");
+  container.replaceChildren(...cards.map((card) => {
+    const node = elx("div", {className: `summary-card ${card.tone}`});
+    node.append(
+      elx("span", {className: "summary-card-label", text: card.label}),
+      elx("span", {className: "summary-card-value", text: card.value}),
+    );
+    return node;
+  }));
 }
 
 function renderReviewPager(data) {
   const pager = $("review-pager");
   if (!pager) return;
   if (!data || !data.enabled) {
-    pager.innerHTML = "";
+    pager.replaceChildren();
     return;
   }
   const total = data.total ?? 0;
   const limit = data.limit ?? 20;
   const offset = data.offset ?? 0;
   if (total <= limit) {
-    pager.innerHTML = "";
+    pager.replaceChildren();
     return;
   }
   const currentPage = Math.floor(offset / limit) + 1;
   const totalPages = Math.max(1, Math.ceil(total / limit));
-  const prevDisabled = offset <= 0 ? "disabled" : "";
-  const nextDisabled = offset + limit >= total ? "disabled" : "";
-  pager.innerHTML = `
-    <button type="button" class="secondary-button" id="review-pager-prev" ${prevDisabled}>← Prev</button>
-    <span class="review-pager-status">page ${escapeHtml(currentPage)} of ${escapeHtml(totalPages)}</span>
-    <button type="button" class="secondary-button" id="review-pager-next" ${nextDisabled}>Next →</button>
-  `;
-  const prev = $("review-pager-prev");
-  const next = $("review-pager-next");
-  if (prev) prev.addEventListener("click", () => paginateReview(-1));
-  if (next) next.addEventListener("click", () => paginateReview(1));
+  const prev = elx("button", {className: "secondary-button", text: "← 上一页"});
+  prev.type = "button";
+  prev.id = "review-pager-prev";
+  prev.disabled = offset <= 0;
+  prev.addEventListener("click", () => paginateReview(-1));
+  const next = elx("button", {className: "secondary-button", text: "下一页 →"});
+  next.type = "button";
+  next.id = "review-pager-next";
+  next.disabled = offset + limit >= total;
+  next.addEventListener("click", () => paginateReview(1));
+  pager.replaceChildren(
+    prev,
+    elx("span", {className: "review-pager-status", text: `第 ${currentPage} / ${totalPages} 页`}),
+    next,
+  );
 }
 
 function paginateReview(direction) {
-  if (!reviewQueueEnabled()) {
-    renderPublicDemoReviewDisabled();
-    return;
-  }
   const f = state.reviewFilters;
   const total = state.review?.total ?? 0;
   const nextOffset = Math.max(0, f.offset + direction * f.limit);
@@ -977,62 +1145,70 @@ function paginateReview(direction) {
 
 function renderEval(data) {
   if (!data.available) {
-    $("eval-summary").innerHTML = badge("Missing eval report", "warn");
-    $("eval-categories").innerHTML = "";
-    $("eval-markdown").textContent = "Run scripts/run_eval_gate.sh to generate local eval artifacts.";
+    $("eval-summary").replaceChildren(makeBadge("缺少评测报告", "warn"));
+    $("eval-categories").replaceChildren();
+    $("eval-markdown").textContent = "运行 scripts/run_eval_gate.sh 生成本地评测产物。";
     return;
   }
 
   const summary = data.summary || {};
   const passed = Number(summary.failed || 0) === 0;
-  $("eval-summary").innerHTML = [
-    badge(passed ? "CI eval pass" : "CI eval fail", passed ? "pass" : "fail"),
-    `<span class="summary-text">score ${escapeHtml(formatScore(summary.score))}, passed ${summary.passed ?? 0}, failed ${summary.failed ?? 0}, skipped ${summary.skipped ?? 0}</span>`,
-  ].join(" ");
-  $("eval-categories").innerHTML = renderCategoryTable(data.by_category || {});
-  $("eval-markdown").textContent = data.markdown_report || "No Markdown report available.";
+  renderSummary(
+    $("eval-summary"),
+    passed ? "CI 评测通过" : "CI 评测失败",
+    passed ? "pass" : "fail",
+    `分数 ${formatScore(summary.score)}，通过 ${summary.passed ?? 0}，失败 ${summary.failed ?? 0}，跳过 ${summary.skipped ?? 0}`,
+  );
+  $("eval-categories").replaceChildren(makeCategoryTable(data.by_category || {}));
+  $("eval-markdown").textContent = data.markdown_report || "无可用 Markdown 报告。";
 }
 
 function renderEvalHistory(data) {
   const snapshots = data.snapshots || [];
   if (!data.available || !snapshots.length) {
     $("eval-trend-summary").textContent =
-      "No eval history snapshots found. Run eval gate and archive a snapshot.";
-    $("eval-trend-metrics").innerHTML = "";
-    $("eval-sparkline").innerHTML = "";
-    $("eval-trend-categories").innerHTML = "";
+      "未找到评测历史快照。运行评测闸门并归档快照。";
+    $("eval-trend-metrics").replaceChildren();
+    $("eval-sparkline").replaceChildren();
+    $("eval-trend-categories").replaceChildren();
     return;
   }
 
   const latest = data.latest || snapshots[snapshots.length - 1];
   const passed = Number(latest.failed || 0) === 0;
-  $("eval-trend-summary").innerHTML = [
-    badge(passed ? "Latest pass" : "Latest fail", passed ? "pass" : "fail"),
-    `<span class="summary-text">${escapeHtml(latest.snapshot_id)} / ${escapeHtml(latest.created_at)}</span>`,
-  ].join(" ");
-  $("eval-trend-metrics").innerHTML = renderEvalTrendMetrics(latest, data);
-  $("eval-sparkline").innerHTML = renderScoreSparkline(snapshots);
-  $("eval-trend-categories").innerHTML = renderCategoryTable(latest.by_category || {});
+  renderSummary(
+    $("eval-trend-summary"),
+    passed ? "最新通过" : "最新失败",
+    passed ? "pass" : "fail",
+    `${latest.snapshot_id} / ${latest.created_at}`,
+  );
+  $("eval-trend-metrics").replaceChildren(...makeEvalTrendMetrics(latest, data));
+  $("eval-sparkline").replaceChildren(makeScoreSparkline(snapshots));
+  $("eval-trend-categories").replaceChildren(makeCategoryTable(latest.by_category || {}));
 }
 
-function renderEvalTrendMetrics(latest, data) {
+function makeEvalTrendMetrics(latest, data) {
   const delta = data.score_delta_latest;
   const deltaTone = delta == null ? "neutral" : (Number(delta) < 0 ? "fail" : (Number(delta) > 0 ? "pass" : "neutral"));
   const metrics = [
-    {label: "Latest score", value: formatScore(latest.score), tone: Number(latest.failed || 0) === 0 ? "pass" : "fail"},
-    {label: "Passed", value: latest.passed ?? 0, tone: "pass"},
-    {label: "Failed", value: latest.failed ?? 0, tone: Number(latest.failed || 0) ? "fail" : "neutral"},
-    {label: "Skipped", value: latest.skipped ?? 0, tone: Number(latest.skipped || 0) ? "warn" : "neutral"},
-    {label: "Delta", value: formatDelta(delta), tone: deltaTone},
-    {label: "Snapshots", value: data.count ?? 0, tone: "neutral"},
+    {label: "最新分数", value: formatScore(latest.score), tone: Number(latest.failed || 0) === 0 ? "pass" : "fail"},
+    {label: "通过", value: latest.passed ?? 0, tone: "pass"},
+    {label: "失败", value: latest.failed ?? 0, tone: Number(latest.failed || 0) ? "fail" : "neutral"},
+    {label: "跳过", value: latest.skipped ?? 0, tone: Number(latest.skipped || 0) ? "warn" : "neutral"},
+    {label: "变化", value: formatDelta(delta), tone: deltaTone},
+    {label: "快照数", value: data.count ?? 0, tone: "neutral"},
   ];
-  return metrics.map((metric) => `<div class="trend-metric ${escapeHtml(metric.tone)}">
-    <span class="trend-metric-label">${escapeHtml(metric.label)}</span>
-    <span class="trend-metric-value">${escapeHtml(metric.value)}</span>
-  </div>`).join("");
+  return metrics.map((metric) => {
+    const node = elx("div", {className: `trend-metric ${metric.tone}`});
+    node.append(
+      elx("span", {className: "trend-metric-label", text: metric.label}),
+      elx("span", {className: "trend-metric-value", text: metric.value}),
+    );
+    return node;
+  });
 }
 
-function renderScoreSparkline(snapshots) {
+function makeScoreSparkline(snapshots) {
   const width = 320;
   const height = 84;
   const pad = 10;
@@ -1046,90 +1222,67 @@ function renderScoreSparkline(snapshots) {
     const y = pad + (1 - score) * usableHeight;
     return {x, y, score, id: snapshot.snapshot_id};
   });
-  const line = points.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
-  const dots = points.map((point) => `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="3.5">
-    <title>${escapeHtml(point.id)} score ${escapeHtml(formatScore(point.score))}</title>
-  </circle>`).join("");
-  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Eval score sparkline">
-    <line class="sparkline-axis" x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}"></line>
-    <polyline points="${line}"></polyline>
-    ${dots}
-  </svg>`;
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", "评测分数走势图");
+  const axis = document.createElementNS(ns, "line");
+  axis.setAttribute("class", "sparkline-axis");
+  axis.setAttribute("x1", String(pad));
+  axis.setAttribute("y1", String(height - pad));
+  axis.setAttribute("x2", String(width - pad));
+  axis.setAttribute("y2", String(height - pad));
+  const polyline = document.createElementNS(ns, "polyline");
+  polyline.setAttribute(
+    "points",
+    points.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" "),
+  );
+  svg.append(axis, polyline);
+  points.forEach((point) => {
+    const circle = document.createElementNS(ns, "circle");
+    circle.setAttribute("cx", point.x.toFixed(1));
+    circle.setAttribute("cy", point.y.toFixed(1));
+    circle.setAttribute("r", "3.5");
+    const title = document.createElementNS(ns, "title");
+    title.textContent = `${point.id} 分数 ${formatScore(point.score)}`;
+    circle.appendChild(title);
+    svg.appendChild(circle);
+  });
+  return svg;
 }
 
 function renderTraces(data) {
   if (!data.enabled) {
-    $("trace-summary").innerHTML = badge("Tracing disabled", "warn");
-    $("trace-list").innerHTML = emptyHtml("Enable TRUSTRAG_TRACE_ENABLED=true to record local traces.");
+    $("trace-summary").replaceChildren(makeBadge("追踪已禁用", "warn"));
+    $("trace-list").replaceChildren(makeEmptyNode("设置 TRUSTRAG_TRACE_ENABLED=true 以记录本地追踪。"));
     return;
   }
   const events = data.events || [];
-  $("trace-summary").textContent = `${events.length} trace events`;
-  $("trace-list").innerHTML = events.length
-    ? events.slice(-8).reverse().map((event) => itemHtml({
-        title: event.run_name || event.event_type || "Trace event",
-        badgeText: event.event_type || "event",
+  $("trace-summary").textContent = `${events.length} 条追踪事件`;
+  const nodes = events.length
+    ? events.slice(-8).reverse().map((event) => makeItemNode({
+        title: event.run_name || event.event_type || "追踪事件",
+        badgeText: event.event_type || "事件",
         meta: {
           timestamp: event.timestamp,
           tags: (event.tags || []).join(", "),
           input: event.input_summary ? JSON.stringify(event.input_summary) : null,
           output: event.output_summary ? JSON.stringify(event.output_summary) : null,
         },
-      })).join("")
-    : emptyHtml("No trace events recorded.");
+      }))
+    : [makeEmptyNode("尚无追踪事件记录。")];
+  $("trace-list").replaceChildren(...nodes);
 }
 
-function renderCategoryTable(categories) {
+function makeCategoryTable(categories) {
   const names = Object.keys(categories).sort();
-  if (!names.length) return "";
+  if (!names.length) return makeEmptyNode("无分类评测数据。");
   const rows = names.map((name) => {
     const stats = categories[name] || {};
-    return `<tr>
-      <td>${escapeHtml(name)}</td>
-      <td>${escapeHtml(formatScore(stats.score))}</td>
-      <td>${escapeHtml(stats.passed ?? 0)}</td>
-      <td>${escapeHtml(stats.failed ?? 0)}</td>
-    </tr>`;
-  }).join("");
-  return `<table class="category-table">
-    <thead><tr><th>Category</th><th>Score</th><th>Passed</th><th>Failed</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>`;
-}
-
-function metadataHtml(values) {
-  return Object.entries(values).map(([label, value]) => `
-    <div>
-      <dt>${escapeHtml(label)}</dt>
-      <dd>${escapeHtml(value ?? "none")}</dd>
-    </div>
-  `).join("");
-}
-
-function itemHtml({title, badgeText, meta = {}, preview = ""}) {
-  const metaRows = Object.entries(meta)
-    .filter(([, value]) => value !== undefined && value !== null && value !== "")
-    .map(([key, value]) => `<span><strong>${escapeHtml(key)}:</strong> <span class="mono">${escapeHtml(value)}</span></span>`)
-    .join("");
-  const previewBlock = preview
-    ? `<details class="details-block"><summary>Content preview</summary><div class="content-preview">${escapeHtml(truncate(preview, 320))}</div></details>`
-    : "";
-  return `<article class="item">
-    <div class="item-title">
-      <span>${escapeHtml(title)}</span>
-      ${badgeText ? badge(badgeText, "neutral") : ""}
-    </div>
-    <div class="item-meta">${metaRows || "<span>No metadata.</span>"}</div>
-    ${previewBlock}
-  </article>`;
-}
-
-function badge(text, tone = "neutral") {
-  return `<span class="badge ${escapeHtml(tone)}">${escapeHtml(text)}</span>`;
-}
-
-function emptyHtml(text) {
-  return `<div class="empty">${escapeHtml(text)}</div>`;
+    return [name, formatScore(stats.score), stats.passed ?? 0, stats.failed ?? 0];
+  });
+  return makeBenchmarkTable(["类别", "分数", "通过", "失败"], rows);
 }
 
 function pretty(value) {
@@ -1138,14 +1291,14 @@ function pretty(value) {
 
 function formatScore(value) {
   const number = Number(value);
-  if (!Number.isFinite(number)) return "N/A";
+  if (!Number.isFinite(number)) return "不适用";
   return number.toFixed(3);
 }
 
 function formatDelta(value) {
-  if (value === null || value === undefined) return "N/A";
+  if (value === null || value === undefined) return "不适用";
   const number = Number(value);
-  if (!Number.isFinite(number)) return "N/A";
+  if (!Number.isFinite(number)) return "不适用";
   return `${number > 0 ? "+" : ""}${number.toFixed(3)}`;
 }
 
@@ -1159,66 +1312,99 @@ function messageOf(error) {
   return error?.message || String(error);
 }
 
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
 const REVIEW_ACTIONS = [
-  {type: "approve", label: "Approve"},
-  {type: "reject", label: "Reject"},
-  {type: "request_changes", label: "Request changes"},
-  {type: "rewrite_note", label: "Add note"},
-  {type: "resolve", label: "Resolve"},
-  {type: "reopen", label: "Reopen"},
+  {type: "approve", label: "通过"},
+  {type: "reject", label: "驳回"},
+  {type: "request_changes", label: "要求修改"},
+  {type: "rewrite_note", label: "添加备注"},
+  {type: "resolve", label: "解决"},
+  {type: "reopen", label: "重新打开"},
 ];
 
-function reviewEntryHtml(entry) {
+function makeReviewEntryNode(entry) {
   const id = entry.review_queue_id;
   const status = entry.status || "pending";
-  const statusTone = statusToneOf(status);
   const meta = {
     review_queue_id: id,
-    question_type: entry.question_type,
-    reasons: (entry.human_review_reasons || []).join(", "),
+    question_type: labelQuestionType(entry.question_type),
+    reasons: labelReasons(entry.human_review_reasons),
     created_at: entry.created_at,
     confidence: formatScore(entry.confidence),
     actions: entry.action_count ?? 0,
     last_action_at: entry.last_action_at,
   };
-  const metaRows = Object.entries(meta)
-    .filter(([, value]) => value !== undefined && value !== null && value !== "")
-    .map(([key, value]) => `<span><strong>${escapeHtml(key)}:</strong> <span class="mono">${escapeHtml(value)}</span></span>`)
-    .join("");
   const actionStatus = state.actionStatus[id] || "";
-  const actionStatusTone = actionStatus.startsWith("Failed") || actionStatus.startsWith("History failed") ? "fail" : (actionStatus ? "pass" : "neutral");
+  const actionStatusTone = actionStatus.startsWith("失败") || actionStatus.startsWith("历史失败")
+    ? "fail"
+    : (actionStatus ? "pass" : "neutral");
   const history = state.actionHistory[id] || [];
-  const actionButtons = REVIEW_ACTIONS.map(
-    (a) => `<button class="review-action" type="button" data-review-action="${escapeHtml(a.type)}">${escapeHtml(a.label)}</button>`
-  ).join("");
-  return `<article class="item review-item" data-review-id="${escapeHtml(id)}">
-    <div class="item-title">
-      <span>${escapeHtml(entry.question || id)}</span>
-      ${badge(status, statusTone)}
-    </div>
-    <div class="item-meta">${metaRows || "<span>No metadata.</span>"}</div>
-    <div class="review-action-row">
-      ${actionButtons}
-      <button class="review-action review-history-toggle" type="button" data-review-history="true">History</button>
-    </div>
-    <label class="review-note-label" for="review-note-${escapeHtml(id)}">Reviewer note (optional)</label>
-    <textarea class="review-note" id="review-note-${escapeHtml(id)}" rows="2" placeholder="Why this action? Plain text only."></textarea>
-    <details class="details-block review-rewrite-block">
-      <summary>Rewritten answer (optional, human-authored)</summary>
-      <textarea class="review-rewrite" rows="3" placeholder="Optional reviewer-authored answer. Not generated by the system."></textarea>
-    </details>
-    ${actionStatus ? `<p class="review-action-status">${badge(actionStatus, actionStatusTone)}</p>` : ""}
-    ${history.length ? historyHtml(history) : ""}
-  </article>`;
+
+  const article = elx("article", {className: "item review-item"});
+  article.dataset.reviewId = String(id);
+
+  const title = elx("div", {className: "item-title"});
+  title.append(
+    elx("span", {text: entry.question || id}),
+    makeBadge(labelStatus(status), statusToneOf(status)),
+  );
+
+  const metaRow = elx("div", {className: "item-meta"});
+  const metaEntries = Object.entries(meta).filter(
+    ([, value]) => value !== undefined && value !== null && value !== "",
+  );
+  if (!metaEntries.length) {
+    metaRow.appendChild(elx("span", {text: "无元数据。"}));
+  } else {
+    metaEntries.forEach(([key, value]) => {
+      const row = elx("span");
+      row.append(
+        elx("strong", {text: `${metaLabel(key)}：`}),
+        elx("span", {className: "mono", text: value}),
+      );
+      metaRow.appendChild(row);
+    });
+  }
+
+  const actions = elx("div", {className: "review-action-row"});
+  REVIEW_ACTIONS.forEach((action) => {
+    const button = elx("button", {className: "review-action", text: action.label});
+    button.type = "button";
+    button.dataset.reviewAction = action.type;
+    actions.appendChild(button);
+  });
+  const historyButton = elx("button", {
+    className: "review-action review-history-toggle",
+    text: "历史",
+  });
+  historyButton.type = "button";
+  historyButton.dataset.reviewHistory = "true";
+  actions.appendChild(historyButton);
+
+  const noteId = `review-note-${id}`;
+  const noteLabel = elx("label", {className: "review-note-label", text: "审阅备注（可选）"});
+  noteLabel.htmlFor = noteId;
+  const note = elx("textarea", {className: "review-note"});
+  note.id = noteId;
+  note.rows = 2;
+  note.placeholder = "为什么执行此操作？仅纯文本。";
+
+  const rewriteDetails = elx("details", {className: "details-block review-rewrite-block"});
+  const rewrite = elx("textarea", {className: "review-rewrite"});
+  rewrite.rows = 3;
+  rewrite.placeholder = "可选的审阅人撰写回答。非系统生成。";
+  rewriteDetails.append(
+    elx("summary", {text: "改写后的回答（可选，人工撰写）"}),
+    rewrite,
+  );
+
+  article.append(title, metaRow, actions, noteLabel, note, rewriteDetails);
+  if (actionStatus) {
+    const statusNode = elx("p", {className: "review-action-status"});
+    statusNode.appendChild(makeBadge(actionStatus, actionStatusTone));
+    article.appendChild(statusNode);
+  }
+  if (history.length) article.appendChild(makeHistoryNode(history));
+  return article;
 }
 
 function statusToneOf(status) {
@@ -1228,29 +1414,31 @@ function statusToneOf(status) {
   return "neutral";
 }
 
-function historyHtml(actions) {
-  const rows = actions
-    .slice()
-    .reverse()
-    .map((action) => `<li class="history-row">
-      <span class="badge neutral">${escapeHtml(action.action_type)}</span>
-      <span class="mono">${escapeHtml(action.previous_status)} → ${escapeHtml(action.new_status)}</span>
-      <span class="muted">${escapeHtml(action.reviewer || "anonymous")}</span>
-      <time>${escapeHtml(action.created_at)}</time>
-      ${action.note ? `<p class="history-note">${escapeHtml(action.note)}</p>` : ""}
-    </li>`)
-    .join("");
-  return `<details class="details-block" open>
-    <summary>Action history (${actions.length})</summary>
-    <ul class="history-list">${rows}</ul>
-  </details>`;
+function makeHistoryNode(actions) {
+  const details = elx("details", {className: "details-block"});
+  details.open = true;
+  details.appendChild(elx("summary", {text: `操作历史 (${actions.length})`}));
+  const list = elx("ul", {className: "history-list"});
+  actions.slice().reverse().forEach((action) => {
+    const row = elx("li", {className: "history-row"});
+    row.append(
+      makeBadge(labelAction(action.action_type)),
+      elx("span", {
+        className: "mono",
+        text: `${labelStatus(action.previous_status)} → ${labelStatus(action.new_status)}`,
+      }),
+      elx("span", {className: "muted", text: action.reviewer || "匿名"}),
+      elx("time", {text: action.created_at}),
+    );
+    if (action.note) row.appendChild(elx("p", {className: "history-note", text: action.note}));
+    list.appendChild(row);
+  });
+  details.appendChild(list);
+  return details;
 }
 
 async function handleReviewClick(event) {
-  if (!reviewQueueEnabled()) {
-    renderPublicDemoReviewDisabled();
-    return;
-  }
+  if (!reviewQueueEnabled()) return;
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
   const item = target.closest(".review-item");
@@ -1271,7 +1459,7 @@ async function handleReviewClick(event) {
   const rewritten = rewriteEl ? rewriteEl.value.trim() : "";
 
   try {
-    state.actionStatus[reviewId] = "Applying...";
+    state.actionStatus[reviewId] = "处理中…";
     rerenderReview();
     const data = await fetchJson(`/v1/review/queue/${encodeURIComponent(reviewId)}/actions`, {
       method: "POST",
@@ -1283,25 +1471,22 @@ async function handleReviewClick(event) {
         rewritten_answer: rewritten || null,
       }),
     });
-    state.actionStatus[reviewId] = `${actionType} → ${data.status}`;
+    state.actionStatus[reviewId] = `${labelAction(actionType)} → ${labelStatus(data.status)}`;
     await Promise.allSettled([refreshReview(), refreshActionHistory(reviewId)]);
   } catch (error) {
-    state.actionStatus[reviewId] = `Failed: ${messageOf(error)}`;
+    state.actionStatus[reviewId] = `失败：${messageOf(error)}`;
     rerenderReview();
   }
 }
 
 async function refreshActionHistory(reviewId) {
-  if (!reviewQueueEnabled()) {
-    renderPublicDemoReviewDisabled();
-    return;
-  }
+  if (!reviewQueueEnabled()) return;
   try {
     const data = await fetchJson(`/v1/review/queue/${encodeURIComponent(reviewId)}/actions`);
     state.actionHistory[reviewId] = data.actions || [];
     rerenderReview();
   } catch (error) {
-    state.actionStatus[reviewId] = `History failed: ${messageOf(error)}`;
+    state.actionStatus[reviewId] = `历史失败：${messageOf(error)}`;
     rerenderReview();
   }
 }

@@ -3,7 +3,7 @@ services:
     name: trust-rag-accounting-demo
     runtime: python
     plan: free
-    buildCommand: pip install -e .
+    buildCommand: pip install -c constraints.txt -e .
     startCommand: bash scripts/run_render_demo.sh
     healthCheckPath: /healthz
     envVars:

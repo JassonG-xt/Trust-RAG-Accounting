@@ -1,12 +1,34 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_deployment_examples_script_passes_in_repo_root() -> None:
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash is required to run the deployment examples script")
+
+    script = REPO_ROOT / "scripts" / "check_deployment_examples.sh"
+    assert script.is_file()
+
+    result = subprocess.run(
+        [bash, "scripts/check_deployment_examples.sh"],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "[deployment-examples] OK" in result.stdout
 
 
 def test_render_blueprint_declares_public_demo_web_service() -> None:
@@ -26,6 +48,7 @@ def test_render_blueprint_declares_public_demo_web_service() -> None:
     assert service["plan"] == "free"
     assert service["healthCheckPath"] == "/healthz"
     assert service["startCommand"] == "bash scripts/run_render_demo.sh"
+    assert service["buildCommand"] == "pip install -c constraints.txt -e ."
     env = {item["key"]: item.get("value") for item in service.get("envVars", [])}
     assert env["LLM_ANSWER_MODE"] == "template"
     assert env["EMBEDDING_PROVIDER"] == "mock"
@@ -43,11 +66,14 @@ def test_render_demo_start_script_ingests_sample_docs_and_starts_uvicorn() -> No
     assert text.startswith("#!/usr/bin/env bash")
     if os.name != "nt":
         assert path.stat().st_mode & 0o111
-    assert "backend.app.ingestion.ingest_sample_docs" in text
+    assert "resolve_python" in text
+    assert '[[ -x ".venv/bin/python" ]]' in text
+    assert 'PYTHON_BIN="${PYTHON_BIN:-$(resolve_python)}"' in text
+    assert '"$PYTHON_BIN" -m backend.app.ingestion.ingest_sample_docs' in text
     assert "--source sample_docs" in text
     assert "--documents-out data/trustrag_documents.json" in text
     assert "--chunks-out data/trustrag_chunks.json" in text
-    assert "uvicorn backend.app.main:app" in text
+    assert '"$PYTHON_BIN" -m uvicorn backend.app.main:app' in text
     assert "--host 0.0.0.0" in text
     assert '--port "${PORT:-8000}"' in text
 
@@ -61,3 +87,26 @@ def test_readme_has_live_rag_demo_button_to_hosted_dashboard() -> None:
     assert "free Render instance may cold start" in text
     assert "fictional sample docs" in text
     assert "not accounting or tax advice" in text
+    assert "| Phase | 9C" in text
+    assert "passing locally" not in text
+    assert "- Phase 9C:" not in text
+
+
+def test_production_deployment_docs_use_runtime_constraints_not_dev_extra() -> None:
+    paths = [
+        REPO_ROOT / "render.yaml",
+        REPO_ROOT / "docs" / "small_server_deployment.md",
+        REPO_ROOT / "docs" / "deploy_examples" / "systemd" / "trustrag-accounting.service.example",
+    ]
+
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        assert ".[dev]" not in text, path
+
+    small_server = paths[1].read_text(encoding="utf-8")
+    assert "pip install -c constraints.txt -e ." in small_server
+    assert "/opt/trustrag-accounting/app/\n|-- .venv/\n|-- data/" in small_server
+    assert (
+        "sudo -u trustrag env PYTHON=.venv/bin/python bash scripts/run_eval_gate.sh"
+        in small_server
+    )

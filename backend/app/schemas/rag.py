@@ -12,7 +12,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
@@ -89,7 +88,7 @@ class Evidence(BaseModel):
         default=None,
         description=(
             "Per-component scoring contributions: keyword, bm25, metadata, "
-            "client_match, stance, malicious_penalty."
+            "client_match, stance, temporal, malicious_penalty."
         ),
     )
     retrieval_strategy: str | None = Field(
