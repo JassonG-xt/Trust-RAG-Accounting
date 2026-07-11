@@ -21,6 +21,9 @@ class _FakeS3Client:
     def delete_object(self, **kwargs) -> None:
         self.objects.pop((kwargs["Bucket"], kwargs["Key"]), None)
 
+    def head_bucket(self, **kwargs) -> None:
+        return None
+
 
 def test_s3_source_store_uses_checksum_addressed_immutable_key() -> None:
     client = _FakeS3Client()
@@ -43,6 +46,7 @@ def test_s3_source_store_uses_checksum_addressed_immutable_key() -> None:
     assert first == second
     assert first.uri.startswith(f"s3://rag-sources/source/tenant-a/{first.checksum}/")
     assert store.get(first.uri) == b"pdf-content"
+    assert store.health()
 
 
 def test_s3_source_store_rejects_uri_for_another_bucket() -> None:

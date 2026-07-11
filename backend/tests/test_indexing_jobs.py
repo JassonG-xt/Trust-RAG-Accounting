@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -49,6 +50,22 @@ class _Indexer:
     def build(self, job, generation_id: str) -> IndexBuildResult:
         self.calls.append((job.job_id, generation_id))
         return self.result
+
+
+class _Telemetry:
+    def __init__(self) -> None:
+        self.counters = []
+        self.histograms = []
+
+    @contextmanager
+    def span(self, name, attributes=None):
+        yield None
+
+    def increment(self, name, value=1, attributes=None):
+        self.counters.append((name, value, dict(attributes or {})))
+
+    def record(self, name, value, attributes=None):
+        self.histograms.append((name, value, dict(attributes or {})))
 
 
 class _Documents:
@@ -154,7 +171,8 @@ def test_coordinator_activates_generation_only_after_reconciliation(
     jobs = PostgresIndexJobRepository(engine, tenant_id="tenant-a")
     generations = PostgresIndexGenerationRepository(engine, tenant_id="tenant-a")
     indexer = _Indexer(IndexBuildResult(catalog_count=3, vector_count=3, lexical_count=3))
-    coordinator = IndexingCoordinator(jobs, generations, indexer)
+    telemetry = _Telemetry()
+    coordinator = IndexingCoordinator(jobs, generations, indexer, telemetry=telemetry)
     submitted = coordinator.submit(
         operation="upsert",
         idempotency_key="upload-1",
@@ -168,6 +186,8 @@ def test_coordinator_activates_generation_only_after_reconciliation(
     assert completed.status == "succeeded"
     assert generations.get_active() is not None
     assert generations.get_active().generation_id == completed.generation_id
+    assert telemetry.counters[-1][0] == "index.jobs.succeeded"
+    assert telemetry.histograms[-1][0] == "index.job.attempt_count"
 
 
 def test_reconciliation_mismatch_does_not_replace_active_generation(

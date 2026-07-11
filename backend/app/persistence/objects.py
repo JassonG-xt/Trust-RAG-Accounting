@@ -35,6 +35,8 @@ class SourceObjectStore(Protocol):
 
     def delete(self, uri: str) -> None: ...
 
+    def health(self) -> bool: ...
+
 
 class S3SourceObjectStore:
     """Checksum-addressed storage for original ingestion files."""
@@ -102,6 +104,13 @@ class S3SourceObjectStore:
     def delete(self, uri: str) -> None:
         key = self._key_from_uri(uri)
         self._client.delete_object(Bucket=self._bucket, Key=key)
+
+    def health(self) -> bool:
+        try:
+            self._client.head_bucket(Bucket=self._bucket)
+        except Exception:
+            return False
+        return True
 
     def _key_from_uri(self, uri: str) -> str:
         parsed = urlparse(uri)

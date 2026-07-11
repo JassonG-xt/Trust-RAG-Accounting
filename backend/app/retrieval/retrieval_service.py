@@ -36,11 +36,13 @@ Why the service owns embedder + store + reranker construction:
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from ..core.config import Settings, get_settings
 from ..embeddings.providers import EmbeddingProvider, get_embedding_provider
 from ..ingestion.models import DocumentChunk
+from ..telemetry import NoopTelemetry, Telemetry
 from ..vectorstore import InMemoryVectorStore, VectorStore
 from .bm25_retriever import BM25Retriever
 from .diversity import deduplicate_candidates, select_mmr
@@ -79,12 +81,14 @@ class RetrievalService:
         reranker: Any | None = None,
         secure_payload_filter: dict[str, Any] | None = None,
         index_vectors: bool = True,
+        telemetry: Telemetry | None = None,
     ) -> None:
         self._chunks: list[DocumentChunk] = list(chunks)
         self._chunk_by_doc_index: dict[tuple[str, int], DocumentChunk] = {
             (chunk.document_id, chunk.chunk_index): chunk for chunk in self._chunks
         }
         self._settings = settings or get_settings()
+        self._telemetry = telemetry or NoopTelemetry()
 
         self._keyword = KeywordRetriever(self._chunks)
         self._bm25 = BM25Retriever(self._chunks)
@@ -168,6 +172,7 @@ class RetrievalService:
         stance: str = "support",
         include_malicious: bool = False,
     ) -> list[ScoredChunk]:
+        started = time.perf_counter()
         metadata_filter = build_metadata_filter(
             query,
             question_type=question_type,
@@ -204,10 +209,32 @@ class RetrievalService:
             )
         else:
             ranked = ranked[:top_k]
-        return self._expand_with_context_neighbors(
+        results = self._expand_with_context_neighbors(
             ranked,
             include_malicious=include_malicious,
         )
+        attributes = {
+            "question_type": question_type or "unknown",
+            "stance": stance,
+            "result_count": len(results),
+            "zero_hit": not results,
+        }
+        self._telemetry.record(
+            "retrieval.result_count",
+            float(len(results)),
+            attributes={"stance": stance},
+        )
+        self._telemetry.record(
+            "retrieval.duration_ms",
+            (time.perf_counter() - started) * 1000,
+            attributes=attributes,
+        )
+        if not results:
+            self._telemetry.increment(
+                "retrieval.zero_hit",
+                attributes={"question_type": question_type or "unknown"},
+            )
+        return results
 
     # -- Sub-retriever accessors (tests + ablation) --------------------------
 

@@ -27,6 +27,7 @@ from ..review import (
     get_review_checkpoint_store,
 )
 from ..services.document_repository import DocumentRepository, get_repository
+from ..telemetry import NoopTelemetry, Telemetry, build_telemetry
 from ..tracing import LocalTraceCollector, get_local_trace_collector
 from .config import Settings, get_settings
 
@@ -63,6 +64,8 @@ class ApplicationContainer:
     )
     index_jobs: PostgresIndexJobRepository | None = None
     index_generations: PostgresIndexGenerationRepository | None = None
+    telemetry: Telemetry = field(default_factory=NoopTelemetry)
+    readiness_checks: dict[str, Callable[[], bool]] = field(default_factory=dict)
     _settings_provider: Callable[[], Settings] | None = field(default=None, repr=False)
     _document_catalog_provider: Callable[[], DocumentCatalog] | None = field(
         default=None, repr=False
@@ -155,12 +158,40 @@ def build_application_container(
             current.database_url,
             pool_pre_ping=True,
         )
+        readiness_checks: dict[str, Callable[[], bool]] = {
+            "postgres": lambda: _database_is_ready(database_engine)
+        }
         from ..persistence.document_catalog import PostgresDocumentCatalog
 
+        embedding_provider = None
+        vector_store = None
+        if (
+            current.retrieval_enable_vector
+            and current.vector_store.strip().lower() == "qdrant"
+        ):
+            from ..embeddings import get_embedding_provider
+            from ..vectorstore.qdrant_store import QdrantVectorStore
+
+            embedding_provider = get_embedding_provider(
+                current.embedding_provider,
+                dimension=current.embedding_dimension,
+                model_name=current.embedding_model,
+                device=current.embedding_device,
+                batch_size=current.embedding_batch_size,
+            )
+            vector_store = QdrantVectorStore(
+                url=current.qdrant_url or "",
+                api_key=current.qdrant_api_key,
+                collection_name=current.qdrant_collection,
+                dimension=embedding_provider.dimension,
+            )
+            readiness_checks["qdrant"] = vector_store.health
         documents = PostgresDocumentCatalog(
             database_engine,
             tenant_id=current.tenant_id,
             settings=current,
+            embedding_provider=embedding_provider,
+            vector_store=vector_store,
         )
         checkpoints = PostgresReviewCheckpointRepository(
             database_engine,
@@ -197,6 +228,7 @@ def build_application_container(
         trace_provider: Callable[[], LocalTraceCollector] | None = get_local_trace_collector
         index_jobs = None
         index_generations = None
+        readiness_checks = {}
     else:
         current = settings
         documents = DocumentRepository()
@@ -219,6 +251,11 @@ def build_application_container(
         trace_provider = None
         index_jobs = None
         index_generations = None
+        readiness_checks = {}
+
+    if source_object_store is not None:
+        readiness_checks["s3"] = source_object_store.health
+    telemetry = build_telemetry(current, local_collector=traces)
 
     return ApplicationContainer(
         settings=current,
@@ -229,8 +266,21 @@ def build_application_container(
         authenticator=authenticator,
         index_jobs=index_jobs,
         index_generations=index_generations,
+        telemetry=telemetry,
+        readiness_checks=readiness_checks,
         _settings_provider=settings_provider,
         _document_catalog_provider=document_provider,
         _review_service_provider=review_provider,
         _trace_collector_provider=trace_provider,
     )
+
+
+def _database_is_ready(engine: Engine) -> bool:
+    try:
+        from sqlalchemy import text
+
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception:
+        return False
+    return True

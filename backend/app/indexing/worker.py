@@ -11,6 +11,8 @@ from sqlalchemy import create_engine
 from ..core.config import Settings, get_settings
 from ..embeddings import get_embedding_provider
 from ..persistence import S3SourceObjectStore
+from ..telemetry import build_telemetry
+from ..tracing import LocalTraceCollector
 from ..vectorstore.qdrant_store import QdrantVectorStore
 from .coordinator import IndexingCoordinator
 from .models import IndexJob
@@ -61,7 +63,12 @@ def build_production_coordinator(settings: Settings) -> IndexingCoordinator:
         embedding_provider=embedding_provider,
         vector_store=vector_store,
     )
-    return IndexingCoordinator(jobs, generations, indexer)
+    local_collector = LocalTraceCollector(
+        max_events=settings.trustrag_trace_max_events,
+        include_content=settings.trustrag_trace_include_content,
+    )
+    telemetry = build_telemetry(settings, local_collector=local_collector)
+    return IndexingCoordinator(jobs, generations, indexer, telemetry=telemetry)
 
 
 def run_worker_once(

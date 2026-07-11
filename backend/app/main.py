@@ -12,6 +12,9 @@ import csv
 import io
 import json
 import logging
+import re
+import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
@@ -111,6 +114,50 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
             return JSONResponse(status_code=403, content={"detail": "permission denied"})
         request.state.principal = principal
         return await call_next(request)
+
+    @app.middleware("http")
+    async def observe_request(request: Request, call_next):
+        supplied_request_id = request.headers.get("X-Request-ID", "")
+        request_id = (
+            supplied_request_id
+            if re.fullmatch(r"[A-Za-z0-9._-]{1,128}", supplied_request_id)
+            else str(uuid.uuid4())
+        )
+        request.state.request_id = request_id
+        attributes = {
+            "http.method": request.method,
+            "http.route": request.url.path,
+            "request_id": request_id,
+        }
+        started = time.perf_counter()
+        status_code = 500
+        with container.telemetry.span("http.request", attributes):
+            try:
+                response = await call_next(request)
+                status_code = response.status_code
+            except Exception:
+                container.telemetry.increment(
+                    "http.errors",
+                    attributes={
+                        "http.method": request.method,
+                        "http.route": request.url.path,
+                    },
+                )
+                raise
+        duration_ms = (time.perf_counter() - started) * 1000
+        metric_attributes = {
+            "http.method": request.method,
+            "http.route": request.url.path,
+            "http.status_code": status_code,
+        }
+        container.telemetry.increment("http.requests", attributes=metric_attributes)
+        container.telemetry.record(
+            "http.server.duration_ms",
+            duration_ms,
+            attributes=metric_attributes,
+        )
+        response.headers["X-Request-ID"] = request_id
+        return response
     if FRONTEND_DIR.exists():
         app.mount(
             "/dashboard/static",
@@ -121,6 +168,18 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
     @app.get("/healthz", response_model=HealthResponse, tags=["meta"])
     def healthz() -> HealthResponse:
         return HealthResponse()
+
+    @app.get("/readyz", tags=["meta"])
+    def readyz():
+        checks = {
+            name: _safe_readiness_check(check)
+            for name, check in container.readiness_checks.items()
+        }
+        ready = all(checks.values())
+        payload = {"status": "ready" if ready else "not_ready", "checks": checks}
+        if not ready:
+            return JSONResponse(status_code=503, content=payload)
+        return payload
 
     @app.get("/v1/demo/config", response_model=DemoConfigResponse, tags=["meta"])
     def demo_config() -> DemoConfigResponse:
@@ -171,11 +230,15 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
                 principal=principal,
                 checkpoint_repository=review_service.checkpoint_repository,
             ):
-                state: dict[str, Any] = run_query(
-                    request.question,
-                    tenant_id=principal.tenant_id,
-                    actor_id=principal.subject_id,
-                )
+                with container.telemetry.span(
+                    "rag.workflow",
+                    {"request_id": http_request.state.request_id},
+                ):
+                    state: dict[str, Any] = run_query(
+                        request.question,
+                        tenant_id=principal.tenant_id,
+                        actor_id=principal.subject_id,
+                    )
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("workflow failed")
             raise HTTPException(status_code=500, detail="workflow failed") from exc
@@ -366,6 +429,8 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
         """
 
         current_settings = container.current_settings()
+        if current_settings.app_env.strip().lower() in {"production", "prod"}:
+            raise HTTPException(status_code=404, detail="not found")
         if not current_settings.trustrag_trace_enabled:
             return TracesResponse(enabled=False, events=[])
         collector = container.current_trace_collector()
@@ -381,6 +446,8 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
         """Clear the trace ring buffer. No-op when tracing is disabled."""
 
         current_settings = container.current_settings()
+        if current_settings.app_env.strip().lower() in {"production", "prod"}:
+            raise HTTPException(status_code=404, detail="not found")
         if not current_settings.trustrag_trace_enabled:
             return TracesClearResponse(enabled=False, cleared=0)
         collector = container.current_trace_collector()
@@ -818,6 +885,13 @@ def _raise_if_public_demo(settings) -> None:
             status_code=403,
             detail="review workflow is disabled in public demo mode",
         )
+
+
+def _safe_readiness_check(check) -> bool:
+    try:
+        return bool(check())
+    except Exception:
+        return False
 
 
 _CSV_COLUMNS = [

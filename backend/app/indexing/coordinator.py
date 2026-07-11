@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from ..telemetry import NoopTelemetry, Telemetry
 from .models import IndexJob
 from .repositories import (
     PostgresIndexGenerationRepository,
@@ -38,12 +39,14 @@ class IndexingCoordinator:
         *,
         max_attempts: int = 3,
         retry_delay_seconds: int = 30,
+        telemetry: Telemetry | None = None,
     ) -> None:
         self._jobs = jobs
         self._generations = generations
         self._indexer = indexer
         self._max_attempts = max_attempts
         self._retry_delay_seconds = retry_delay_seconds
+        self._telemetry = telemetry or NoopTelemetry()
 
     def submit(self, **kwargs) -> IndexJob:
         return self._jobs.submit(**kwargs)
@@ -56,26 +59,52 @@ class IndexingCoordinator:
             metadata={"job_id": job.job_id, "operation": job.operation}
         )
         job = self._jobs.attach_generation(job.job_id, generation.generation_id)
-        try:
-            result = self._indexer.build(job, generation.generation_id)
-            if not result.is_consistent:
-                raise IndexReconciliationError(
-                    "index counts differ: "
-                    f"catalog={result.catalog_count}, "
-                    f"vector={result.vector_count}, "
-                    f"lexical={result.lexical_count}"
+        attributes = {"operation": job.operation, "job_id": job.job_id}
+        with self._telemetry.span("index.job", attributes):
+            try:
+                result = self._indexer.build(job, generation.generation_id)
+                if not result.is_consistent:
+                    raise IndexReconciliationError(
+                        "index counts differ: "
+                        f"catalog={result.catalog_count}, "
+                        f"vector={result.vector_count}, "
+                        f"lexical={result.lexical_count}"
+                    )
+                self._generations.activate(generation.generation_id)
+                completed = self._jobs.succeed(job.job_id)
+                self._telemetry.increment(
+                    "index.jobs.succeeded",
+                    attributes={"operation": job.operation},
                 )
-            self._generations.activate(generation.generation_id)
-            return self._jobs.succeed(job.job_id)
-        except Exception as exc:
-            self._generations.mark_failed(
-                generation.generation_id,
-                reason=str(exc),
-            )
-            return self._jobs.fail(
-                job.job_id,
-                error_code=type(exc).__name__,
-                error_summary=str(exc),
-                max_attempts=self._max_attempts,
-                retry_delay_seconds=self._retry_delay_seconds,
-            )
+                self._telemetry.record(
+                    "index.job.attempt_count",
+                    float(completed.attempt_count),
+                    attributes={"status": completed.status},
+                )
+                return completed
+            except Exception as exc:
+                self._generations.mark_failed(
+                    generation.generation_id,
+                    reason=str(exc),
+                )
+                failed = self._jobs.fail(
+                    job.job_id,
+                    error_code=type(exc).__name__,
+                    error_summary=str(exc),
+                    max_attempts=self._max_attempts,
+                    retry_delay_seconds=self._retry_delay_seconds,
+                )
+                self._telemetry.increment(
+                    "index.jobs.failed",
+                    attributes={
+                        "operation": job.operation,
+                        "status": failed.status,
+                        "error_type": type(exc).__name__,
+                    },
+                )
+                self._telemetry.record(
+                    "index.job.attempt_count",
+                    float(failed.attempt_count),
+                    attributes={"status": failed.status},
+                )
+                return failed

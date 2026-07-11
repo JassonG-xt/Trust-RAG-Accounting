@@ -71,6 +71,17 @@ trustrag-index-worker
 Use `trustrag-index-worker --once` for cron jobs, deployment checks, or manual
 queue draining. See [production_indexing.md](production_indexing.md).
 
+## Production Telemetry
+
+| Variable | Default | Notes |
+|---|---|---|
+| `TRUSTRAG_TELEMETRY_MODE` | `noop` | `local` uses the debug collector; `otlp` exports production traces and metrics. |
+| `TRUSTRAG_OTLP_ENDPOINT` | unset | Required for `otlp`; base HTTP endpoint for `/v1/traces` and `/v1/metrics`. |
+| `TRUSTRAG_TELEMETRY_SERVICE_NAME` | `trust-rag-backend` | OTel resource service name. |
+
+`/healthz` reports process liveness. `/readyz` checks configured Postgres, S3
+and Qdrant dependencies and returns `503` when any check fails.
+
 ## Document and Chunk Stores
 
 The ingestion CLI writes document and chunk stores to explicit output paths:

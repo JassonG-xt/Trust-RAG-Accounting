@@ -140,6 +140,17 @@ class Settings:
     oidc_tenant_claim: str = field(
         default_factory=lambda: os.getenv("TRUSTRAG_OIDC_TENANT_CLAIM", "tenant_id")
     )
+    telemetry_mode: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_TELEMETRY_MODE", "noop")
+    )
+    otlp_endpoint: str | None = field(
+        default_factory=lambda: _optional_str_env("TRUSTRAG_OTLP_ENDPOINT")
+    )
+    telemetry_service_name: str = field(
+        default_factory=lambda: os.getenv(
+            "TRUSTRAG_TELEMETRY_SERVICE_NAME", "trust-rag-backend"
+        )
+    )
 
     # Provider selection — mock remains the deterministic default.
     llm_provider: str = field(default_factory=lambda: os.getenv("LLM_PROVIDER", "mock"))
@@ -440,6 +451,11 @@ class Settings:
             raise ValueError(
                 "TRUSTRAG_AUTH_MODE=oidc requires issuer, audience and JWKS URL"
             )
+        telemetry_mode = self.telemetry_mode.strip().lower()
+        if telemetry_mode not in {"noop", "local", "otlp"}:
+            raise ValueError("TRUSTRAG_TELEMETRY_MODE must be noop, local, or otlp")
+        if telemetry_mode == "otlp" and not self.otlp_endpoint:
+            raise ValueError("TRUSTRAG_TELEMETRY_MODE=otlp requires TRUSTRAG_OTLP_ENDPOINT")
 
 
 def get_settings() -> Settings:
