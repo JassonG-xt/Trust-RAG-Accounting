@@ -39,6 +39,9 @@ class NoopTelemetry:
     def record(self, name: str, value: float, attributes=None) -> None:
         return None
 
+    def shutdown(self) -> None:
+        return None
+
 
 class LocalTelemetryAdapter(NoopTelemetry):
     def __init__(self, collector: LocalTraceCollector) -> None:
@@ -66,12 +69,10 @@ class OpenTelemetryAdapter:
     def __init__(self, *, tracer_provider=None, meter_provider=None) -> None:
         from opentelemetry import metrics, trace
 
-        self._tracer = (tracer_provider or trace.get_tracer_provider()).get_tracer(
-            "trust-rag"
-        )
-        self._meter = (meter_provider or metrics.get_meter_provider()).get_meter(
-            "trust-rag"
-        )
+        self._tracer_provider = tracer_provider or trace.get_tracer_provider()
+        self._meter_provider = meter_provider or metrics.get_meter_provider()
+        self._tracer = self._tracer_provider.get_tracer("trust-rag")
+        self._meter = self._meter_provider.get_meter("trust-rag")
         self._counters: dict[str, Any] = {}
         self._histograms: dict[str, Any] = {}
 
@@ -96,3 +97,11 @@ class OpenTelemetryAdapter:
             instrument = self._meter.create_histogram(name)
             self._histograms[name] = instrument
         instrument.record(value, _safe_attributes(attributes))
+
+    def shutdown(self) -> None:
+        tracer_shutdown = getattr(self._tracer_provider, "shutdown", None)
+        if tracer_shutdown is not None:
+            tracer_shutdown()
+        meter_shutdown = getattr(self._meter_provider, "shutdown", None)
+        if meter_shutdown is not None:
+            meter_shutdown()

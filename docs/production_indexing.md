@@ -19,7 +19,8 @@ configured S3-compatible store, writes a durable Postgres job, and returns
 
 All endpoints require the `admin` permission. PDF and DOCX uploads require
 `metadata_json` containing at least `title`, `version`, and `document_type`;
-Markdown may carry the same fields in YAML front matter.
+Markdown may carry the same fields in YAML front matter. Uploads larger than
+`TRUSTRAG_MAX_UPLOAD_BYTES` are rejected before source storage or job creation.
 
 ## Consistency model
 
@@ -35,8 +36,11 @@ The worker never mutates the active corpus in place:
 Queries load only the tenant's active generation. Qdrant filters always include
 trusted `tenant_id` and `generation_id`; neither can be supplied by a query.
 Vector point IDs are deterministic UUID5 values, while the original chunk ID is
-kept in payload metadata.
+kept in payload metadata. The configured Qdrant collection must use one unnamed
+vector; named-vector collections are rejected during worker startup.
 
-Failed jobs retain their prior active generation. Expired leases can be
-reclaimed after worker crashes, and attempts exceeding the configured limit
-move to `dead_letter`.
+Only one job per tenant may hold a live lease. Workers renew their lease during
+long embedding/index builds, and every terminal write is fenced by worker and
+attempt identity. Failed jobs retain their prior active generation and remove
+failed generation chunks and vectors. Expired leases can be reclaimed after a
+worker crash, and attempts exceeding the configured limit move to `dead_letter`.

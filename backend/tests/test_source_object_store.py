@@ -45,7 +45,7 @@ def test_s3_source_store_uses_checksum_addressed_immutable_key() -> None:
     assert isinstance(store, SourceObjectStore)
     assert first == second
     assert first.uri.startswith(f"s3://rag-sources/source/tenant-a/{first.checksum}/")
-    assert store.get(first.uri) == b"pdf-content"
+    assert store.get(first.uri, tenant_id="tenant-a") == b"pdf-content"
     assert store.health()
 
 
@@ -53,4 +53,21 @@ def test_s3_source_store_rejects_uri_for_another_bucket() -> None:
     store = S3SourceObjectStore(client=_FakeS3Client(), bucket="rag-sources")
 
     with pytest.raises(ValueError, match="bucket"):
-        store.get("s3://other-bucket/source/tenant-a/checksum/policy.pdf")
+        store.get(
+            "s3://other-bucket/source/tenant-a/checksum/policy.pdf",
+            tenant_id="tenant-a",
+        )
+
+
+def test_s3_source_store_rejects_uri_for_another_tenant() -> None:
+    client = _FakeS3Client()
+    store = S3SourceObjectStore(client=client, bucket="rag-sources", prefix="source")
+    stored = store.put(
+        tenant_id="tenant-b",
+        filename="policy.pdf",
+        content=b"tenant-b-policy",
+        content_type="application/pdf",
+    )
+
+    with pytest.raises(ValueError, match="tenant"):
+        store.get(stored.uri, tenant_id="tenant-a")

@@ -128,6 +128,13 @@ index_generations = Table(
     Column("activated_at", String(64)),
     Column("metadata_json", JSON, nullable=False, default=dict),
 )
+Index(
+    "uq_index_generations_tenant_active",
+    index_generations.c.tenant_id,
+    unique=True,
+    postgresql_where=index_generations.c.status == "active",
+    sqlite_where=index_generations.c.status == "active",
+)
 
 index_jobs = Table(
     "index_jobs",

@@ -15,6 +15,7 @@ import logging
 import re
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
@@ -22,6 +23,7 @@ from typing import Annotated, Any
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.routing import Match
 
 from .auth import (
     AuthenticationError,
@@ -84,6 +86,13 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
     settings = container.settings
     logging.basicConfig(level=settings.log_level)
 
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        try:
+            yield
+        finally:
+            container.telemetry.shutdown()
+
     app = FastAPI(
         title="TrustRAG",
         version="0.2.0",
@@ -93,6 +102,7 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
             "with temporal validation, counter-evidence retrieval, and "
             "human-review boundaries. Phase 2A: real Markdown ingestion."
         ),
+        lifespan=lifespan,
     )
     app.state.container = container
 
@@ -124,9 +134,10 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
             else str(uuid.uuid4())
         )
         request.state.request_id = request_id
+        route_template = _route_template(app, request)
         attributes = {
             "http.method": request.method,
-            "http.route": request.url.path,
+            "http.route": route_template,
             "request_id": request_id,
         }
         started = time.perf_counter()
@@ -140,14 +151,14 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
                     "http.errors",
                     attributes={
                         "http.method": request.method,
-                        "http.route": request.url.path,
+                        "http.route": route_template,
                     },
                 )
                 raise
         duration_ms = (time.perf_counter() - started) * 1000
         metric_attributes = {
             "http.method": request.method,
-            "http.route": request.url.path,
+            "http.route": route_template,
             "http.status_code": status_code,
         }
         container.telemetry.increment("http.requests", attributes=metric_attributes)
@@ -804,7 +815,22 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
             raise HTTPException(status_code=422, detail="metadata_json is invalid") from exc
         if not isinstance(metadata, dict):
             raise HTTPException(status_code=422, detail="metadata_json must be an object")
-        content = await file.read()
+        if Path(filename).suffix.lower() in {".pdf", ".docx"}:
+            required = ("title", "version", "document_type")
+            missing = [
+                field
+                for field in required
+                if not str(metadata.get(field) or "").strip()
+            ]
+            if missing:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"metadata_json missing required fields: {', '.join(missing)}",
+                )
+        content = await _read_upload_limited(
+            file,
+            max_bytes=container.current_settings().max_upload_bytes,
+        )
         principal: RequestPrincipal = http_request.state.principal
         stored = container.source_object_store.put(
             tenant_id=principal.tenant_id,
@@ -848,6 +874,23 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
         return container.index_generations.list_generations()
 
     return app
+
+
+def _route_template(app: FastAPI, request: Request) -> str:
+    for route in app.router.routes:
+        match, _ = route.matches(request.scope)
+        if match is Match.FULL:
+            return str(getattr(route, "path", "unmatched"))
+    return "unmatched"
+
+
+async def _read_upload_limited(file: UploadFile, *, max_bytes: int) -> bytes:
+    content = bytearray()
+    while chunk := await file.read(1024 * 1024):
+        content.extend(chunk)
+        if len(content) > max_bytes:
+            raise HTTPException(status_code=413, detail="uploaded document is too large")
+    return bytes(content)
 
 
 def _build_queue_filter(

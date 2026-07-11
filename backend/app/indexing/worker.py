@@ -69,7 +69,14 @@ def build_production_coordinator(settings: Settings) -> IndexingCoordinator:
         include_content=settings.trustrag_trace_include_content,
     )
     telemetry = build_telemetry(settings, local_collector=local_collector)
-    return IndexingCoordinator(jobs, generations, indexer, telemetry=telemetry)
+    return IndexingCoordinator(
+        jobs,
+        generations,
+        indexer,
+        lease_seconds=settings.index_job_lease_seconds,
+        heartbeat_seconds=settings.index_job_heartbeat_seconds,
+        telemetry=telemetry,
+    )
 
 
 def run_worker_once(
@@ -89,9 +96,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     coordinator = build_production_coordinator(get_settings())
     worker_id = args.worker_id or f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
 
-    while True:
-        processed = run_worker_once(coordinator, worker_id=worker_id)
-        if args.once:
-            return 0
-        if processed is None:
-            time.sleep(max(0.1, args.poll_seconds))
+    try:
+        while True:
+            processed = run_worker_once(coordinator, worker_id=worker_id)
+            if args.once:
+                return 0
+            if processed is None:
+                time.sleep(max(0.1, args.poll_seconds))
+    finally:
+        coordinator.shutdown()

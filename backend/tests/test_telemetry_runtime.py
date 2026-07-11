@@ -33,6 +33,7 @@ class _RecordingTelemetry:
         self.spans: list[tuple[str, dict]] = []
         self.counters: list[tuple[str, int, dict]] = []
         self.histograms: list[tuple[str, float, dict]] = []
+        self.shutdown_calls = 0
 
     @contextmanager
     def span(self, name: str, attributes=None):
@@ -44,6 +45,9 @@ class _RecordingTelemetry:
 
     def record(self, name: str, value: float, attributes=None) -> None:
         self.histograms.append((name, value, dict(attributes or {})))
+
+    def shutdown(self) -> None:
+        self.shutdown_calls += 1
 
 
 def _container(
@@ -78,6 +82,27 @@ def test_http_middleware_emits_request_id_span_and_metrics(tmp_path: Path) -> No
     assert "question" not in telemetry.spans[0][1]
     assert telemetry.counters[-1][0] == "http.requests"
     assert telemetry.histograms[-1][0] == "http.server.duration_ms"
+
+
+def test_http_metrics_use_route_template_instead_of_resource_identifier(
+    tmp_path: Path,
+) -> None:
+    telemetry = _RecordingTelemetry()
+    client = TestClient(create_app(_container(tmp_path, telemetry)))
+
+    response = client.get("/v1/admin/index/jobs/job-secret-123")
+
+    assert response.status_code == 503
+    assert telemetry.counters[-1][2]["http.route"] == "/v1/admin/index/jobs/{job_id}"
+
+
+def test_application_shutdown_flushes_telemetry(tmp_path: Path) -> None:
+    telemetry = _RecordingTelemetry()
+
+    with TestClient(create_app(_container(tmp_path, telemetry))) as client:
+        assert client.get("/healthz").status_code == 200
+
+    assert telemetry.shutdown_calls == 1
 
 
 def test_readiness_returns_503_with_named_failed_check(tmp_path: Path) -> None:

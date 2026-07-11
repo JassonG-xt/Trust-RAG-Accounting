@@ -4,6 +4,7 @@ from .coordinator import IndexBuildResult, IndexingCoordinator, IndexReconciliat
 from .models import IndexGeneration, IndexJob, IndexJobSubmission
 from .production_indexer import ProductionDocumentIndexer
 from .repositories import (
+    IndexLeaseLostError,
     PostgresIndexGenerationRepository,
     PostgresIndexJobRepository,
 )
@@ -13,6 +14,7 @@ __all__ = [
     "IndexGeneration",
     "IndexJob",
     "IndexJobSubmission",
+    "IndexLeaseLostError",
     "IndexReconciliationError",
     "IndexingCoordinator",
     "PostgresIndexGenerationRepository",

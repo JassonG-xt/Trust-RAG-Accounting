@@ -31,9 +31,9 @@ class SourceObjectStore(Protocol):
         content_type: str,
     ) -> StoredObject: ...
 
-    def get(self, uri: str) -> bytes: ...
+    def get(self, uri: str, *, tenant_id: str) -> bytes: ...
 
-    def delete(self, uri: str) -> None: ...
+    def delete(self, uri: str, *, tenant_id: str) -> None: ...
 
     def health(self) -> bool: ...
 
@@ -96,13 +96,13 @@ class S3SourceObjectStore:
             content_type=content_type,
         )
 
-    def get(self, uri: str) -> bytes:
-        key = self._key_from_uri(uri)
+    def get(self, uri: str, *, tenant_id: str) -> bytes:
+        key = self._key_from_uri(uri, tenant_id=tenant_id)
         response = self._client.get_object(Bucket=self._bucket, Key=key)
         return bytes(response["Body"].read())
 
-    def delete(self, uri: str) -> None:
-        key = self._key_from_uri(uri)
+    def delete(self, uri: str, *, tenant_id: str) -> None:
+        key = self._key_from_uri(uri, tenant_id=tenant_id)
         self._client.delete_object(Bucket=self._bucket, Key=key)
 
     def health(self) -> bool:
@@ -112,11 +112,18 @@ class S3SourceObjectStore:
             return False
         return True
 
-    def _key_from_uri(self, uri: str) -> str:
+    def _key_from_uri(self, uri: str, *, tenant_id: str) -> str:
+        if not _SAFE_TENANT.fullmatch(tenant_id):
+            raise ValueError("tenant_id contains unsupported characters")
         parsed = urlparse(uri)
         if parsed.scheme != "s3" or parsed.netloc != self._bucket:
             raise ValueError("source URI must use the configured S3 bucket")
         key = parsed.path.lstrip("/")
         if not key:
             raise ValueError("source URI is missing an object key")
+        tenant_prefix = "/".join(
+            part for part in (self._prefix, tenant_id) if part
+        ) + "/"
+        if not key.startswith(tenant_prefix):
+            raise ValueError("source URI does not belong to the configured tenant")
         return key

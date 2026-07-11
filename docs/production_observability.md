@@ -8,7 +8,7 @@ OpenTelemetry Collector or compatible backend.
 
 - Every HTTP response carries `X-Request-ID`; a valid incoming value is
   preserved, otherwise the API creates a UUID.
-- HTTP spans and metrics include method, route, status and duration.
+- HTTP spans and metrics include method, bounded route template, status and duration.
 - RAG workflow spans carry the request ID without carrying the question.
 - Retrieval metrics include latency, result count and zero-hit rate.
 - Index jobs emit operation, status, attempt count and failure type.
@@ -32,3 +32,6 @@ Both read and clear debug endpoints return `404` in production.
 
 Metric labels should remain bounded. Use request/job IDs only in traces and
 structured logs, never as metric dimensions.
+
+OTLP trace and metric providers are flushed and shut down during API lifespan
+shutdown and index-worker exit.

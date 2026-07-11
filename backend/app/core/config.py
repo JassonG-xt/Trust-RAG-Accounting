@@ -113,6 +113,18 @@ class Settings:
     source_store_backend: str = field(
         default_factory=lambda: os.getenv("TRUSTRAG_SOURCE_STORE", "local")
     )
+    max_upload_bytes: int = field(
+        default_factory=lambda: _int_env(
+            "TRUSTRAG_MAX_UPLOAD_BYTES",
+            25 * 1024 * 1024,
+        )
+    )
+    index_job_lease_seconds: int = field(
+        default_factory=lambda: _int_env("TRUSTRAG_INDEX_JOB_LEASE_SECONDS", 300)
+    )
+    index_job_heartbeat_seconds: float = field(
+        default_factory=lambda: _float_env("TRUSTRAG_INDEX_JOB_HEARTBEAT_SECONDS", 30.0)
+    )
     s3_bucket: str | None = field(
         default_factory=lambda: _optional_str_env("TRUSTRAG_S3_BUCKET")
     )
@@ -442,6 +454,15 @@ class Settings:
             raise ValueError("TRUSTRAG_SOURCE_STORE must be either 'local' or 's3'")
         if source_backend == "s3" and not self.s3_bucket:
             raise ValueError("TRUSTRAG_SOURCE_STORE=s3 requires TRUSTRAG_S3_BUCKET")
+        if self.max_upload_bytes <= 0:
+            raise ValueError("TRUSTRAG_MAX_UPLOAD_BYTES must be positive")
+        if self.index_job_lease_seconds <= 0:
+            raise ValueError("TRUSTRAG_INDEX_JOB_LEASE_SECONDS must be positive")
+        if not 0 < self.index_job_heartbeat_seconds < self.index_job_lease_seconds:
+            raise ValueError(
+                "TRUSTRAG_INDEX_JOB_HEARTBEAT_SECONDS must be positive and less "
+                "than TRUSTRAG_INDEX_JOB_LEASE_SECONDS"
+            )
         auth_mode = self.auth_mode.strip().lower()
         if auth_mode not in {"local", "oidc"}:
             raise ValueError("TRUSTRAG_AUTH_MODE must be either 'local' or 'oidc'")

@@ -12,6 +12,53 @@ permissions:
   issues: write
 
 jobs:
+  production-adapters:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: trustrag_test
+          POSTGRES_USER: trustrag
+          POSTGRES_PASSWORD: trustrag
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U trustrag -d trustrag_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install production dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints.txt -e ".[dev,production]"
+
+      - name: Upgrade production schema on Postgres
+        env:
+          DATABASE_URL: postgresql+psycopg://trustrag:trustrag@localhost:5432/trustrag_test
+        run: alembic upgrade head
+
+      - name: Run production adapter tests
+        run: |
+          python -m pytest \
+            backend/tests/test_postgres_persistence.py \
+            backend/tests/test_postgres_document_catalog.py \
+            backend/tests/test_indexing_jobs.py \
+            backend/tests/test_auth.py \
+            backend/tests/test_telemetry_runtime.py \
+            backend/tests/test_vectorstore_lifecycle.py
+
   backend-tests-and-evals:
     runs-on: ubuntu-latest
 

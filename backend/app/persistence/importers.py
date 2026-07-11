@@ -116,6 +116,16 @@ def import_document_json(
         ).scalar_one_or_none()
         if generation_exists is None:
             connection.execute(
+                update(index_generations)
+                .where(
+                    and_(
+                        index_generations.c.tenant_id == tenant_id,
+                        index_generations.c.status == "active",
+                    )
+                )
+                .values(status="retired")
+            )
+            connection.execute(
                 insert(index_generations).values(
                     tenant_id=tenant_id,
                     generation_id=generation_id,

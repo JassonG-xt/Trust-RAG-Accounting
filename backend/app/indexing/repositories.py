@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Engine, and_, insert, or_, select, update
+from sqlalchemy import Engine, and_, insert, or_, select, text, update
 
 from ..persistence.schema import index_generations, index_jobs
 from .models import IndexGeneration, IndexJob
@@ -11,6 +11,10 @@ from .models import IndexGeneration, IndexJob
 
 def _iso(value: datetime | None = None) -> str:
     return (value or datetime.now(UTC)).isoformat(timespec="seconds")
+
+
+class IndexLeaseLostError(RuntimeError):
+    """Raised when a worker mutates a job after losing its claim."""
 
 
 class PostgresIndexJobRepository:
@@ -30,7 +34,38 @@ class PostgresIndexJobRepository:
         if operation not in {"upsert", "delete", "reindex", "reconcile"}:
             raise ValueError(f"unsupported index operation: {operation!r}")
         now = _iso()
+        values = {
+            "tenant_id": self._tenant_id,
+            "job_id": str(uuid.uuid4()),
+            "operation": operation,
+            "status": "pending",
+            "source_uri": source_uri,
+            "document_id": document_id,
+            "generation_id": None,
+            "idempotency_key": idempotency_key,
+            "attempt_count": 0,
+            "next_attempt_at": None,
+            "lease_owner": None,
+            "lease_expires_at": None,
+            "error_code": None,
+            "error_summary": None,
+            "payload": dict(payload or {}),
+            "created_at": now,
+            "updated_at": now,
+        }
         with self._engine.begin() as connection:
+            if connection.dialect.name == "postgresql":
+                from sqlalchemy.dialects.postgresql import insert as dialect_insert
+            elif connection.dialect.name == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert as dialect_insert
+            else:  # pragma: no cover - production and tests use PostgreSQL/SQLite
+                dialect_insert = insert
+            statement = dialect_insert(index_jobs).values(**values)
+            if hasattr(statement, "on_conflict_do_nothing"):
+                statement = statement.on_conflict_do_nothing(
+                    index_elements=["tenant_id", "idempotency_key"]
+                )
+            connection.execute(statement)
             existing = connection.execute(
                 select(index_jobs).where(
                     and_(
@@ -38,30 +73,8 @@ class PostgresIndexJobRepository:
                         index_jobs.c.idempotency_key == idempotency_key,
                     )
                 )
-            ).mappings().one_or_none()
-            if existing is not None:
-                return self._model(existing)
-            values = {
-                "tenant_id": self._tenant_id,
-                "job_id": str(uuid.uuid4()),
-                "operation": operation,
-                "status": "pending",
-                "source_uri": source_uri,
-                "document_id": document_id,
-                "generation_id": None,
-                "idempotency_key": idempotency_key,
-                "attempt_count": 0,
-                "next_attempt_at": None,
-                "lease_owner": None,
-                "lease_expires_at": None,
-                "error_code": None,
-                "error_summary": None,
-                "payload": dict(payload or {}),
-                "created_at": now,
-                "updated_at": now,
-            }
-            connection.execute(insert(index_jobs).values(**values))
-            return self._model(values)
+            ).mappings().one()
+            return self._model(existing)
 
     def claim_next(
         self,
@@ -88,6 +101,24 @@ class PostgresIndexJobRepository:
             ),
         )
         with self._engine.begin() as connection:
+            if connection.dialect.name == "postgresql":
+                connection.execute(
+                    text("SELECT pg_advisory_xact_lock(hashtext(:tenant_id))"),
+                    {"tenant_id": self._tenant_id},
+                )
+            running = connection.execute(
+                select(index_jobs.c.job_id)
+                .where(
+                    and_(
+                        index_jobs.c.tenant_id == self._tenant_id,
+                        index_jobs.c.status == "running",
+                        index_jobs.c.lease_expires_at > current_iso,
+                    )
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+            if running is not None:
+                return None
             row = connection.execute(
                 select(index_jobs)
                 .where(
@@ -120,13 +151,142 @@ class PostgresIndexJobRepository:
             )
         return self.get(row["job_id"])
 
-    def attach_generation(self, job_id: str, generation_id: str) -> IndexJob:
-        self._update(job_id, generation_id=generation_id)
+    def attach_generation(
+        self,
+        job_id: str,
+        generation_id: str,
+        *,
+        worker_id: str,
+        attempt_count: int,
+    ) -> IndexJob:
+        self._update_claimed(
+            job_id,
+            worker_id=worker_id,
+            attempt_count=attempt_count,
+            generation_id=generation_id,
+        )
         return self.get_required(job_id)
 
-    def succeed(self, job_id: str) -> IndexJob:
-        self._update(
+    def renew_lease(
+        self,
+        job_id: str,
+        *,
+        worker_id: str,
+        attempt_count: int,
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> IndexJob:
+        current = now or datetime.now(UTC)
+        current_iso = _iso(current)
+        lease_expires = _iso(current + timedelta(seconds=lease_seconds))
+        with self._engine.begin() as connection:
+            result = connection.execute(
+                update(index_jobs)
+                .where(
+                    and_(
+                        index_jobs.c.tenant_id == self._tenant_id,
+                        index_jobs.c.job_id == job_id,
+                        index_jobs.c.status == "running",
+                        index_jobs.c.lease_owner == worker_id,
+                        index_jobs.c.attempt_count == attempt_count,
+                        index_jobs.c.lease_expires_at > current_iso,
+                    )
+                )
+                .values(lease_expires_at=lease_expires, updated_at=current_iso)
+            )
+            if not result.rowcount:
+                raise IndexLeaseLostError(f"index job {job_id!r} lease is no longer owned")
+        return self.get_required(job_id)
+
+    def succeed_with_generation(
+        self,
+        job_id: str,
+        *,
+        generation_id: str,
+        worker_id: str,
+        attempt_count: int,
+    ) -> IndexJob:
+        now = _iso()
+        with self._engine.begin() as connection:
+            claimed = connection.execute(
+                select(index_jobs.c.job_id)
+                .where(
+                    and_(
+                        index_jobs.c.tenant_id == self._tenant_id,
+                        index_jobs.c.job_id == job_id,
+                        index_jobs.c.status == "running",
+                        index_jobs.c.lease_owner == worker_id,
+                        index_jobs.c.attempt_count == attempt_count,
+                        index_jobs.c.lease_expires_at > now,
+                    )
+                )
+                .with_for_update()
+            ).scalar_one_or_none()
+            target = connection.execute(
+                select(index_generations.c.generation_id)
+                .where(
+                    and_(
+                        index_generations.c.tenant_id == self._tenant_id,
+                        index_generations.c.generation_id == generation_id,
+                        index_generations.c.status == "staging",
+                    )
+                )
+                .with_for_update()
+            ).scalar_one_or_none()
+            if claimed is None:
+                raise IndexLeaseLostError(f"index job {job_id!r} lease is no longer owned")
+            if target is None:
+                raise KeyError(f"staging generation {generation_id!r} not found")
+            connection.execute(
+                update(index_generations)
+                .where(
+                    and_(
+                        index_generations.c.tenant_id == self._tenant_id,
+                        index_generations.c.status == "active",
+                    )
+                )
+                .values(status="retired")
+            )
+            connection.execute(
+                update(index_generations)
+                .where(
+                    and_(
+                        index_generations.c.tenant_id == self._tenant_id,
+                        index_generations.c.generation_id == generation_id,
+                    )
+                )
+                .values(status="active", activated_at=now)
+            )
+            connection.execute(
+                update(index_jobs)
+                .where(
+                    and_(
+                        index_jobs.c.tenant_id == self._tenant_id,
+                        index_jobs.c.job_id == job_id,
+                    )
+                )
+                .values(
+                    status="succeeded",
+                    lease_owner=None,
+                    lease_expires_at=None,
+                    error_code=None,
+                    error_summary=None,
+                    updated_at=now,
+                )
+            )
+        return self.get_required(job_id)
+
+    def succeed(
+        self,
+        job_id: str,
+        *,
+        worker_id: str,
+        attempt_count: int,
+    ) -> IndexJob:
+        self._update_claimed(
             job_id,
+            worker_id=worker_id,
+            attempt_count=attempt_count,
             status="succeeded",
             lease_owner=None,
             lease_expires_at=None,
@@ -143,22 +303,50 @@ class PostgresIndexJobRepository:
         error_summary: str,
         max_attempts: int,
         retry_delay_seconds: int,
+        worker_id: str,
+        attempt_count: int,
     ) -> IndexJob:
-        current = self.get_required(job_id)
-        terminal = current.attempt_count >= max_attempts
-        self._update(
-            job_id,
-            status="dead_letter" if terminal else "failed",
-            next_attempt_at=(
-                None
-                if terminal
-                else _iso(datetime.now(UTC) + timedelta(seconds=retry_delay_seconds))
-            ),
-            lease_owner=None,
-            lease_expires_at=None,
-            error_code=error_code,
-            error_summary=error_summary[:1000],
-        )
+        now = datetime.now(UTC)
+        now_iso = _iso(now)
+        with self._engine.begin() as connection:
+            current_attempt = connection.execute(
+                select(index_jobs.c.attempt_count)
+                .where(
+                    and_(
+                        index_jobs.c.tenant_id == self._tenant_id,
+                        index_jobs.c.job_id == job_id,
+                        index_jobs.c.status == "running",
+                        index_jobs.c.lease_owner == worker_id,
+                        index_jobs.c.attempt_count == attempt_count,
+                    )
+                )
+                .with_for_update()
+            ).scalar_one_or_none()
+            if current_attempt is None:
+                raise IndexLeaseLostError(f"index job {job_id!r} lease is no longer owned")
+            terminal = int(current_attempt) >= max_attempts
+            connection.execute(
+                update(index_jobs)
+                .where(
+                    and_(
+                        index_jobs.c.tenant_id == self._tenant_id,
+                        index_jobs.c.job_id == job_id,
+                    )
+                )
+                .values(
+                    status="dead_letter" if terminal else "failed",
+                    next_attempt_at=(
+                        None
+                        if terminal
+                        else _iso(now + timedelta(seconds=retry_delay_seconds))
+                    ),
+                    lease_owner=None,
+                    lease_expires_at=None,
+                    error_code=error_code,
+                    error_summary=error_summary[:1000],
+                    updated_at=now_iso,
+                )
+            )
         return self.get_required(job_id)
 
     def get(self, job_id: str) -> IndexJob | None:
@@ -204,6 +392,32 @@ class PostgresIndexJobRepository:
         if not result.rowcount:
             raise KeyError(f"index job {job_id!r} not found")
 
+    def _update_claimed(
+        self,
+        job_id: str,
+        *,
+        worker_id: str,
+        attempt_count: int,
+        **values,
+    ) -> None:
+        values["updated_at"] = _iso()
+        with self._engine.begin() as connection:
+            result = connection.execute(
+                update(index_jobs)
+                .where(
+                    and_(
+                        index_jobs.c.tenant_id == self._tenant_id,
+                        index_jobs.c.job_id == job_id,
+                        index_jobs.c.status == "running",
+                        index_jobs.c.lease_owner == worker_id,
+                        index_jobs.c.attempt_count == attempt_count,
+                    )
+                )
+                .values(**values)
+            )
+            if not result.rowcount:
+                raise IndexLeaseLostError(f"index job {job_id!r} lease is no longer owned")
+
     @staticmethod
     def _model(row) -> IndexJob:
         payload = dict(row)
@@ -231,6 +445,19 @@ class PostgresIndexGenerationRepository:
     def activate(self, generation_id: str) -> IndexGeneration:
         now = _iso()
         with self._engine.begin() as connection:
+            target = connection.execute(
+                select(index_generations.c.generation_id)
+                .where(
+                    and_(
+                        index_generations.c.tenant_id == self._tenant_id,
+                        index_generations.c.generation_id == generation_id,
+                        index_generations.c.status == "staging",
+                    )
+                )
+                .with_for_update()
+            ).scalar_one_or_none()
+            if target is None:
+                raise KeyError(f"staging generation {generation_id!r} not found")
             connection.execute(
                 update(index_generations)
                 .where(
@@ -252,8 +479,8 @@ class PostgresIndexGenerationRepository:
                 )
                 .values(status="active", activated_at=now)
             )
-        if not result.rowcount:
-            raise KeyError(f"staging generation {generation_id!r} not found")
+        if not result.rowcount:  # pragma: no cover - target is locked above
+            raise RuntimeError(f"generation {generation_id!r} changed during activation")
         return self.get_required(generation_id)
 
     def mark_failed(self, generation_id: str, *, reason: str) -> IndexGeneration:

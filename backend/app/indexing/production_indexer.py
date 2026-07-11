@@ -48,7 +48,11 @@ class ProductionDocumentIndexer:
             active_generation = self._active_generation_id()
             if (
                 active_generation is not None
-                and self._current_checksum(document.document_id) == document.checksum
+                and self._active_checksum(
+                    document.document_id,
+                    generation_id=active_generation,
+                )
+                == document.checksum
             ):
                 vector_count = self._vector_store.count(
                     {
@@ -92,6 +96,23 @@ class ProductionDocumentIndexer:
             lexical_count=len(chunks),
         )
 
+    def discard_generation(self, generation_id: str) -> None:
+        with self._engine.begin() as connection:
+            connection.execute(
+                delete(document_chunks).where(
+                    and_(
+                        document_chunks.c.tenant_id == self._tenant_id,
+                        document_chunks.c.generation_id == generation_id,
+                    )
+                )
+            )
+        self._vector_store.delete(
+            payload_filter={
+                "tenant_id": self._tenant_id,
+                "generation_id": generation_id,
+            }
+        )
+
     def _active_generation_id(self) -> str | None:
         with self._engine.connect() as connection:
             return connection.execute(
@@ -106,27 +127,33 @@ class ProductionDocumentIndexer:
                 .limit(1)
             ).scalar_one_or_none()
 
-    def _current_checksum(self, document_id: str) -> str | None:
+    def _active_checksum(
+        self,
+        document_id: str,
+        *,
+        generation_id: str,
+    ) -> str | None:
         with self._engine.connect() as connection:
             return connection.execute(
                 select(document_versions.c.checksum)
                 .select_from(
-                    documents.join(
+                    document_chunks.join(
                         document_versions,
                         and_(
-                            documents.c.tenant_id == document_versions.c.tenant_id,
-                            documents.c.current_version_id
-                            == document_versions.c.version_id,
+                            document_chunks.c.tenant_id
+                            == document_versions.c.tenant_id,
+                            document_chunks.c.version_id == document_versions.c.version_id,
                         ),
                     )
                 )
                 .where(
                     and_(
-                        documents.c.tenant_id == self._tenant_id,
-                        documents.c.document_id == document_id,
-                        documents.c.tombstoned.is_(False),
+                        document_chunks.c.tenant_id == self._tenant_id,
+                        document_chunks.c.generation_id == generation_id,
+                        document_chunks.c.document_id == document_id,
                     )
                 )
+                .limit(1)
             ).scalar_one_or_none()
 
     def _load_uploaded_document(self, job: IndexJob) -> AccountingDocument:
@@ -135,7 +162,7 @@ class ProductionDocumentIndexer:
         filename = Path(str(job.payload.get("filename") or "")).name
         if Path(filename).suffix.lower() not in {".md", ".pdf", ".docx"}:
             raise ValueError("index job filename has unsupported format")
-        content = self._source_store.get(job.source_uri)
+        content = self._source_store.get(job.source_uri, tenant_id=self._tenant_id)
         with TemporaryDirectory(prefix="trustrag-index-") as directory:
             source_path = Path(directory) / filename
             source_path.write_bytes(content)

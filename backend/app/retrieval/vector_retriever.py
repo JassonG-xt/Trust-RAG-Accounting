@@ -43,6 +43,7 @@ from ..vectorstore import (
     VectorStore,
     metadata_filter_to_payload_filter,
 )
+from .filters import passes_metadata_filter
 from .models import MetadataFilter, ScoreBreakdown, ScoredChunk
 from .temporal import is_chunk_active_as_of, parse_iso_date, temporal_score_for_chunk
 
@@ -183,6 +184,8 @@ class VectorRetriever:
             if chunk is None:
                 # Vector store has a hit we no longer have a chunk for —
                 # treat as a stale record and skip rather than guess.
+                continue
+            if not passes_metadata_filter(chunk, metadata_filter):
                 continue
 
             breakdown = self._build_breakdown(chunk, hit.score, metadata_filter, stance)

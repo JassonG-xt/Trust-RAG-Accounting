@@ -27,6 +27,9 @@ Install the production adapters with `pip install -e '.[production]'` and run
 | `TRUSTRAG_S3_BUCKET` | unset | Required when source storage is `s3`. |
 | `TRUSTRAG_S3_ENDPOINT_URL` | unset | Optional S3-compatible endpoint such as MinIO. |
 | `TRUSTRAG_S3_REGION` | unset | Optional S3 region. Credentials use the standard AWS credential chain. |
+| `TRUSTRAG_MAX_UPLOAD_BYTES` | `26214400` | Maximum source upload size; oversized requests return HTTP `413` before S3/job writes. |
+| `TRUSTRAG_INDEX_JOB_LEASE_SECONDS` | `300` | Initial and renewed worker lease duration. |
+| `TRUSTRAG_INDEX_JOB_HEARTBEAT_SECONDS` | `30` | Lease-renewal interval; must be lower than the lease duration. |
 
 Legacy local stores can be imported idempotently after the schema migration:
 

@@ -15,6 +15,7 @@ from backend.app.persistence.schema import (
     document_chunks,
     document_versions,
     documents,
+    index_generations,
 )
 from backend.app.persistence.sqlalchemy import (
     PostgresEvaluationRepository,
@@ -82,6 +83,34 @@ def test_alembic_upgrade_creates_production_schema(tmp_path: Path) -> None:
     migrated_engine = create_engine(f"sqlite+pysqlite:///{database_path}")
     assert "index_jobs" in inspect(migrated_engine).get_table_names()
     assert "review_actions" in inspect(migrated_engine).get_table_names()
+
+    command.downgrade(config, "base")
+
+    assert inspect(migrated_engine).get_table_names() == ["alembic_version"]
+
+
+def test_alembic_uses_database_url_environment_variable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "environment-migration.sqlite3"
+    database_url = f"sqlite+pysqlite:///{database_path}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+
+    command.upgrade(Config("alembic.ini"), "head")
+
+    migrated_engine = create_engine(database_url)
+    assert "index_jobs" in inspect(migrated_engine).get_table_names()
+
+
+def test_initial_migration_is_frozen_and_does_not_import_live_metadata() -> None:
+    migration = Path(
+        "backend/migrations/versions/0001_production_persistence.py"
+    ).read_text(encoding="utf-8")
+
+    assert "persistence.schema import metadata" not in migration
+    assert "metadata.create_all" not in migration
+    assert "metadata.drop_all" not in migration
 
 
 def test_review_repositories_enforce_tenant_isolation(engine: Engine) -> None:
@@ -238,6 +267,40 @@ def test_document_json_import_is_idempotent(engine: Engine, tmp_path: Path) -> N
         assert connection.execute(document_chunks.select()).one().generation_id == (
             "generation-1"
         )
+
+
+def test_document_json_import_retires_previous_active_generation(
+    engine: Engine,
+    tmp_path: Path,
+) -> None:
+    document_path = tmp_path / "documents.json"
+    chunk_path = tmp_path / "chunks.json"
+    document_path.write_text('{"documents": []}', encoding="utf-8")
+    chunk_path.write_text('{"chunks": []}', encoding="utf-8")
+
+    import_document_json(
+        engine,
+        tenant_id="tenant-a",
+        generation_id="generation-1",
+        document_path=document_path,
+        chunk_path=chunk_path,
+    )
+    import_document_json(
+        engine,
+        tenant_id="tenant-a",
+        generation_id="generation-2",
+        document_path=document_path,
+        chunk_path=chunk_path,
+    )
+
+    with engine.connect() as connection:
+        rows = connection.execute(
+            index_generations.select().order_by(index_generations.c.generation_id)
+        ).mappings()
+        assert [(row["generation_id"], row["status"]) for row in rows] == [
+            ("generation-1", "retired"),
+            ("generation-2", "active"),
+        ]
 
 
 def test_legacy_import_cli_runs_all_importers(tmp_path: Path, capsys) -> None:
