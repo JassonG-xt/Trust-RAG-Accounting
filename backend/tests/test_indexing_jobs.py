@@ -28,7 +28,7 @@ from backend.app.indexing.worker import run_worker_once
 from backend.app.main import create_app
 from backend.app.persistence import StoredObject
 from backend.app.persistence.document_catalog import PostgresDocumentCatalog
-from backend.app.persistence.schema import document_chunks, documents
+from backend.app.persistence.schema import document_chunks, document_versions, documents
 from backend.app.persistence.sqlalchemy import create_schema
 from backend.app.review import LocalReviewActionStore, LocalReviewCheckpointStore, ReviewService
 from backend.app.tracing import LocalTraceCollector
@@ -736,6 +736,49 @@ small taxpayer VAT rule
 
     assert deleted and deleted.status == "succeeded"
     assert catalog.chunk_count() == 0
+
+
+def test_failed_first_upsert_removes_unactivated_document_projection(
+    engine: Engine,
+) -> None:
+    source_store = _SourceStore()
+    source_store.last_content = b"""---
+document_id: policy-1
+title: VAT Policy
+version: '1.0'
+document_type: tax_policy_note
+---
+small taxpayer VAT rule
+"""
+    vectors = _DriftingVectorStore(dimension=8)
+    vectors.force_mismatch = True
+    jobs = PostgresIndexJobRepository(engine, tenant_id="tenant-a")
+    generations = PostgresIndexGenerationRepository(engine, tenant_id="tenant-a")
+    coordinator = IndexingCoordinator(
+        jobs,
+        generations,
+        ProductionDocumentIndexer(
+            engine,
+            tenant_id="tenant-a",
+            source_store=source_store,
+            embedding_provider=MockEmbeddingProvider(dimension=8),
+            vector_store=vectors,
+        ),
+    )
+    coordinator.submit(
+        operation="upsert",
+        idempotency_key="upload-1",
+        source_uri="s3://sources/tenant-a/policy.md",
+        document_id="policy-1",
+        payload={"filename": "policy.md", "metadata": {}},
+    )
+
+    failed = coordinator.process_next(worker_id="worker-1")
+
+    assert failed and failed.status == "failed"
+    with engine.connect() as connection:
+        assert connection.execute(documents.select()).all() == []
+        assert connection.execute(document_versions.select()).all() == []
 
 
 def test_worker_once_processes_one_durable_job(engine: Engine) -> None:

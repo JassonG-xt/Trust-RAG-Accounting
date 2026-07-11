@@ -111,6 +111,19 @@ class ProductionDocumentIndexer:
 
     def discard_generation(self, generation_id: str) -> None:
         with self._engine.begin() as connection:
+            staged_rows = connection.execute(
+                select(
+                    document_chunks.c.document_id,
+                    document_chunks.c.version_id,
+                )
+                .where(
+                    and_(
+                        document_chunks.c.tenant_id == self._tenant_id,
+                        document_chunks.c.generation_id == generation_id,
+                    )
+                )
+                .distinct()
+            ).all()
             connection.execute(
                 delete(document_chunks).where(
                     and_(
@@ -119,6 +132,66 @@ class ProductionDocumentIndexer:
                     )
                 )
             )
+            versions_by_document: dict[str, set[str]] = {}
+            for document_id, version_id in staged_rows:
+                versions_by_document.setdefault(document_id, set()).add(version_id)
+            for document_id, staged_versions in versions_by_document.items():
+                current_version_id = connection.execute(
+                    select(documents.c.current_version_id).where(
+                        and_(
+                            documents.c.tenant_id == self._tenant_id,
+                            documents.c.document_id == document_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+                remaining_chunk = connection.execute(
+                    select(document_chunks.c.chunk_id)
+                    .where(
+                        and_(
+                            document_chunks.c.tenant_id == self._tenant_id,
+                            document_chunks.c.document_id == document_id,
+                        )
+                    )
+                    .limit(1)
+                ).scalar_one_or_none()
+                if current_version_id is None and remaining_chunk is None:
+                    connection.execute(
+                        delete(document_versions).where(
+                            and_(
+                                document_versions.c.tenant_id == self._tenant_id,
+                                document_versions.c.document_id == document_id,
+                            )
+                        )
+                    )
+                    connection.execute(
+                        delete(documents).where(
+                            and_(
+                                documents.c.tenant_id == self._tenant_id,
+                                documents.c.document_id == document_id,
+                            )
+                        )
+                    )
+                    continue
+                for version_id in staged_versions:
+                    referenced = connection.execute(
+                        select(document_chunks.c.chunk_id)
+                        .where(
+                            and_(
+                                document_chunks.c.tenant_id == self._tenant_id,
+                                document_chunks.c.version_id == version_id,
+                            )
+                        )
+                        .limit(1)
+                    ).scalar_one_or_none()
+                    if referenced is None and version_id != current_version_id:
+                        connection.execute(
+                            delete(document_versions).where(
+                                and_(
+                                    document_versions.c.tenant_id == self._tenant_id,
+                                    document_versions.c.version_id == version_id,
+                                )
+                            )
+                        )
         self._vector_store.delete(
             payload_filter={
                 "tenant_id": self._tenant_id,

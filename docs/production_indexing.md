@@ -43,5 +43,6 @@ vector; named-vector collections are rejected during worker startup.
 Only one job per tenant may hold a live lease. Workers renew their lease during
 long embedding/index builds, and every terminal write is fenced by worker and
 attempt identity. Failed jobs retain their prior active generation and remove
-failed generation chunks and vectors. Expired leases can be reclaimed after a
-worker crash, and attempts exceeding the configured limit move to `dead_letter`.
+failed generation chunks, vectors, and unreferenced staged document versions.
+Expired leases can be reclaimed after a worker crash, and attempts exceeding
+the configured limit move to `dead_letter`.
