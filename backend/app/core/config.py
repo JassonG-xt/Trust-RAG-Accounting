@@ -101,6 +101,27 @@ class Settings:
 
     app_env: str = field(default_factory=lambda: os.getenv("APP_ENV", "development"))
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
+    storage_backend: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_STORAGE_BACKEND", "local")
+    )
+    database_url: str | None = field(
+        default_factory=lambda: _optional_str_env("DATABASE_URL")
+    )
+    tenant_id: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_TENANT_ID", "local")
+    )
+    source_store_backend: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_SOURCE_STORE", "local")
+    )
+    s3_bucket: str | None = field(
+        default_factory=lambda: _optional_str_env("TRUSTRAG_S3_BUCKET")
+    )
+    s3_endpoint_url: str | None = field(
+        default_factory=lambda: _optional_str_env("TRUSTRAG_S3_ENDPOINT_URL")
+    )
+    s3_region: str | None = field(
+        default_factory=lambda: _optional_str_env("TRUSTRAG_S3_REGION")
+    )
 
     # Provider selection — mock remains the deterministic default.
     llm_provider: str = field(default_factory=lambda: os.getenv("LLM_PROVIDER", "mock"))
@@ -374,6 +395,24 @@ class Settings:
     anthropic_model: str | None = field(
         default_factory=lambda: _optional_str_env("ANTHROPIC_MODEL")
     )
+
+    def validate_persistence(self) -> None:
+        backend = self.storage_backend.strip().lower()
+        if backend not in {"local", "postgres"}:
+            raise ValueError(
+                "TRUSTRAG_STORAGE_BACKEND must be either 'local' or 'postgres'"
+            )
+        if not self.tenant_id.strip():
+            raise ValueError("TRUSTRAG_TENANT_ID must not be empty")
+        if backend == "postgres" and not self.database_url:
+            raise ValueError(
+                "TRUSTRAG_STORAGE_BACKEND=postgres requires DATABASE_URL"
+            )
+        source_backend = self.source_store_backend.strip().lower()
+        if source_backend not in {"local", "s3"}:
+            raise ValueError("TRUSTRAG_SOURCE_STORE must be either 'local' or 's3'")
+        if source_backend == "s3" and not self.s3_bucket:
+            raise ValueError("TRUSTRAG_SOURCE_STORE=s3 requires TRUSTRAG_S3_BUCKET")
 
 
 def get_settings() -> Settings:

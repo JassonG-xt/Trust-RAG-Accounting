@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from ..review.models import ReviewAction, ReviewCheckpoint
+if TYPE_CHECKING:
+    from ..review.models import ReviewAction, ReviewCheckpoint
 
 
 @runtime_checkable

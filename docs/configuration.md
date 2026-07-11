@@ -13,6 +13,38 @@ Do not commit real `.env` files.
 | `APP_ENV` | `development` | Local environment label. |
 | `LOG_LEVEL` | `INFO` | Python logging level. |
 
+## Production Persistence
+
+Install the production adapters with `pip install -e '.[production]'` and run
+`alembic upgrade head` before selecting Postgres.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `TRUSTRAG_STORAGE_BACKEND` | `local` | `local` keeps JSON/JSONL; `postgres` enables durable review persistence. |
+| `DATABASE_URL` | unset | Required when the storage backend is `postgres`; use a `postgresql+psycopg://` URL in production. |
+| `TRUSTRAG_TENANT_ID` | `local` | Trusted single-organization storage scope. Never take this value from a query body. |
+| `TRUSTRAG_SOURCE_STORE` | `local` | `s3` enables immutable source-file storage for asynchronous indexing. |
+| `TRUSTRAG_S3_BUCKET` | unset | Required when source storage is `s3`. |
+| `TRUSTRAG_S3_ENDPOINT_URL` | unset | Optional S3-compatible endpoint such as MinIO. |
+| `TRUSTRAG_S3_REGION` | unset | Optional S3 region. Credentials use the standard AWS credential chain. |
+
+Legacy local stores can be imported idempotently after the schema migration:
+
+```bash
+trustrag-import-legacy \
+  --database-url "$DATABASE_URL" \
+  --tenant-id accounting-firm \
+  --generation-id initial-import \
+  --documents data/trustrag_documents.json \
+  --chunks data/trustrag_chunks.json \
+  --checkpoints data/review_queue.jsonl \
+  --actions data/review_actions.jsonl
+```
+
+Rerunning the command does not duplicate document checksums, chunk identities,
+review queue IDs, or action IDs. Keep the local files read-only until database
+counts and checksums have been verified.
+
 ## Document and Chunk Stores
 
 The ingestion CLI writes document and chunk stores to explicit output paths:

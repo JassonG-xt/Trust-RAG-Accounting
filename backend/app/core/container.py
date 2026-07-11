@@ -9,8 +9,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
+from ..persistence.objects import S3SourceObjectStore, SourceObjectStore
 from ..review import (
     LocalReviewActionStore,
     LocalReviewCheckpointStore,
@@ -21,6 +22,9 @@ from ..review import (
 from ..services.document_repository import DocumentRepository, get_repository
 from ..tracing import LocalTraceCollector, get_local_trace_collector
 from .config import Settings, get_settings
+
+if TYPE_CHECKING:
+    from sqlalchemy import Engine
 
 
 class DocumentCatalog(Protocol):
@@ -40,6 +44,7 @@ class ApplicationContainer:
     document_catalog: DocumentCatalog
     review_service: ReviewService
     trace_collector: LocalTraceCollector
+    source_object_store: SourceObjectStore | None = None
     _settings_provider: Callable[[], Settings] | None = field(default=None, repr=False)
     _document_catalog_provider: Callable[[], DocumentCatalog] | None = field(
         default=None, repr=False
@@ -74,7 +79,12 @@ def _build_current_review_service() -> ReviewService:
     return ReviewService(get_review_checkpoint_store(), get_review_action_store())
 
 
-def build_application_container(settings: Settings | None = None) -> ApplicationContainer:
+def build_application_container(
+    settings: Settings | None = None,
+    *,
+    engine: Engine | None = None,
+    s3_client: Any | None = None,
+) -> ApplicationContainer:
     """Build the local application implementation graph.
 
     With no explicit settings, reuse the legacy singletons so graph nodes and
@@ -82,8 +92,47 @@ def build_application_container(settings: Settings | None = None) -> Application
     settings create isolated adapters for tests and future factories.
     """
 
-    if settings is None:
-        current = get_settings()
+    current = settings or get_settings()
+    current.validate_persistence()
+    source_object_store: SourceObjectStore | None = None
+    if current.source_store_backend.strip().lower() == "s3":
+        source_object_store = S3SourceObjectStore(
+            bucket=current.s3_bucket or "",
+            endpoint_url=current.s3_endpoint_url,
+            region_name=current.s3_region,
+            client=s3_client,
+        )
+
+    if current.storage_backend.strip().lower() == "postgres":
+        from sqlalchemy import create_engine
+
+        from ..persistence.sqlalchemy import (
+            PostgresReviewActionRepository,
+            PostgresReviewCheckpointRepository,
+        )
+
+        database_engine = engine or create_engine(
+            current.database_url,
+            pool_pre_ping=True,
+        )
+        documents = DocumentRepository()
+        checkpoints = PostgresReviewCheckpointRepository(
+            database_engine,
+            tenant_id=current.tenant_id,
+        )
+        actions = PostgresReviewActionRepository(
+            database_engine,
+            tenant_id=current.tenant_id,
+        )
+        traces = LocalTraceCollector(
+            max_events=current.trustrag_trace_max_events,
+            include_content=current.trustrag_trace_include_content,
+        )
+        settings_provider = None
+        document_provider = None
+        review_provider = None
+        trace_provider = None
+    elif settings is None:
         documents: DocumentRepository = get_repository()
         checkpoints = get_review_checkpoint_store()
         actions = get_review_action_store()
@@ -118,6 +167,7 @@ def build_application_container(settings: Settings | None = None) -> Application
         document_catalog=documents,
         review_service=ReviewService(checkpoints, actions),
         trace_collector=traces,
+        source_object_store=source_object_store,
         _settings_provider=settings_provider,
         _document_catalog_provider=document_provider,
         _review_service_provider=review_provider,

@@ -2,11 +2,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
 
 from backend.app.core.config import Settings
 from backend.app.core.container import ApplicationContainer, build_application_container
 from backend.app.persistence import ReviewActionRepository, ReviewCheckpointRepository
+from backend.app.persistence.objects import S3SourceObjectStore
+from backend.app.persistence.sqlalchemy import (
+    PostgresReviewActionRepository,
+    PostgresReviewCheckpointRepository,
+    create_schema,
+)
 from backend.app.review import LocalReviewActionStore, LocalReviewCheckpointStore, ReviewService
 from backend.app.tracing import LocalTraceCollector
 
@@ -101,3 +109,44 @@ def test_default_container_uses_filesystem_review_adapters(tmp_path: Path) -> No
     assert isinstance(container.review_service._checkpoints, LocalReviewCheckpointStore)
     assert isinstance(container.review_service._actions, LocalReviewActionStore)
     assert container.settings is settings
+
+
+def test_postgres_container_uses_durable_review_adapters() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    settings = Settings(
+        storage_backend="postgres",
+        database_url="sqlite+pysqlite:///:memory:",
+        tenant_id="tenant-a",
+    )
+
+    container = build_application_container(settings, engine=engine)
+
+    assert isinstance(
+        container.review_service._checkpoints,
+        PostgresReviewCheckpointRepository,
+    )
+    assert isinstance(container.review_service._actions, PostgresReviewActionRepository)
+
+
+def test_postgres_storage_requires_database_url() -> None:
+    settings = Settings(storage_backend="postgres", database_url=None)
+
+    with pytest.raises(ValueError, match="DATABASE_URL"):
+        settings.validate_persistence()
+
+
+def test_s3_source_storage_requires_bucket() -> None:
+    settings = Settings(source_store_backend="s3", s3_bucket=None)
+
+    with pytest.raises(ValueError, match="S3_BUCKET"):
+        settings.validate_persistence()
+
+
+def test_container_builds_s3_source_store() -> None:
+    s3_client = object()
+    settings = Settings(source_store_backend="s3", s3_bucket="rag-sources")
+
+    container = build_application_container(settings, s3_client=s3_client)
+
+    assert isinstance(container.source_object_store, S3SourceObjectStore)
