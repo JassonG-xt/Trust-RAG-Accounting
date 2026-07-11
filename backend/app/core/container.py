@@ -33,6 +33,11 @@ from .config import Settings, get_settings
 if TYPE_CHECKING:
     from sqlalchemy import Engine
 
+    from ..indexing import (
+        PostgresIndexGenerationRepository,
+        PostgresIndexJobRepository,
+    )
+
 
 class DocumentCatalog(Protocol):
     """Read seam used by the HTTP document diagnostics."""
@@ -56,6 +61,8 @@ class ApplicationContainer:
     authorization_policy: AuthorizationPolicy = field(
         default_factory=AuthorizationPolicy
     )
+    index_jobs: PostgresIndexJobRepository | None = None
+    index_generations: PostgresIndexGenerationRepository | None = None
     _settings_provider: Callable[[], Settings] | None = field(default=None, repr=False)
     _document_catalog_provider: Callable[[], DocumentCatalog] | None = field(
         default=None, repr=False
@@ -135,6 +142,10 @@ def build_application_container(
     if current.storage_backend.strip().lower() == "postgres":
         from sqlalchemy import create_engine
 
+        from ..indexing import (
+            PostgresIndexGenerationRepository,
+            PostgresIndexJobRepository,
+        )
         from ..persistence.sqlalchemy import (
             PostgresReviewActionRepository,
             PostgresReviewCheckpointRepository,
@@ -144,12 +155,26 @@ def build_application_container(
             current.database_url,
             pool_pre_ping=True,
         )
-        documents = DocumentRepository()
+        from ..persistence.document_catalog import PostgresDocumentCatalog
+
+        documents = PostgresDocumentCatalog(
+            database_engine,
+            tenant_id=current.tenant_id,
+            settings=current,
+        )
         checkpoints = PostgresReviewCheckpointRepository(
             database_engine,
             tenant_id=current.tenant_id,
         )
         actions = PostgresReviewActionRepository(
+            database_engine,
+            tenant_id=current.tenant_id,
+        )
+        index_jobs = PostgresIndexJobRepository(
+            database_engine,
+            tenant_id=current.tenant_id,
+        )
+        index_generations = PostgresIndexGenerationRepository(
             database_engine,
             tenant_id=current.tenant_id,
         )
@@ -170,6 +195,8 @@ def build_application_container(
         document_provider: Callable[[], DocumentCatalog] | None = get_repository
         review_provider: Callable[[], ReviewService] | None = _build_current_review_service
         trace_provider: Callable[[], LocalTraceCollector] | None = get_local_trace_collector
+        index_jobs = None
+        index_generations = None
     else:
         current = settings
         documents = DocumentRepository()
@@ -190,6 +217,8 @@ def build_application_container(
         document_provider = None
         review_provider = None
         trace_provider = None
+        index_jobs = None
+        index_generations = None
 
     return ApplicationContainer(
         settings=current,
@@ -198,6 +227,8 @@ def build_application_container(
         trace_collector=traces,
         source_object_store=source_object_store,
         authenticator=authenticator,
+        index_jobs=index_jobs,
+        index_generations=index_generations,
         _settings_provider=settings_provider,
         _document_catalog_provider=document_provider,
         _review_service_provider=review_provider,

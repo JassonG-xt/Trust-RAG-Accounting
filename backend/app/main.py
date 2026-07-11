@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -37,6 +38,7 @@ from .evals.provider_benchmark_history import (
     list_provider_benchmark_history,
 )
 from .graph.workflow import run_query
+from .indexing import IndexGeneration, IndexJob, IndexJobSubmission
 from .request_context import bind_request_context
 from .review import (
     DEFAULT_LIMIT,
@@ -698,6 +700,83 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
             filters=filter_spec.as_dict(),
             actions=page,
         )
+
+    @app.post(
+        "/v1/admin/index/jobs",
+        response_model=IndexJob,
+        status_code=202,
+        tags=["admin"],
+    )
+    def submit_index_job(request: IndexJobSubmission) -> IndexJob:
+        if container.index_jobs is None:
+            raise HTTPException(status_code=503, detail="index job storage unavailable")
+        return container.index_jobs.submit(**request.model_dump())
+
+    @app.post(
+        "/v1/admin/index/jobs/upload",
+        response_model=IndexJob,
+        status_code=202,
+        tags=["admin"],
+    )
+    async def upload_index_source(
+        http_request: Request,
+        file: Annotated[UploadFile, File()],
+        idempotency_key: Annotated[str, Form()],
+        metadata_json: Annotated[str, Form()] = "{}",
+    ) -> IndexJob:
+        if container.index_jobs is None or container.source_object_store is None:
+            raise HTTPException(status_code=503, detail="production indexing unavailable")
+        filename = Path(file.filename or "").name
+        if Path(filename).suffix.lower() not in {".md", ".pdf", ".docx"}:
+            raise HTTPException(status_code=422, detail="unsupported document format")
+        try:
+            metadata = json.loads(metadata_json)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail="metadata_json is invalid") from exc
+        if not isinstance(metadata, dict):
+            raise HTTPException(status_code=422, detail="metadata_json must be an object")
+        content = await file.read()
+        principal: RequestPrincipal = http_request.state.principal
+        stored = container.source_object_store.put(
+            tenant_id=principal.tenant_id,
+            filename=filename,
+            content=content,
+            content_type=file.content_type or "application/octet-stream",
+        )
+        return container.index_jobs.submit(
+            operation="upsert",
+            idempotency_key=idempotency_key,
+            source_uri=stored.uri,
+            document_id=metadata.get("document_id") or Path(filename).stem,
+            payload={
+                "filename": filename,
+                "metadata": metadata,
+                "checksum": stored.checksum,
+            },
+        )
+
+    @app.get(
+        "/v1/admin/index/jobs/{job_id}",
+        response_model=IndexJob,
+        tags=["admin"],
+    )
+    def get_index_job(job_id: str) -> IndexJob:
+        if container.index_jobs is None:
+            raise HTTPException(status_code=503, detail="index job storage unavailable")
+        job = container.index_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="index job not found")
+        return job
+
+    @app.get(
+        "/v1/admin/index/generations",
+        response_model=list[IndexGeneration],
+        tags=["admin"],
+    )
+    def list_index_generations() -> list[IndexGeneration]:
+        if container.index_generations is None:
+            raise HTTPException(status_code=503, detail="index generation storage unavailable")
+        return container.index_generations.list_generations()
 
     return app
 

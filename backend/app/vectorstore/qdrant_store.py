@@ -31,7 +31,6 @@ from typing import Any
 
 from .models import VectorRecord, VectorSearchResult
 
-
 _INSTALL_HINT = (
     "qdrant-client is not installed. Install the optional extra:\n"
     "    pip install 'trust-rag[qdrant]'\n"
@@ -128,6 +127,49 @@ class QdrantVectorStore:
             )
             for point in raw
         ]
+
+    def delete(
+        self,
+        *,
+        ids: list[str] | None = None,
+        payload_filter: dict[str, Any] | None = None,
+    ) -> int:
+        if ids is None and payload_filter is None:
+            raise ValueError("delete requires ids or payload_filter")
+        try:
+            from qdrant_client.http.models import (  # type: ignore[import-not-found]
+                FilterSelector,
+                PointIdsList,
+            )
+        except ImportError as exc:  # pragma: no cover
+            raise ImportError(_INSTALL_HINT) from exc
+
+        if ids is not None:
+            selector = PointIdsList(points=ids)
+            deleted_count = len(ids)
+        else:
+            selector = FilterSelector(filter=_payload_filter_to_qdrant(payload_filter))
+            deleted_count = self.count(payload_filter)
+        self._client.delete(
+            collection_name=self._collection_name,
+            points_selector=selector,
+        )
+        return deleted_count
+
+    def count(self, payload_filter: dict[str, Any] | None = None) -> int:
+        result = self._client.count(
+            collection_name=self._collection_name,
+            count_filter=_payload_filter_to_qdrant(payload_filter),
+            exact=True,
+        )
+        return int(result.count)
+
+    def health(self) -> bool:
+        try:
+            self._client.get_collection(collection_name=self._collection_name)
+        except Exception:
+            return False
+        return True
 
 
 # ---------------------------------------------------------------------------

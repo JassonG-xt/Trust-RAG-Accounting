@@ -25,9 +25,10 @@ The function is pure — no IO, no state.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from ..retrieval.models import MetadataFilter
+if TYPE_CHECKING:
+    from ..retrieval.models import MetadataFilter
 
 
 def metadata_filter_to_payload_filter(

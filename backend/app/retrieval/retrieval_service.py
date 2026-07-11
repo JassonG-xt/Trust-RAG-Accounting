@@ -77,6 +77,8 @@ class RetrievalService:
         embedding_provider: EmbeddingProvider | None = None,
         vector_store: VectorStore | None = None,
         reranker: Any | None = None,
+        secure_payload_filter: dict[str, Any] | None = None,
+        index_vectors: bool = True,
     ) -> None:
         self._chunks: list[DocumentChunk] = list(chunks)
         self._chunk_by_doc_index: dict[tuple[str, int], DocumentChunk] = {
@@ -104,6 +106,8 @@ class RetrievalService:
                     self._chunks,
                     embedding_provider=provider,
                     vector_store=store,
+                    secure_payload_filter=secure_payload_filter,
+                    index_chunks=index_vectors,
                 )
             except Exception:
                 if self._is_production():

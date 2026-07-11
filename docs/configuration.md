@@ -59,6 +59,18 @@ counts and checksums have been verified.
 The backend accepts RS256 bearer tokens only. Reviewer identity is always the
 verified JWT `sub`; the deprecated `reviewer` request field is ignored.
 
+## Index Worker
+
+The production worker requires Postgres, S3, Qdrant and a configured embedding
+provider. After running migrations, start it independently from the API:
+
+```bash
+trustrag-index-worker
+```
+
+Use `trustrag-index-worker --once` for cron jobs, deployment checks, or manual
+queue draining. See [production_indexing.md](production_indexing.md).
+
 ## Document and Chunk Stores
 
 The ingestion CLI writes document and chunk stores to explicit output paths:
