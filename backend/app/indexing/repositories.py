@@ -270,6 +270,24 @@ class PostgresIndexGenerationRepository:
             )
         return self.get_required(generation_id)
 
+    def mark_discarded(self, generation_id: str, *, reason: str) -> IndexGeneration:
+        with self._engine.begin() as connection:
+            connection.execute(
+                update(index_generations)
+                .where(
+                    and_(
+                        index_generations.c.tenant_id == self._tenant_id,
+                        index_generations.c.generation_id == generation_id,
+                        index_generations.c.status == "staging",
+                    )
+                )
+                .values(
+                    status="discarded",
+                    metadata_json={"reason": reason[:1000]},
+                )
+            )
+        return self.get_required(generation_id)
+
     def get_active(self) -> IndexGeneration | None:
         with self._engine.connect() as connection:
             row = connection.execute(

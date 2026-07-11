@@ -51,6 +51,7 @@ def build_production_coordinator(settings: Settings) -> IndexingCoordinator:
         collection_name=settings.qdrant_collection,
         dimension=embedding_provider.dimension,
     )
+    vector_store.ensure_collection()
     jobs = PostgresIndexJobRepository(engine, tenant_id=settings.tenant_id)
     generations = PostgresIndexGenerationRepository(
         engine,

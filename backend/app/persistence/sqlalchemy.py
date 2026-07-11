@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from pydantic import BaseModel
 from sqlalchemy import Engine, and_, delete, insert, select
 
 from ..review.models import ReviewAction, ReviewCheckpoint
-from .schema import metadata, review_actions, review_checkpoints
+from .schema import evaluation_runs, metadata, review_actions, review_checkpoints
 
 
 class ReviewTransitionConflictError(RuntimeError):
@@ -16,6 +17,97 @@ def create_schema(engine: Engine) -> None:
     """Create the current schema for tests and local development."""
 
     metadata.create_all(engine)
+
+
+class EvaluationRunRecord(BaseModel):
+    tenant_id: str
+    run_id: str
+    run_type: str
+    created_at: str
+    artifact_uri: str | None = None
+    summary: dict
+
+
+class PostgresEvaluationRepository:
+    """Tenant-scoped compact evaluation history archive."""
+
+    def __init__(self, engine: Engine, *, tenant_id: str) -> None:
+        self._engine = engine
+        self._tenant_id = tenant_id
+
+    def archive(
+        self,
+        *,
+        run_id: str,
+        run_type: str,
+        created_at: str,
+        summary: dict,
+        artifact_uri: str | None = None,
+    ) -> EvaluationRunRecord:
+        with self._engine.begin() as connection:
+            existing = connection.execute(
+                select(evaluation_runs).where(
+                    and_(
+                        evaluation_runs.c.tenant_id == self._tenant_id,
+                        evaluation_runs.c.run_id == run_id,
+                    )
+                )
+            ).mappings().one_or_none()
+            if existing is not None:
+                return self._model(existing)
+            values = {
+                "tenant_id": self._tenant_id,
+                "run_id": run_id,
+                "run_type": run_type,
+                "created_at": created_at,
+                "artifact_uri": artifact_uri,
+                "summary": dict(summary),
+            }
+            connection.execute(insert(evaluation_runs).values(**values))
+            return self._model(values)
+
+    def latest(self, run_type: str) -> EvaluationRunRecord | None:
+        with self._engine.connect() as connection:
+            row = connection.execute(
+                select(evaluation_runs)
+                .where(
+                    and_(
+                        evaluation_runs.c.tenant_id == self._tenant_id,
+                        evaluation_runs.c.run_type == run_type,
+                    )
+                )
+                .order_by(
+                    evaluation_runs.c.created_at.desc(),
+                    evaluation_runs.c.run_id.desc(),
+                )
+                .limit(1)
+            ).mappings().one_or_none()
+        return self._model(row) if row is not None else None
+
+    def list_runs(
+        self,
+        *,
+        run_type: str | None = None,
+        limit: int | None = None,
+    ) -> list[EvaluationRunRecord]:
+        statement = select(evaluation_runs).where(
+            evaluation_runs.c.tenant_id == self._tenant_id
+        )
+        if run_type is not None:
+            statement = statement.where(evaluation_runs.c.run_type == run_type)
+        statement = statement.order_by(
+            evaluation_runs.c.created_at.desc(),
+            evaluation_runs.c.run_id.desc(),
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
+        with self._engine.connect() as connection:
+            rows = connection.execute(statement).mappings()
+            return [self._model(row) for row in rows]
+
+    @staticmethod
+    def _model(row) -> EvaluationRunRecord:
+        return EvaluationRunRecord.model_validate(dict(row))
 
 
 class PostgresReviewCheckpointRepository:

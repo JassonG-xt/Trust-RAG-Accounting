@@ -65,6 +65,32 @@ def test_qdrant_store_exposes_delete_count_and_health() -> None:
     assert store.health()
 
 
+class _CollectionClient:
+    def __init__(self) -> None:
+        self.created = None
+
+    def collection_exists(self, collection_name: str) -> bool:
+        return False
+
+    def create_collection(self, **kwargs) -> None:
+        self.created = kwargs
+
+
+def test_qdrant_store_creates_missing_collection_with_expected_dimension() -> None:
+    client = _CollectionClient()
+    store = QdrantVectorStore(
+        url="",
+        collection_name="chunks",
+        dimension=1024,
+        client=client,
+    )
+
+    store.ensure_collection()
+
+    assert client.created["collection_name"] == "chunks"
+    assert client.created["vectors_config"].size == 1024
+
+
 class _CapturingStore(InMemoryVectorStore):
     def __init__(self) -> None:
         super().__init__(dimension=2)

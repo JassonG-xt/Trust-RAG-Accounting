@@ -86,6 +86,36 @@ class QdrantVectorStore:
     def dimension(self) -> int:
         return self._dimension
 
+    def ensure_collection(self) -> None:
+        try:
+            from qdrant_client.http.models import (  # type: ignore[import-not-found]
+                Distance,
+                VectorParams,
+            )
+        except ImportError as exc:  # pragma: no cover
+            raise ImportError(_INSTALL_HINT) from exc
+
+        if not self._client.collection_exists(self._collection_name):
+            self._client.create_collection(
+                collection_name=self._collection_name,
+                vectors_config=VectorParams(
+                    size=self._dimension,
+                    distance=Distance.COSINE,
+                ),
+            )
+            return
+
+        info = self._client.get_collection(collection_name=self._collection_name)
+        vectors = info.config.params.vectors
+        configured_size = getattr(vectors, "size", None)
+        if configured_size is None and isinstance(vectors, dict) and len(vectors) == 1:
+            configured_size = getattr(next(iter(vectors.values())), "size", None)
+        if configured_size != self._dimension:
+            raise RuntimeError(
+                f"Qdrant collection dimension {configured_size!r} does not match "
+                f"configured dimension {self._dimension}"
+            )
+
     def upsert(self, records: list[VectorRecord]) -> None:
         # Lazy import keeps the default install free of qdrant deps.
         try:

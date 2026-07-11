@@ -16,7 +16,7 @@ from ..services.document_repository import (
     _scored_chunk_to_evidence_dict,
 )
 from ..vectorstore import VectorStore
-from .schema import document_chunks, document_versions, documents, index_generations
+from .schema import document_chunks, index_generations
 
 
 class PostgresDocumentCatalog:
@@ -114,8 +114,8 @@ class PostgresDocumentCatalog:
             if self._retrieval is not None and active_generation == self._generation_id:
                 return
             self._generation_id = active_generation
-            self._documents = self._load_documents_from_database()
             self._chunks = self._load_chunks_from_database(active_generation)
+            self._documents = self._documents_from_chunks(self._chunks)
             self._retrieval = RetrievalService(
                 self._chunks,
                 settings=self._settings,
@@ -145,32 +145,32 @@ class PostgresDocumentCatalog:
                 .limit(1)
             ).scalar_one_or_none()
 
-    def _load_documents_from_database(self) -> list[AccountingDocument]:
-        statement = (
-            select(document_versions.c.metadata_json)
-            .select_from(
-                documents.join(
-                    document_versions,
-                    and_(
-                        documents.c.tenant_id == document_versions.c.tenant_id,
-                        documents.c.current_version_id == document_versions.c.version_id,
-                    ),
-                )
+    @staticmethod
+    def _documents_from_chunks(
+        chunks: list[DocumentChunk],
+    ) -> list[AccountingDocument]:
+        documents_by_id: dict[str, AccountingDocument] = {}
+        for chunk in chunks:
+            if chunk.document_id in documents_by_id:
+                continue
+            documents_by_id[chunk.document_id] = AccountingDocument(
+                document_id=chunk.document_id,
+                title=chunk.title,
+                version=chunk.version,
+                valid_from=chunk.valid_from,
+                valid_to=chunk.valid_to,
+                document_type=chunk.document_type,
+                client=chunk.client,
+                policy_family=chunk.policy_family,
+                replaces=chunk.replaces,
+                risk_type=chunk.risk_type,
+                is_malicious=chunk.is_malicious,
+                source_path=chunk.source_path,
+                content="",
+                checksum=chunk.checksum,
+                metadata=dict(chunk.metadata),
             )
-            .where(
-                and_(
-                    documents.c.tenant_id == self._tenant_id,
-                    documents.c.tombstoned.is_(False),
-                )
-            )
-            .order_by(documents.c.document_id)
-        )
-        with self._engine.connect() as connection:
-            rows = connection.execute(statement).scalars()
-            return [
-                AccountingDocument.model_validate({**dict(row), "content": ""})
-                for row in rows
-            ]
+        return [documents_by_id[key] for key in sorted(documents_by_id)]
 
     def _load_chunks_from_database(
         self,

@@ -17,6 +17,7 @@ from backend.app.persistence.schema import (
     documents,
 )
 from backend.app.persistence.sqlalchemy import (
+    PostgresEvaluationRepository,
     PostgresReviewActionRepository,
     PostgresReviewCheckpointRepository,
     ReviewTransitionConflictError,
@@ -102,6 +103,30 @@ def test_checkpoint_append_is_idempotent(engine: Engine) -> None:
     repository.append(checkpoint)
 
     assert repository.list_entries() == [checkpoint]
+
+
+def test_evaluation_repository_archives_tenant_scoped_history(engine: Engine) -> None:
+    tenant_a = PostgresEvaluationRepository(engine, tenant_id="tenant-a")
+    tenant_b = PostgresEvaluationRepository(engine, tenant_id="tenant-b")
+
+    tenant_a.archive(
+        run_id="eval-1",
+        run_type="accounting",
+        created_at="2026-07-11T00:00:00+00:00",
+        summary={"score": 1.0, "passed": 29},
+        artifact_uri="s3://artifacts/eval-1.json",
+    )
+    tenant_a.archive(
+        run_id="eval-1",
+        run_type="accounting",
+        created_at="2026-07-11T00:00:00+00:00",
+        summary={"score": 1.0, "passed": 29},
+        artifact_uri="s3://artifacts/eval-1.json",
+    )
+
+    assert tenant_a.latest("accounting").run_id == "eval-1"
+    assert len(tenant_a.list_runs()) == 1
+    assert tenant_b.latest("accounting") is None
 
 
 def test_action_append_rejects_stale_previous_status(engine: Engine) -> None:

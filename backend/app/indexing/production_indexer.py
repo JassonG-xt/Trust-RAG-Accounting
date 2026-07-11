@@ -45,10 +45,32 @@ class ProductionDocumentIndexer:
         chunks = self._load_active_chunks()
         if job.operation == "upsert":
             document = self._load_uploaded_document(job)
+            active_generation = self._active_generation_id()
+            if (
+                active_generation is not None
+                and self._current_checksum(document.document_id) == document.checksum
+            ):
+                vector_count = self._vector_store.count(
+                    {
+                        "tenant_id": self._tenant_id,
+                        "generation_id": active_generation,
+                    }
+                )
+                return IndexBuildResult(
+                    catalog_count=len(chunks),
+                    vector_count=vector_count,
+                    lexical_count=len(chunks),
+                    no_op=True,
+                )
             new_chunks = chunk_documents([document])
             chunks = [chunk for chunk in chunks if chunk.document_id != document.document_id]
+            version_id = self._upsert_document(
+                document,
+                source_uri=job.source_uri or "",
+            )
+            for chunk in new_chunks:
+                chunk.metadata["_version_id"] = version_id
             chunks.extend(new_chunks)
-            self._upsert_document(document, source_uri=job.source_uri or "")
         elif job.operation == "delete":
             if not job.document_id:
                 raise ValueError("delete index job requires document_id")
@@ -69,6 +91,43 @@ class ProductionDocumentIndexer:
             vector_count=vector_count,
             lexical_count=len(chunks),
         )
+
+    def _active_generation_id(self) -> str | None:
+        with self._engine.connect() as connection:
+            return connection.execute(
+                select(index_generations.c.generation_id)
+                .where(
+                    and_(
+                        index_generations.c.tenant_id == self._tenant_id,
+                        index_generations.c.status == "active",
+                    )
+                )
+                .order_by(index_generations.c.activated_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+
+    def _current_checksum(self, document_id: str) -> str | None:
+        with self._engine.connect() as connection:
+            return connection.execute(
+                select(document_versions.c.checksum)
+                .select_from(
+                    documents.join(
+                        document_versions,
+                        and_(
+                            documents.c.tenant_id == document_versions.c.tenant_id,
+                            documents.c.current_version_id
+                            == document_versions.c.version_id,
+                        ),
+                    )
+                )
+                .where(
+                    and_(
+                        documents.c.tenant_id == self._tenant_id,
+                        documents.c.document_id == document_id,
+                        documents.c.tombstoned.is_(False),
+                    )
+                )
+            ).scalar_one_or_none()
 
     def _load_uploaded_document(self, job: IndexJob) -> AccountingDocument:
         if not job.source_uri:
@@ -93,22 +152,16 @@ class ProductionDocumentIndexer:
         return loaded[0]
 
     def _load_active_chunks(self) -> list[DocumentChunk]:
+        active = self._active_generation_id()
+        if active is None:
+            return []
         with self._engine.connect() as connection:
-            active = connection.execute(
-                select(index_generations.c.generation_id)
-                .where(
-                    and_(
-                        index_generations.c.tenant_id == self._tenant_id,
-                        index_generations.c.status == "active",
-                    )
-                )
-                .order_by(index_generations.c.activated_at.desc())
-                .limit(1)
-            ).scalar_one_or_none()
-            if active is None:
-                return []
             rows = connection.execute(
-                select(document_chunks.c.metadata_json, document_chunks.c.content)
+                select(
+                    document_chunks.c.metadata_json,
+                    document_chunks.c.content,
+                    document_chunks.c.version_id,
+                )
                 .where(
                     and_(
                         document_chunks.c.tenant_id == self._tenant_id,
@@ -117,12 +170,22 @@ class ProductionDocumentIndexer:
                 )
                 .order_by(document_chunks.c.document_id, document_chunks.c.position)
             ).all()
-        return [
-            DocumentChunk.model_validate({**dict(metadata), "content": content})
-            for metadata, content in rows
-        ]
+        chunks: list[DocumentChunk] = []
+        for metadata, content, version_id in rows:
+            payload = dict(metadata)
+            payload["metadata"] = {
+                **dict(payload.get("metadata") or {}),
+                "_version_id": version_id,
+            }
+            chunks.append(DocumentChunk.model_validate({**payload, "content": content}))
+        return chunks
 
-    def _upsert_document(self, document: AccountingDocument, *, source_uri: str) -> None:
+    def _upsert_document(
+        self,
+        document: AccountingDocument,
+        *,
+        source_uri: str,
+    ) -> str:
         version_id = f"{document.document_id}:{document.checksum}"
         metadata = document.model_dump(mode="json", exclude={"content"})
         with self._engine.begin() as connection:
@@ -185,6 +248,7 @@ class ProductionDocumentIndexer:
                         created_at=document.ingested_at,
                     )
                 )
+        return version_id
 
     def _tombstone_document(self, document_id: str) -> None:
         with self._engine.begin() as connection:
@@ -216,14 +280,16 @@ class ProductionDocumentIndexer:
                 )
             )
             for chunk in chunks:
-                version_id = connection.execute(
-                    select(documents.c.current_version_id).where(
-                        and_(
-                            documents.c.tenant_id == self._tenant_id,
-                            documents.c.document_id == chunk.document_id,
+                version_id = chunk.metadata.get("_version_id")
+                if not version_id:
+                    version_id = connection.execute(
+                        select(documents.c.current_version_id).where(
+                            and_(
+                                documents.c.tenant_id == self._tenant_id,
+                                documents.c.document_id == chunk.document_id,
+                            )
                         )
-                    )
-                ).scalar_one()
+                    ).scalar_one()
                 connection.execute(
                     insert(document_chunks).values(
                         tenant_id=self._tenant_id,

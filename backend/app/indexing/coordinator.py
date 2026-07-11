@@ -20,6 +20,7 @@ class IndexBuildResult:
     catalog_count: int
     vector_count: int
     lexical_count: int
+    no_op: bool = False
 
     @property
     def is_consistent(self) -> bool:
@@ -70,6 +71,22 @@ class IndexingCoordinator:
                         f"vector={result.vector_count}, "
                         f"lexical={result.lexical_count}"
                     )
+                if result.no_op:
+                    self._generations.mark_discarded(
+                        generation.generation_id,
+                        reason="source checksum unchanged",
+                    )
+                    completed = self._jobs.succeed(job.job_id)
+                    self._telemetry.increment(
+                        "index.jobs.succeeded",
+                        attributes={"operation": job.operation, "result": "no_op"},
+                    )
+                    self._telemetry.record(
+                        "index.job.attempt_count",
+                        float(completed.attempt_count),
+                        attributes={"status": completed.status},
+                    )
+                    return completed
                 self._generations.activate(generation.generation_id)
                 completed = self._jobs.succeed(job.job_id)
                 self._telemetry.increment(

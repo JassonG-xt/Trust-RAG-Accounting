@@ -68,6 +68,14 @@ class _Telemetry:
         self.histograms.append((name, value, dict(attributes or {})))
 
 
+class _DriftingVectorStore(InMemoryVectorStore):
+    force_mismatch = False
+
+    def count(self, payload_filter=None) -> int:
+        actual = super().count(payload_filter)
+        return max(0, actual - 1) if self.force_mismatch else actual
+
+
 class _Documents:
     source = "index-test"
 
@@ -255,7 +263,7 @@ document_type: tax_policy_note
 ---
 small taxpayer VAT rule
 """
-    vectors = InMemoryVectorStore(dimension=8)
+    vectors = _DriftingVectorStore(dimension=8)
     jobs = PostgresIndexJobRepository(engine, tenant_id="tenant-a")
     generations = PostgresIndexGenerationRepository(engine, tenant_id="tenant-a")
     indexer = ProductionDocumentIndexer(
@@ -288,6 +296,44 @@ small taxpayer VAT rule
         {"tenant_id": "tenant-a", "generation_id": completed.generation_id}
     ) == 1
     assert all(str(uuid.UUID(point_id)) == point_id for point_id in vectors._records)
+
+    coordinator.submit(
+        operation="upsert",
+        idempotency_key="upload-same-content",
+        source_uri="s3://sources/tenant-a/policy.md",
+        document_id="policy-1",
+        payload={"filename": "policy.md", "metadata": {}},
+    )
+    no_op = coordinator.process_next(worker_id="worker-1")
+
+    assert no_op and no_op.status == "succeeded"
+    assert generations.get_active().generation_id == completed.generation_id
+
+    source_store.last_content = source_store.last_content.replace(
+        b"version: '1.0'",
+        b"version: '2.0'",
+    ).replace(b"small taxpayer VAT rule", b"replacement VAT rule")
+    vectors.force_mismatch = True
+    coordinator.submit(
+        operation="upsert",
+        idempotency_key="upload-2",
+        source_uri="s3://sources/tenant-a/policy.md",
+        document_id="policy-1",
+        payload={"filename": "policy.md", "metadata": {}},
+    )
+    failed_update = coordinator.process_next(worker_id="worker-1")
+    restarted_catalog = PostgresDocumentCatalog(
+        engine,
+        tenant_id="tenant-a",
+        settings=Settings(retrieval_enable_vector=False, reranker_provider="none"),
+    )
+
+    assert failed_update and failed_update.status == "failed"
+    assert restarted_catalog.describe()[0]["version"] == "1.0"
+    assert restarted_catalog.search("small taxpayer VAT", top_k=1)[0]["doc_id"] == (
+        "policy-1"
+    )
+    vectors.force_mismatch = False
 
     coordinator.submit(
         operation="delete",
