@@ -21,6 +21,7 @@ def upgrade() -> None:
         sa.Column("tenant_id", sa.String(128), primary_key=True),
         sa.Column("document_id", sa.String(255), primary_key=True),
         sa.Column("current_version_id", sa.String(255)),
+        sa.Column("staging_generation_id", sa.String(255)),
         sa.Column("title", sa.Text(), nullable=False),
         sa.Column("document_type", sa.String(128), nullable=False),
         sa.Column("client", sa.String(255)),
@@ -38,6 +39,7 @@ def upgrade() -> None:
         sa.Column("checksum", sa.String(128), nullable=False),
         sa.Column("source_uri", sa.Text(), nullable=False),
         sa.Column("parse_status", sa.String(32), nullable=False),
+        sa.Column("staging_generation_id", sa.String(255)),
         sa.Column("metadata_json", sa.JSON(), nullable=False),
         sa.Column("created_at", sa.String(64), nullable=False),
         sa.ForeignKeyConstraint(

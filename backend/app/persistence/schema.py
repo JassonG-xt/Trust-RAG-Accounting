@@ -24,6 +24,7 @@ documents = Table(
     Column("tenant_id", String(128), primary_key=True),
     Column("document_id", String(255), primary_key=True),
     Column("current_version_id", String(255)),
+    Column("staging_generation_id", String(255)),
     Column("title", Text, nullable=False),
     Column("document_type", String(128), nullable=False),
     Column("client", String(255)),
@@ -43,6 +44,7 @@ document_versions = Table(
     Column("checksum", String(128), nullable=False),
     Column("source_uri", Text, nullable=False),
     Column("parse_status", String(32), nullable=False),
+    Column("staging_generation_id", String(255)),
     Column("metadata_json", JSON, nullable=False, default=dict),
     Column("created_at", String(64), nullable=False),
     ForeignKeyConstraint(

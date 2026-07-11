@@ -25,6 +25,7 @@ from backend.app.indexing import (
     ProductionDocumentIndexer,
 )
 from backend.app.indexing.worker import run_worker_once
+from backend.app.ingestion import AccountingDocument
 from backend.app.main import create_app
 from backend.app.persistence import StoredObject
 from backend.app.persistence.document_catalog import PostgresDocumentCatalog
@@ -779,6 +780,45 @@ small taxpayer VAT rule
     with engine.connect() as connection:
         assert connection.execute(documents.select()).all() == []
         assert connection.execute(document_versions.select()).all() == []
+
+
+def test_stale_generation_cleanup_does_not_delete_new_attempt_projection(
+    engine: Engine,
+) -> None:
+    indexer = ProductionDocumentIndexer(
+        engine,
+        tenant_id="tenant-a",
+        source_store=_SourceStore(),
+        embedding_provider=MockEmbeddingProvider(dimension=8),
+        vector_store=InMemoryVectorStore(dimension=8),
+    )
+    document = AccountingDocument(
+        document_id="policy-1",
+        title="VAT Policy",
+        version="1.0",
+        document_type="tax_policy_note",
+        source_path="policy.md",
+        content="small taxpayer VAT rule",
+        checksum="document-checksum",
+    )
+
+    indexer._stage_document_version(
+        document,
+        source_uri="s3://sources/tenant-a/policy.md",
+        generation_id="generation-a",
+    )
+    indexer._stage_document_version(
+        document,
+        source_uri="s3://sources/tenant-a/policy.md",
+        generation_id="generation-b",
+    )
+    indexer.discard_generation("generation-a")
+
+    with engine.connect() as connection:
+        document_row = connection.execute(documents.select()).one()
+        version_row = connection.execute(document_versions.select()).one()
+        assert document_row.staging_generation_id == "generation-b"
+        assert version_row.staging_generation_id == "generation-b"
 
 
 def test_worker_once_processes_one_durable_job(engine: Engine) -> None:

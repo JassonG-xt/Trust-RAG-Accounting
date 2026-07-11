@@ -5,7 +5,12 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import Engine, and_, insert, or_, select, text, update
 
-from ..persistence.schema import documents, index_generations, index_jobs
+from ..persistence.schema import (
+    document_versions,
+    documents,
+    index_generations,
+    index_jobs,
+)
 from .models import IndexGeneration, IndexJob
 
 
@@ -271,6 +276,7 @@ class PostgresIndexJobRepository:
                     )
                     .values(
                         current_version_id=document_projection["version_id"],
+                        staging_generation_id=None,
                         title=document_projection["title"],
                         document_type=document_projection["document_type"],
                         client=document_projection["client"],
@@ -283,6 +289,17 @@ class PostgresIndexJobRepository:
                     raise KeyError(
                         f"document {document_projection['document_id']!r} not found"
                     )
+                connection.execute(
+                    update(document_versions)
+                    .where(
+                        and_(
+                            document_versions.c.tenant_id == self._tenant_id,
+                            document_versions.c.version_id
+                            == document_projection["version_id"],
+                        )
+                    )
+                    .values(staging_generation_id=None)
+                )
             if tombstone_document_id is not None:
                 tombstone_result = connection.execute(
                     update(documents)

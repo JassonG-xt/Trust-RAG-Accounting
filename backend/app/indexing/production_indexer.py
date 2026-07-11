@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import yaml
-from sqlalchemy import Engine, and_, delete, insert, select
+from sqlalchemy import Engine, and_, delete, insert, select, update
 
 from ..embeddings import EmbeddingProvider
 from ..ingestion import AccountingDocument, DocumentChunk, chunk_documents
@@ -73,6 +73,7 @@ class ProductionDocumentIndexer:
             version_id = self._stage_document_version(
                 document,
                 source_uri=job.source_uri or "",
+                generation_id=generation_id,
             )
             document_projection = {
                 "document_id": document.document_id,
@@ -124,6 +125,29 @@ class ProductionDocumentIndexer:
                 )
                 .distinct()
             ).all()
+            owned_documents = set(
+                connection.execute(
+                    select(documents.c.document_id).where(
+                        and_(
+                            documents.c.tenant_id == self._tenant_id,
+                            documents.c.staging_generation_id == generation_id,
+                        )
+                    )
+                ).scalars()
+            )
+            owned_versions = list(
+                connection.execute(
+                    select(
+                        document_versions.c.document_id,
+                        document_versions.c.version_id,
+                    ).where(
+                        and_(
+                            document_versions.c.tenant_id == self._tenant_id,
+                            document_versions.c.staging_generation_id == generation_id,
+                        )
+                    )
+                ).all()
+            )
             connection.execute(
                 delete(document_chunks).where(
                     and_(
@@ -133,17 +157,24 @@ class ProductionDocumentIndexer:
                 )
             )
             versions_by_document: dict[str, set[str]] = {}
-            for document_id, version_id in staged_rows:
+            for document_id, version_id in [*staged_rows, *owned_versions]:
                 versions_by_document.setdefault(document_id, set()).add(version_id)
-            for document_id, staged_versions in versions_by_document.items():
-                current_version_id = connection.execute(
-                    select(documents.c.current_version_id).where(
+            document_ids = set(versions_by_document) | owned_documents
+            for document_id in document_ids:
+                document_state = connection.execute(
+                    select(
+                        documents.c.current_version_id,
+                        documents.c.staging_generation_id,
+                    ).where(
                         and_(
                             documents.c.tenant_id == self._tenant_id,
                             documents.c.document_id == document_id,
                         )
                     )
-                ).scalar_one_or_none()
+                ).one_or_none()
+                if document_state is None:
+                    continue
+                current_version_id, document_owner = document_state
                 remaining_chunk = connection.execute(
                     select(document_chunks.c.chunk_id)
                     .where(
@@ -154,12 +185,18 @@ class ProductionDocumentIndexer:
                     )
                     .limit(1)
                 ).scalar_one_or_none()
-                if current_version_id is None and remaining_chunk is None:
+                if (
+                    current_version_id is None
+                    and remaining_chunk is None
+                    and document_owner == generation_id
+                ):
                     connection.execute(
                         delete(document_versions).where(
                             and_(
                                 document_versions.c.tenant_id == self._tenant_id,
                                 document_versions.c.document_id == document_id,
+                                document_versions.c.staging_generation_id
+                                == generation_id,
                             )
                         )
                     )
@@ -168,11 +205,12 @@ class ProductionDocumentIndexer:
                             and_(
                                 documents.c.tenant_id == self._tenant_id,
                                 documents.c.document_id == document_id,
+                                documents.c.staging_generation_id == generation_id,
                             )
                         )
                     )
                     continue
-                for version_id in staged_versions:
+                for version_id in versions_by_document.get(document_id, set()):
                     referenced = connection.execute(
                         select(document_chunks.c.chunk_id)
                         .where(
@@ -189,6 +227,8 @@ class ProductionDocumentIndexer:
                                 and_(
                                     document_versions.c.tenant_id == self._tenant_id,
                                     document_versions.c.version_id == version_id,
+                                    document_versions.c.staging_generation_id
+                                    == generation_id,
                                 )
                             )
                         )
@@ -298,24 +338,29 @@ class ProductionDocumentIndexer:
         document: AccountingDocument,
         *,
         source_uri: str,
+        generation_id: str,
     ) -> str:
         version_id = f"{document.document_id}:{document.checksum}"
         metadata = document.model_dump(mode="json", exclude={"content"})
         with self._engine.begin() as connection:
-            exists = connection.execute(
-                select(documents.c.document_id).where(
+            existing_document = connection.execute(
+                select(
+                    documents.c.document_id,
+                    documents.c.current_version_id,
+                ).where(
                     and_(
                         documents.c.tenant_id == self._tenant_id,
                         documents.c.document_id == document.document_id,
                     )
                 )
-            ).scalar_one_or_none()
-            if exists is None:
+            ).mappings().one_or_none()
+            if existing_document is None:
                 connection.execute(
                     insert(documents).values(
                         tenant_id=self._tenant_id,
                         document_id=document.document_id,
                         current_version_id=None,
+                        staging_generation_id=generation_id,
                         title=document.title,
                         document_type=document.document_type,
                         client=document.client,
@@ -325,6 +370,27 @@ class ProductionDocumentIndexer:
                         updated_at=document.ingested_at,
                     )
                 )
+                current_version_id = None
+            else:
+                current_version_id = existing_document["current_version_id"]
+                if current_version_id is None:
+                    connection.execute(
+                        update(documents)
+                        .where(
+                            and_(
+                                documents.c.tenant_id == self._tenant_id,
+                                documents.c.document_id == document.document_id,
+                            )
+                        )
+                        .values(
+                            staging_generation_id=generation_id,
+                            title=document.title,
+                            document_type=document.document_type,
+                            client=document.client,
+                            metadata_json=metadata,
+                            updated_at=document.ingested_at,
+                        )
+                    )
             version_exists = connection.execute(
                 select(document_versions.c.version_id).where(
                     and_(
@@ -343,9 +409,21 @@ class ProductionDocumentIndexer:
                         checksum=document.checksum,
                         source_uri=source_uri,
                         parse_status="succeeded",
+                        staging_generation_id=generation_id,
                         metadata_json=metadata,
                         created_at=document.ingested_at,
                     )
+                )
+            elif version_id != current_version_id:
+                connection.execute(
+                    update(document_versions)
+                    .where(
+                        and_(
+                            document_versions.c.tenant_id == self._tenant_id,
+                            document_versions.c.version_id == version_id,
+                        )
+                    )
+                    .values(staging_generation_id=generation_id)
                 )
         return version_id
 
