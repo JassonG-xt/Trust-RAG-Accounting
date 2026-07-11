@@ -21,7 +21,6 @@ from __future__ import annotations
 import csv
 import io
 from pathlib import Path
-from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -580,7 +579,7 @@ def test_api_actions_filter_404_for_missing_id(client: TestClient) -> None:
 
 def test_api_summary_endpoint(client: TestClient) -> None:
     q1 = _enqueue(client, "小规模纳税人现在增值税应该怎么处理？")
-    q2 = _enqueue(
+    _enqueue(
         client,
         "Beta Catering Ltd. 没有明确服务描述的配送发票能直接入账吗？",
     )
