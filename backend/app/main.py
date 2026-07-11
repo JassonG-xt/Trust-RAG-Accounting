@@ -664,6 +664,8 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
 
         current_settings = container.current_settings()
         _raise_if_public_demo(current_settings)
+        if current_settings.app_env.strip().lower() in {"production", "prod"}:
+            raise HTTPException(status_code=404, detail="not found")
         if not current_settings.trustrag_human_review_enabled:
             return ReviewClearResponse(
                 enabled=False, cleared=0, cleared_actions=0

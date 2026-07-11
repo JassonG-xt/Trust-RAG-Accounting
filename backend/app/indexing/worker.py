@@ -24,7 +24,7 @@ from .repositories import (
 
 
 def build_production_coordinator(settings: Settings) -> IndexingCoordinator:
-    settings.validate_persistence()
+    settings.validate_runtime()
     if settings.storage_backend.strip().lower() != "postgres":
         raise ValueError("index worker requires TRUSTRAG_STORAGE_BACKEND=postgres")
     if settings.source_store_backend.strip().lower() != "s3":

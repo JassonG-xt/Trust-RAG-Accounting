@@ -175,3 +175,18 @@ def test_review_action_uses_authenticated_subject_not_request_body(tmp_path: Pat
 
     assert response.status_code == 200
     assert response.json()["action"]["reviewer"] == "reviewer-1"
+
+
+def test_production_disables_global_review_queue_clear(tmp_path: Path) -> None:
+    principal = RequestPrincipal("admin-1", "local", frozenset({"admin"}))
+    container = replace(
+        _container(tmp_path, principal),
+        settings=Settings(app_env="production"),
+    )
+
+    client = TestClient(create_app(container))
+    readable = client.get("/v1/review/queue")
+    response = client.delete("/v1/review/queue")
+
+    assert readable.status_code == 200
+    assert response.status_code == 404

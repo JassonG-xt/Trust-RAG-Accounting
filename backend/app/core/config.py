@@ -457,6 +457,31 @@ class Settings:
         if telemetry_mode == "otlp" and not self.otlp_endpoint:
             raise ValueError("TRUSTRAG_TELEMETRY_MODE=otlp requires TRUSTRAG_OTLP_ENDPOINT")
 
+    def validate_runtime(self) -> None:
+        self.validate_persistence()
+        if self.app_env.strip().lower() not in {"production", "prod"}:
+            return
+        if self.trustrag_public_demo_enabled:
+            return
+        if self.storage_backend.strip().lower() != "postgres":
+            raise ValueError("Production requires Postgres persistence")
+        if self.source_store_backend.strip().lower() != "s3":
+            raise ValueError("Production indexing requires S3 source storage")
+        if self.auth_mode.strip().lower() != "oidc":
+            raise ValueError("Production requires OIDC authentication")
+        if self.vector_store.strip().lower() != "qdrant" or not self.qdrant_url:
+            raise ValueError("Production requires Qdrant vector storage")
+        if self.telemetry_mode.strip().lower() != "otlp":
+            raise ValueError("Production requires OTLP telemetry")
+        if self.embedding_provider.strip().lower() in {"", "mock"}:
+            raise ValueError("Production requires a real embedding provider")
+        if not self.embedding_model:
+            raise ValueError("Production embedding model must be configured")
+        if self.reranker_provider.strip().lower() in {"", "mock", "none", "off"}:
+            raise ValueError("Production requires a real reranker")
+        if not self.reranker_model:
+            raise ValueError("Production reranker model must be configured")
+
 
 def get_settings() -> Settings:
     """Return application settings.

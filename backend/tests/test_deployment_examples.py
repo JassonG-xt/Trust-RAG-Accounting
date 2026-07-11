@@ -87,7 +87,7 @@ def test_readme_has_live_rag_demo_button_to_hosted_dashboard() -> None:
     assert "free Render instance may cold start" in text
     assert "fictional sample docs" in text
     assert "not accounting or tax advice" in text
-    assert "| Phase | 9C" in text
+    assert "| Phase | 10D" in text
     assert "passing locally" not in text
     assert "- Phase 9C:" not in text
 

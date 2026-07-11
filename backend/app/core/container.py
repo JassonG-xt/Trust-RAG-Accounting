@@ -114,7 +114,7 @@ def build_application_container(
     """
 
     current = settings or get_settings()
-    current.validate_persistence()
+    current.validate_runtime()
     if current.auth_mode.strip().lower() == "oidc":
         authenticator: Authenticator = OIDCJWTAuthenticator(
             issuer=current.oidc_issuer or "",
