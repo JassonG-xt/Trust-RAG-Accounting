@@ -126,3 +126,14 @@ def test_ci_runs_production_adapters_with_postgres_and_optional_dependencies() -
     assert "alembic upgrade head" in commands
     assert "test_postgres_persistence.py" in commands
     assert "test_vectorstore_lifecycle.py" in commands
+
+
+def test_ci_full_backend_suite_installs_production_dependencies() -> None:
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    )
+    job = workflow["jobs"]["backend-tests-and-evals"]
+    commands = "\n".join(str(step.get("run") or "") for step in job["steps"])
+
+    assert "python -m pytest backend/tests" in commands
+    assert '.[dev,production]' in commands
