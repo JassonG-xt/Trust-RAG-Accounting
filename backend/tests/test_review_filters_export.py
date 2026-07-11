@@ -512,9 +512,11 @@ def test_api_queue_filter_by_reviewer(client: TestClient) -> None:
         json={"action_type": "approve", "reviewer": "bob"},
     )
 
-    payload = client.get("/v1/review/queue?reviewer=alice").json()
-    assert payload["total"] == 1
-    assert payload["entries"][0]["review_queue_id"] == q1
+    spoofed = client.get("/v1/review/queue?reviewer=alice").json()
+    trusted = client.get("/v1/review/queue?reviewer=local-admin").json()
+    assert spoofed["total"] == 0
+    assert trusted["total"] == 2
+    assert {entry["review_queue_id"] for entry in trusted["entries"]} == {q1, q2}
 
 
 def test_api_queue_pagination(client: TestClient) -> None:

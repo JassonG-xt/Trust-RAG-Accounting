@@ -36,6 +36,8 @@ class TrustRAGState(TypedDict, total=False):
 
     # Input
     question: str
+    tenant_id: str
+    actor_id: str
 
     # query_analyzer
     question_type: str | None
@@ -109,11 +111,18 @@ class TrustRAGState(TypedDict, total=False):
     errors: list[str]
 
 
-def initial_state(question: str) -> TrustRAGState:
+def initial_state(
+    question: str,
+    *,
+    tenant_id: str = "local",
+    actor_id: str = "local-admin",
+) -> TrustRAGState:
     """Build the starting state for a new query."""
 
     return TrustRAGState(
         question=question,
+        tenant_id=tenant_id,
+        actor_id=actor_id,
         question_type=None,
         domain="accounting",
         needs_temporal_check=False,

@@ -11,6 +11,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from ..auth import (
+    Authenticator,
+    AuthorizationPolicy,
+    OIDCJWTAuthenticator,
+    RequestPrincipal,
+    StaticAuthenticator,
+)
 from ..persistence.objects import S3SourceObjectStore, SourceObjectStore
 from ..review import (
     LocalReviewActionStore,
@@ -45,6 +52,10 @@ class ApplicationContainer:
     review_service: ReviewService
     trace_collector: LocalTraceCollector
     source_object_store: SourceObjectStore | None = None
+    authenticator: Authenticator | None = None
+    authorization_policy: AuthorizationPolicy = field(
+        default_factory=AuthorizationPolicy
+    )
     _settings_provider: Callable[[], Settings] | None = field(default=None, repr=False)
     _document_catalog_provider: Callable[[], DocumentCatalog] | None = field(
         default=None, repr=False
@@ -94,6 +105,24 @@ def build_application_container(
 
     current = settings or get_settings()
     current.validate_persistence()
+    if current.auth_mode.strip().lower() == "oidc":
+        authenticator: Authenticator = OIDCJWTAuthenticator(
+            issuer=current.oidc_issuer or "",
+            audience=current.oidc_audience or "",
+            tenant_id=current.tenant_id,
+            jwks_url=current.oidc_jwks_url,
+            roles_claim=current.oidc_roles_claim,
+            tenant_claim=current.oidc_tenant_claim,
+        )
+    else:
+        local_roles = frozenset({"viewer"}) if current.trustrag_public_demo_enabled else frozenset({"admin"})
+        authenticator = StaticAuthenticator(
+            RequestPrincipal(
+                subject_id="public-demo" if current.trustrag_public_demo_enabled else "local-admin",
+                tenant_id=current.tenant_id,
+                roles=local_roles,
+            )
+        )
     source_object_store: SourceObjectStore | None = None
     if current.source_store_backend.strip().lower() == "s3":
         source_object_store = S3SourceObjectStore(
@@ -168,6 +197,7 @@ def build_application_container(
         review_service=ReviewService(checkpoints, actions),
         trace_collector=traces,
         source_object_store=source_object_store,
+        authenticator=authenticator,
         _settings_provider=settings_provider,
         _document_catalog_provider=document_provider,
         _review_service_provider=review_provider,

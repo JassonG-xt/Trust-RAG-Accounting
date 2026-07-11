@@ -122,6 +122,24 @@ class Settings:
     s3_region: str | None = field(
         default_factory=lambda: _optional_str_env("TRUSTRAG_S3_REGION")
     )
+    auth_mode: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_AUTH_MODE", "local")
+    )
+    oidc_issuer: str | None = field(
+        default_factory=lambda: _optional_str_env("TRUSTRAG_OIDC_ISSUER")
+    )
+    oidc_audience: str | None = field(
+        default_factory=lambda: _optional_str_env("TRUSTRAG_OIDC_AUDIENCE")
+    )
+    oidc_jwks_url: str | None = field(
+        default_factory=lambda: _optional_str_env("TRUSTRAG_OIDC_JWKS_URL")
+    )
+    oidc_roles_claim: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_OIDC_ROLES_CLAIM", "roles")
+    )
+    oidc_tenant_claim: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_OIDC_TENANT_CLAIM", "tenant_id")
+    )
 
     # Provider selection — mock remains the deterministic default.
     llm_provider: str = field(default_factory=lambda: os.getenv("LLM_PROVIDER", "mock"))
@@ -413,6 +431,15 @@ class Settings:
             raise ValueError("TRUSTRAG_SOURCE_STORE must be either 'local' or 's3'")
         if source_backend == "s3" and not self.s3_bucket:
             raise ValueError("TRUSTRAG_SOURCE_STORE=s3 requires TRUSTRAG_S3_BUCKET")
+        auth_mode = self.auth_mode.strip().lower()
+        if auth_mode not in {"local", "oidc"}:
+            raise ValueError("TRUSTRAG_AUTH_MODE must be either 'local' or 'oidc'")
+        if auth_mode == "oidc" and not all(
+            (self.oidc_issuer, self.oidc_audience, self.oidc_jwks_url)
+        ):
+            raise ValueError(
+                "TRUSTRAG_AUTH_MODE=oidc requires issuer, audience and JWKS URL"
+            )
 
 
 def get_settings() -> Settings:

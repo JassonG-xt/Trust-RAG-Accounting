@@ -15,10 +15,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, Response
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from .auth import (
+    AuthenticationError,
+    RequestPrincipal,
+    StaticAuthenticator,
+    permission_for_request,
+)
 from .core.container import ApplicationContainer, build_application_container
 from .evals.history import EvalHistoryResponse, list_eval_history
 from .evals.models import EvalRunSummary
@@ -31,6 +37,7 @@ from .evals.provider_benchmark_history import (
     list_provider_benchmark_history,
 )
 from .graph.workflow import run_query
+from .request_context import bind_request_context
 from .review import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -83,6 +90,25 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
         ),
     )
     app.state.container = container
+
+    @app.middleware("http")
+    async def authorize_request(request: Request, call_next):
+        permission = permission_for_request(request.method, request.url.path)
+        if permission is None:
+            return await call_next(request)
+        authenticator = container.authenticator or StaticAuthenticator(
+            RequestPrincipal("local-admin", settings.tenant_id, frozenset({"admin"}))
+        )
+        authorization = request.headers.get("Authorization", "")
+        token = authorization[7:].strip() if authorization.startswith("Bearer ") else None
+        try:
+            principal = authenticator.authenticate(token)
+        except AuthenticationError:
+            return JSONResponse(status_code=401, content={"detail": "authentication required"})
+        if not container.authorization_policy.is_allowed(principal, permission):
+            return JSONResponse(status_code=403, content={"detail": "permission denied"})
+        request.state.principal = principal
+        return await call_next(request)
     if FRONTEND_DIR.exists():
         app.mount(
             "/dashboard/static",
@@ -135,9 +161,19 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
         )
 
     @app.post("/v1/rag/query", response_model=RAGQueryResponse, tags=["rag"])
-    def rag_query(request: RAGQueryRequest) -> RAGQueryResponse:
+    def rag_query(request: RAGQueryRequest, http_request: Request) -> RAGQueryResponse:
         try:
-            state: dict[str, Any] = run_query(request.question)
+            principal: RequestPrincipal = http_request.state.principal
+            review_service = container.current_review_service()
+            with bind_request_context(
+                principal=principal,
+                checkpoint_repository=review_service.checkpoint_repository,
+            ):
+                state: dict[str, Any] = run_query(
+                    request.question,
+                    tenant_id=principal.tenant_id,
+                    actor_id=principal.subject_id,
+                )
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("workflow failed")
             raise HTTPException(status_code=500, detail="workflow failed") from exc
@@ -578,6 +614,7 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
     def apply_review_action_endpoint(
         review_queue_id: str,
         request: ReviewActionRequest,
+        http_request: Request,
     ) -> ReviewActionResponse:
         """Phase 7B reviewer action endpoint.
 
@@ -596,7 +633,11 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
             )
         service = container.current_review_service()
         try:
-            return service.apply_action(review_queue_id, request)
+            principal: RequestPrincipal = http_request.state.principal
+            trusted_request = request.model_copy(
+                update={"reviewer": principal.subject_id}
+            )
+            return service.apply_action(review_queue_id, trusted_request)
         except ReviewCheckpointNotFoundError as exc:
             raise HTTPException(
                 status_code=404,

@@ -45,6 +45,20 @@ Rerunning the command does not duplicate document checksums, chunk identities,
 review queue IDs, or action IDs. Keep the local files read-only until database
 counts and checksums have been verified.
 
+## Authentication and Authorization
+
+| Variable | Default | Notes |
+|---|---|---|
+| `TRUSTRAG_AUTH_MODE` | `local` | `local` uses a fixed development principal; production uses `oidc`. |
+| `TRUSTRAG_OIDC_ISSUER` | unset | Expected JWT issuer. Required for OIDC. |
+| `TRUSTRAG_OIDC_AUDIENCE` | unset | Expected JWT audience. Required for OIDC. |
+| `TRUSTRAG_OIDC_JWKS_URL` | unset | Identity-provider JWKS endpoint. Required for OIDC. |
+| `TRUSTRAG_OIDC_ROLES_CLAIM` | `roles` | Claim containing `viewer`, `reviewer`, or `admin`. |
+| `TRUSTRAG_OIDC_TENANT_CLAIM` | `tenant_id` | Claim that must match `TRUSTRAG_TENANT_ID`. |
+
+The backend accepts RS256 bearer tokens only. Reviewer identity is always the
+verified JWT `sub`; the deprecated `reviewer` request field is ignored.
+
 ## Document and Chunk Stores
 
 The ingestion CLI writes document and chunk stores to explicit output paths:

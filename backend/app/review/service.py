@@ -148,6 +148,10 @@ class ReviewService:
         self._checkpoints = checkpoint_store
         self._actions = action_store
 
+    @property
+    def checkpoint_repository(self) -> ReviewCheckpointRepository:
+        return self._checkpoints
+
     # -- queue reads ---------------------------------------------------------
 
     def list_queue(
@@ -261,12 +265,13 @@ class ReviewService:
         # bad pairs — the caller (FastAPI handler) translates that
         # into a 400 response.
         new_status = apply_review_action(previous_status, request.action_type)
+        request_payload = request.model_dump()
 
         action = ReviewAction(
             action_id=self._mint_action_id(),
             review_queue_id=review_queue_id,
             action_type=request.action_type,
-            reviewer=request.reviewer,
+            reviewer=request_payload.get("reviewer"),
             note=request.note,
             rewritten_answer=request.rewritten_answer,
             previous_status=previous_status,

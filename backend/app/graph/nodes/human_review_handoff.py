@@ -32,6 +32,7 @@ import time
 from datetime import datetime, timezone
 
 from ...core.config import get_settings
+from ...request_context import get_request_context
 from ...review import (
     ReviewCheckpoint,
     get_review_checkpoint_store,
@@ -128,10 +129,19 @@ def human_review_handoff(state: TrustRAGState) -> dict:
         conflict_analysis=state.get("conflict_analysis"),
         safety_analysis=state.get("safety_analysis"),
         created_at=created_at,
+        metadata={
+            "tenant_id": state.get("tenant_id") or "local",
+            "actor_id": state.get("actor_id") or "local-admin",
+        },
     )
 
     try:
-        store = get_review_checkpoint_store()
+        request_context = get_request_context()
+        store = (
+            request_context.checkpoint_repository
+            if request_context is not None
+            else get_review_checkpoint_store()
+        )
         store.append(checkpoint)
     except Exception as exc:
         logger.exception("review handoff failed to append checkpoint")
@@ -153,5 +163,5 @@ def human_review_handoff(state: TrustRAGState) -> dict:
         "human_review_reasons": reasons,
         "review_queue_id": queue_id,
         "review_status": "pending",
-        "review_checkpoint_path": str(store.path),
+        "review_checkpoint_path": str(store.path) if hasattr(store, "path") else None,
     }
