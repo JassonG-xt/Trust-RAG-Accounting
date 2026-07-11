@@ -1,0 +1,23 @@
+# TrustRAG Accounting demo systemd service.
+# Adjust User, Group, WorkingDirectory, EnvironmentFile, and ExecStart paths.
+# Logs go to journalctl by default.
+# This service has no database dependency.
+
+[Unit]
+Description=TrustRAG Accounting Demo API
+After=network.target
+
+[Service]
+Type=simple
+User=trustrag
+Group=trustrag
+WorkingDirectory=/opt/trustrag-accounting/app
+EnvironmentFile=/etc/trustrag-accounting/trustrag-accounting.env
+ExecStart=/opt/trustrag-accounting/app/.venv/bin/uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

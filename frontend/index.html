@@ -1,280 +1,298 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>TrustRAG Accounting Dashboard</title>
+    <title>TrustRAG Accounting | Ops Console</title>
+    <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/dashboard/static/styles.css" />
   </head>
   <body>
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">Local reviewer workbench</p>
-        <h1>TrustRAG Accounting Dashboard</h1>
-      </div>
-      <div class="status-grid" aria-label="Backend status">
-        <div class="stat">
-          <span class="stat-label">Backend</span>
-          <span class="stat-value" id="backend-status">Checking</span>
-        </div>
-        <div class="stat">
-          <span class="stat-label">Documents</span>
-          <span class="stat-value" id="document-count">0</span>
-        </div>
-        <div class="stat">
-          <span class="stat-label">Chunks</span>
-          <span class="stat-value" id="chunk-count">0</span>
-        </div>
-      </div>
-    </header>
-
-    <main class="dashboard-shell">
-      <section class="panel query-panel" aria-labelledby="query-title">
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">Console</p>
-            <h2 id="query-title">RAG Query</h2>
-          </div>
-          <button class="secondary-button" id="clear-query" type="button">Clear</button>
-        </div>
-
-        <label class="field-label" for="question-input">Question</label>
-        <textarea
-          id="question-input"
-          rows="7"
-          placeholder="Ask about client SOPs, reimbursement policy, tax notes, invoice rules, or unsafe accounting requests."
-        ></textarea>
-
-        <div class="example-list" id="example-list" aria-label="Example questions"></div>
-
-        <button class="primary-button" id="run-query" type="button">Run Query</button>
-        <p class="inline-status" id="query-status">Idle</p>
-      </section>
-
-      <section class="main-stack">
-        <section class="panel answer-panel" aria-labelledby="answer-title">
-          <div class="panel-header">
-            <div>
-              <p class="eyebrow">Result</p>
-              <h2 id="answer-title">Answer</h2>
-            </div>
-            <div class="badge-row" id="answer-badges"></div>
-          </div>
-          <div class="answer-text" id="answer-text">Run a query to inspect the answer and review metadata.</div>
-          <dl class="metadata-grid" id="answer-metadata"></dl>
-          <div class="json-strip">
-            <div>
-              <h3>Safety</h3>
-              <pre id="safety-json">{}</pre>
-            </div>
-            <div>
-              <h3>Temporal</h3>
-              <pre id="temporal-json">{}</pre>
-            </div>
-            <div>
-              <h3>Conflict</h3>
-              <pre id="conflict-json">{}</pre>
-            </div>
-          </div>
-        </section>
-
-        <section class="panel" aria-labelledby="citations-title">
-          <div class="panel-header">
-            <div>
-              <p class="eyebrow">Grounding</p>
-              <h2 id="citations-title">Evidence / Citations</h2>
-            </div>
-          </div>
-          <div class="evidence-columns">
-            <div>
-              <h3>Citations</h3>
-              <div class="list-stack" id="citations-list"></div>
-            </div>
-            <div>
-              <h3>Support Evidence</h3>
-              <div class="list-stack" id="support-list"></div>
-            </div>
-            <div>
-              <h3>Counter Evidence</h3>
-              <div class="list-stack" id="counter-list"></div>
-            </div>
-          </div>
-        </section>
-      </section>
-
-      <aside class="side-stack">
-        <section class="panel" aria-labelledby="documents-title">
-          <div class="panel-header">
-            <div>
-              <p class="eyebrow">Corpus</p>
-              <h2 id="documents-title">Documents</h2>
-            </div>
-            <button class="secondary-button" data-refresh="documents" type="button">Refresh</button>
-          </div>
-          <div class="summary-line" id="documents-summary">No document data loaded.</div>
-          <div class="list-stack compact" id="documents-list"></div>
-        </section>
-
-        <section class="panel" aria-labelledby="review-title">
-          <div class="panel-header">
-            <div>
-              <p class="eyebrow">Queue</p>
-              <h2 id="review-title">Human Review</h2>
-            </div>
-            <div class="panel-actions">
-              <button class="secondary-button" data-refresh="review" type="button">Refresh</button>
-              <button class="secondary-button" id="review-export-json" type="button">Export JSON</button>
-              <button class="secondary-button" id="review-export-csv" type="button">Export CSV</button>
-            </div>
-          </div>
-          <p class="review-disclaimer">
-            Local demo workflow. Actions land in <code>data/review_actions.jsonl</code> only —
-            no authentication, no production authorization, no LLM rewrite.
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="hero-kicker">TrustRAG Accounting</p>
+          <h1>Accounting operations console</h1>
+          <p class="hero-lead">
+            面向 accounting firm 的本地 demo：查询、证据、审阅、评测和 benchmark 同屏查看。
           </p>
-
-          <div class="summary-cards" id="review-summary-cards" aria-label="Review summary cards"></div>
-
-          <form class="review-filters" id="review-filters" aria-label="Review queue filters">
-            <label>
-              <span>Status</span>
-              <select name="status" id="review-filter-status">
-                <option value="">all</option>
-                <option value="pending">pending</option>
-                <option value="approved">approved</option>
-                <option value="rejected">rejected</option>
-                <option value="changes_requested">changes_requested</option>
-                <option value="resolved">resolved</option>
-                <option value="handoff_failed">handoff_failed</option>
-              </select>
-            </label>
-            <label>
-              <span>Question type</span>
-              <input type="text" name="question_type" id="review-filter-question-type" placeholder="tax_policy" />
-            </label>
-            <label>
-              <span>Reason</span>
-              <input type="text" name="reason" id="review-filter-reason" placeholder="tax_policy_always_review" />
-            </label>
-            <label>
-              <span>Reviewer</span>
-              <input type="text" name="reviewer" id="review-filter-reviewer" placeholder="local_reviewer" />
-            </label>
-            <label class="checkbox-label">
-              <input type="checkbox" id="review-filter-has-actions" />
-              <span>Only with actions</span>
-            </label>
-            <label>
-              <span>Sort</span>
-              <select name="sort" id="review-filter-sort">
-                <option value="created_at_desc">newest first</option>
-                <option value="created_at_asc">oldest first</option>
-                <option value="status_asc">status A→Z</option>
-              </select>
-            </label>
-            <label>
-              <span>Page size</span>
-              <select name="limit" id="review-filter-limit">
-                <option value="10">10</option>
-                <option value="20" selected>20</option>
-                <option value="50">50</option>
-                <option value="100">100</option>
-              </select>
-            </label>
-            <button type="button" class="secondary-button" id="review-filter-reset">Reset</button>
-          </form>
-
-          <div class="summary-line" id="review-summary">No queue data loaded.</div>
-          <div class="list-stack compact" id="review-list"></div>
-          <div class="review-pager" id="review-pager"></div>
-        </section>
-
-        <section class="panel" aria-labelledby="eval-title">
-          <div class="panel-header">
-            <div>
-              <p class="eyebrow">Gate</p>
-              <h2 id="eval-title">Eval Report</h2>
-            </div>
-            <button class="secondary-button" data-refresh="eval" type="button">Refresh</button>
+          <div class="hero-meta" aria-label="Demo 模式">
+            <span class="demo-mode-pill" id="demo-mode-pill">Local full demo</span>
+            <span class="hero-note">Fictional clients only · FastAPI-served static dashboard</span>
           </div>
-          <div class="summary-line" id="eval-summary">No eval data loaded.</div>
-          <div class="category-table-wrap" id="eval-categories"></div>
-          <details class="details-block">
-            <summary>Markdown report</summary>
-            <pre id="eval-markdown">No report loaded.</pre>
-          </details>
+        </div>
+
+        <div class="hero-stats status-grid" aria-label="后端状态">
+          <div class="stat">
+            <span class="stat-label">后端</span>
+            <span class="stat-value" id="backend-status">检测中</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">文档</span>
+            <span class="stat-value" id="document-count">0</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">分块</span>
+            <span class="stat-value" id="chunk-count">0</span>
+          </div>
+        </div>
+      </header>
+
+      <main class="dashboard-shell">
+        <section class="workspace-column">
+          <section class="panel query-panel" aria-labelledby="query-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">控制台</p>
+                <h2 id="query-title">RAG 查询</h2>
+              </div>
+              <button class="secondary-button" id="clear-query" type="button">清空</button>
+            </div>
+
+            <label class="field-label" for="question-input">问题</label>
+            <textarea
+              id="question-input"
+              rows="8"
+              placeholder="输入一个 bookkeeping、invoice、reimbursement、tax policy 或安全性问题。"
+            ></textarea>
+
+            <div class="example-list" id="example-list" aria-label="示例问题"></div>
+
+            <div class="query-actions">
+              <button class="primary-button" id="run-query" type="button">运行查询</button>
+              <p class="inline-status" id="query-status">空闲</p>
+            </div>
+          </section>
+
+          <div class="focus-column">
+            <section class="panel answer-panel" aria-labelledby="answer-title">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">结果</p>
+                  <h2 id="answer-title">回答</h2>
+                </div>
+                <div class="badge-row" id="answer-badges"></div>
+              </div>
+
+              <div class="answer-shell">
+                <div class="answer-text" id="answer-text">
+                  运行查询以查看回答、证据和结构化分析。
+                </div>
+                <dl class="metadata-grid" id="answer-metadata"></dl>
+              </div>
+
+              <div class="json-strip" aria-label="结构化分析">
+                <details class="json-details">
+                  <summary>安全 JSON</summary>
+                  <pre id="safety-json">{}</pre>
+                </details>
+                <details class="json-details">
+                  <summary>时效 JSON</summary>
+                  <pre id="temporal-json">{}</pre>
+                </details>
+                <details class="json-details">
+                  <summary>冲突 JSON</summary>
+                  <pre id="conflict-json">{}</pre>
+                </details>
+              </div>
+            </section>
+
+            <section class="panel evidence-panel" aria-labelledby="citations-title">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">证据</p>
+                  <h2 id="citations-title">证据 / 引用</h2>
+                </div>
+              </div>
+
+              <div class="evidence-columns">
+                <div>
+                  <h3>引用</h3>
+                  <div class="list-stack" id="citations-list"></div>
+                </div>
+                <div>
+                  <h3>支持证据</h3>
+                  <div class="list-stack" id="support-list"></div>
+                </div>
+                <div>
+                  <h3>反对证据</h3>
+                  <div class="list-stack" id="counter-list"></div>
+                </div>
+              </div>
+            </section>
+          </div>
         </section>
 
-        <section class="panel eval-trend-panel" aria-labelledby="eval-trend-title">
-          <div class="panel-header">
-            <div>
-              <p class="eyebrow">Trend</p>
-              <h2 id="eval-trend-title">Eval Trend</h2>
+        <aside class="rail-column">
+          <section class="panel" aria-labelledby="documents-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">语料</p>
+                <h2 id="documents-title">文档</h2>
+              </div>
+              <button class="secondary-button" data-refresh="documents" type="button">刷新</button>
             </div>
-            <button class="secondary-button" data-refresh="eval-history" type="button">Refresh</button>
-          </div>
-          <div class="summary-line" id="eval-trend-summary">No eval history loaded.</div>
-          <div class="eval-trend-grid" id="eval-trend-metrics"></div>
-          <div class="eval-sparkline" id="eval-sparkline" aria-label="Eval score trend"></div>
-          <div class="category-table-wrap" id="eval-trend-categories"></div>
-        </section>
+            <div class="summary-line" id="documents-summary">尚未加载文档数据。</div>
+            <div class="list-stack compact" id="documents-list"></div>
+          </section>
 
-        <section class="panel provider-benchmark-panel" aria-labelledby="provider-benchmark-title">
-          <div class="panel-header">
-            <div>
-              <p class="eyebrow">Providers</p>
-              <h2 id="provider-benchmark-title">Provider Benchmark</h2>
+          <section class="panel" aria-labelledby="review-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">队列</p>
+                <h2 id="review-title">人工审阅</h2>
+              </div>
+              <div class="panel-actions">
+                <button class="secondary-button" data-refresh="review" type="button">刷新</button>
+                <button class="secondary-button" id="review-export-json" type="button">导出 JSON</button>
+                <button class="secondary-button" id="review-export-csv" type="button">导出 CSV</button>
+              </div>
             </div>
-            <button class="secondary-button" data-refresh="provider-benchmark" type="button">Refresh</button>
-          </div>
-          <p class="review-disclaimer">
-            Read-only view of local benchmark artifacts. The dashboard never runs a
-            benchmark or calls a real provider — generate one with
-            <code>bash scripts/run_provider_benchmark.sh mock</code>.
-          </p>
-          <div class="summary-line" id="provider-benchmark-summary">No provider benchmark loaded.</div>
-          <div class="summary-cards" id="provider-benchmark-cards" aria-label="Provider benchmark summary cards"></div>
-          <div class="category-table-wrap" id="provider-benchmark-providers"></div>
-          <div class="category-table-wrap" id="provider-benchmark-categories"></div>
-          <div class="category-table-wrap" id="provider-benchmark-cases"></div>
-          <details class="details-block">
-            <summary>Markdown report</summary>
-            <pre id="provider-benchmark-markdown">No report loaded.</pre>
-          </details>
-        </section>
+            <p class="review-disclaimer">
+              Local demo workflow / 本地演示流程。操作仅写入 <code>data/review_actions.jsonl</code>，无身份认证、无生产授权、无 LLM 改写。
+            </p>
 
-        <section class="panel provider-trend-panel" aria-labelledby="provider-trend-title">
-          <div class="panel-header">
-            <div>
-              <p class="eyebrow">Trend</p>
-              <h2 id="provider-trend-title">Provider Benchmark Trends</h2>
-            </div>
-            <button class="secondary-button" data-refresh="provider-trend" type="button">Refresh</button>
-          </div>
-          <p class="review-disclaimer">
-            Read-only view of local benchmark history snapshots. The dashboard never
-            runs a benchmark — archive one with
-            <code>bash scripts/run_provider_benchmark.sh mock</code> then
-            <code>bash scripts/archive_provider_benchmark_snapshot.sh</code>.
-          </p>
-          <div class="summary-line" id="provider-trend-summary">No provider benchmark history loaded.</div>
-          <div class="summary-cards" id="provider-trend-metrics" aria-label="Provider benchmark trend metrics"></div>
-          <div class="provider-trend-charts" id="provider-trend-sparklines"></div>
-          <div class="category-table-wrap" id="provider-trend-table"></div>
-        </section>
+            <div class="summary-cards" id="review-summary-cards" aria-label="审阅摘要卡片"></div>
 
-        <section class="panel" aria-labelledby="trace-title">
-          <div class="panel-header">
-            <div>
-              <p class="eyebrow">Trace</p>
-              <h2 id="trace-title">Local Traces</h2>
+            <form class="review-filters" id="review-filters" aria-label="审阅队列筛选">
+              <label>
+                <span>状态</span>
+                <select name="status" id="review-filter-status">
+                  <option value="">全部</option>
+                  <option value="pending">待处理</option>
+                  <option value="approved">已通过</option>
+                  <option value="rejected">已驳回</option>
+                  <option value="changes_requested">需修改</option>
+                  <option value="resolved">已解决</option>
+                  <option value="handoff_failed">交接失败</option>
+                </select>
+              </label>
+              <label>
+                <span>问题类型</span>
+                <input type="text" name="question_type" id="review-filter-question-type" placeholder="tax_policy" />
+              </label>
+              <label>
+                <span>原因</span>
+                <input type="text" name="reason" id="review-filter-reason" placeholder="tax_policy_always_review" />
+              </label>
+              <label>
+                <span>审阅人</span>
+                <input type="text" name="reviewer" id="review-filter-reviewer" placeholder="local_reviewer" />
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="review-filter-has-actions" />
+                <span>仅含操作记录</span>
+              </label>
+              <label>
+                <span>排序</span>
+                <select name="sort" id="review-filter-sort">
+                  <option value="created_at_desc">最新优先</option>
+                  <option value="created_at_asc">最早优先</option>
+                  <option value="status_asc">状态 A→Z</option>
+                </select>
+              </label>
+              <label>
+                <span>每页条数</span>
+                <select name="limit" id="review-filter-limit">
+                  <option value="10">10</option>
+                  <option value="20" selected>20</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+              </label>
+              <button type="button" class="secondary-button" id="review-filter-reset">重置</button>
+            </form>
+
+            <div class="summary-line" id="review-summary">尚未加载队列数据。</div>
+            <div class="list-stack compact" id="review-list"></div>
+            <div class="review-pager" id="review-pager"></div>
+          </section>
+
+          <section class="panel" aria-labelledby="eval-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">评测</p>
+                <h2 id="eval-title">评测报告</h2>
+              </div>
+              <button class="secondary-button" data-refresh="eval" type="button">刷新</button>
             </div>
-            <button class="secondary-button" data-refresh="traces" type="button">Refresh</button>
-          </div>
-          <div class="summary-line" id="trace-summary">No trace data loaded.</div>
-          <div class="list-stack compact" id="trace-list"></div>
-        </section>
-      </aside>
-    </main>
+            <div class="summary-line" id="eval-summary">尚未加载评测数据。</div>
+            <div class="category-table-wrap" id="eval-categories"></div>
+            <details class="details-block">
+              <summary>Markdown 报告</summary>
+              <pre id="eval-markdown">尚未加载报告。</pre>
+            </details>
+          </section>
+
+          <section class="panel eval-trend-panel" aria-labelledby="eval-trend-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">趋势</p>
+                <h2 id="eval-trend-title">评测趋势</h2>
+              </div>
+              <button class="secondary-button" data-refresh="eval-history" type="button">刷新</button>
+            </div>
+            <div class="summary-line" id="eval-trend-summary">尚未加载评测历史。</div>
+            <div class="eval-trend-grid" id="eval-trend-metrics"></div>
+            <div class="eval-sparkline" id="eval-sparkline" aria-label="评测分数趋势"></div>
+            <div class="category-table-wrap" id="eval-trend-categories"></div>
+          </section>
+
+          <section class="panel provider-benchmark-panel" aria-labelledby="provider-benchmark-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">基准</p>
+                <h2 id="provider-benchmark-title">提供方基准</h2>
+              </div>
+              <button class="secondary-button" data-refresh="provider-benchmark" type="button">刷新</button>
+            </div>
+            <p class="review-disclaimer">
+              只读查看本地基准产物。仪表盘不运行基准测试，也不调用真实提供方。
+              请用 <code>bash scripts/run_provider_benchmark.sh mock</code> 生成。
+            </p>
+            <div class="summary-line" id="provider-benchmark-summary">尚未加载提供方基准。</div>
+            <div class="summary-cards" id="provider-benchmark-cards" aria-label="提供方基准摘要卡片"></div>
+            <div class="category-table-wrap" id="provider-benchmark-providers"></div>
+            <div class="category-table-wrap" id="provider-benchmark-categories"></div>
+            <div class="category-table-wrap" id="provider-benchmark-cases"></div>
+            <details class="details-block">
+              <summary>Markdown 报告</summary>
+              <pre id="provider-benchmark-markdown">尚未加载报告。</pre>
+            </details>
+          </section>
+
+          <section class="panel provider-trend-panel" aria-labelledby="provider-trend-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">趋势</p>
+                <h2 id="provider-trend-title">提供方基准趋势</h2>
+              </div>
+              <button class="secondary-button" data-refresh="provider-trend" type="button">刷新</button>
+            </div>
+            <p class="review-disclaimer">
+              只读查看本地基准历史快照。请先运行 <code>bash scripts/run_provider_benchmark.sh mock</code>，
+              再运行 <code>bash scripts/archive_provider_benchmark_snapshot.sh</code>。
+            </p>
+            <div class="summary-line" id="provider-trend-summary">尚未加载提供方基准历史。</div>
+            <div class="summary-cards" id="provider-trend-metrics" aria-label="提供方基准趋势指标"></div>
+            <div class="provider-trend-charts" id="provider-trend-sparklines"></div>
+            <div class="category-table-wrap" id="provider-trend-table"></div>
+          </section>
+
+          <section class="panel" aria-labelledby="trace-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">追踪</p>
+                <h2 id="trace-title">本地追踪</h2>
+              </div>
+              <button class="secondary-button" data-refresh="traces" type="button">刷新</button>
+            </div>
+            <div class="summary-line" id="trace-summary">尚未加载追踪数据。</div>
+            <div class="list-stack compact" id="trace-list"></div>
+          </section>
+        </aside>
+      </main>
+    </div>
 
     <script src="/dashboard/static/app.js" defer></script>
   </body>

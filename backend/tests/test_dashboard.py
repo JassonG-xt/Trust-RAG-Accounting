@@ -1,9 +1,12 @@
-"""Tests for the Phase 7A local reviewer dashboard."""
+"""Tests for the local reviewer dashboard."""
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.evals.models import EvalRunSummary
@@ -17,7 +20,26 @@ def test_dashboard_returns_html() -> None:
 
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    assert "TrustRAG Accounting Dashboard" in response.text
+    body = response.text
+    assert "TrustRAG Accounting | Ops Console" in body
+    assert "Accounting operations console" in body
+    assert "dashboard-shell" in body
+    assert "workspace-column" in body
+    assert "focus-column" in body
+    assert "demo-mode-pill" in body
+
+
+def test_dashboard_uses_collapsed_raw_analysis_view() -> None:
+    client = TestClient(app)
+
+    response = client.get("/dashboard")
+
+    assert response.status_code == 200
+    body = response.text
+    assert "json-details" in body
+    assert "safety-json" in body
+    assert "temporal-json" in body
+    assert "conflict-json" in body
 
 
 def test_dashboard_carries_review_action_disclaimer() -> None:
@@ -28,7 +50,7 @@ def test_dashboard_carries_review_action_disclaimer() -> None:
     assert response.status_code == 200
     body = response.text
     assert "review_actions.jsonl" in body
-    assert "Local demo workflow" in body
+    assert "本地演示流程" in body
 
 
 def test_dashboard_contains_eval_trend_panel() -> None:
@@ -38,7 +60,7 @@ def test_dashboard_contains_eval_trend_panel() -> None:
 
     assert response.status_code == 200
     body = response.text
-    assert "Eval Trend" in body
+    assert "eval-trend-panel" in body
     assert "eval-trend-summary" in body
     assert "eval-sparkline" in body
 
@@ -81,6 +103,45 @@ def test_dashboard_app_js_contains_public_demo_wiring() -> None:
     assert "renderPublicDemoReviewDisabled" in body
 
 
+def test_dashboard_app_js_avoids_html_parsing_sinks() -> None:
+    client = TestClient(app)
+
+    response = client.get("/dashboard/static/app.js")
+
+    assert response.status_code == 200
+    body = response.text
+    forbidden_sinks = (
+        ".innerHTML",
+        ".outerHTML",
+        "insertAdjacentHTML",
+        "document.write",
+        "DOMParser",
+        "createContextualFragment",
+        ".srcdoc",
+    )
+    assert all(sink not in body for sink in forbidden_sinks)
+    assert "textContent" in body
+    assert "replaceChildren" in body
+
+
+def test_dashboard_renders_malicious_api_strings_as_text() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for the vanilla dashboard DOM regression")
+
+    harness = Path(__file__).with_name("dashboard_xss_regression.mjs")
+    app_js = Path(__file__).resolve().parents[2] / "frontend" / "app.js"
+    result = subprocess.run(
+        [node, str(harness), str(app_js)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "dashboard-xss-regression: OK" in result.stdout
+
+
 def test_dashboard_styles_contains_review_action_styles() -> None:
     client = TestClient(app)
 
@@ -90,6 +151,7 @@ def test_dashboard_styles_contains_review_action_styles() -> None:
     body = response.text
     assert ".review-action" in body
     assert ".history-list" in body
+    assert ".json-details" in body
 
 
 def test_dashboard_styles_contains_eval_history_styles() -> None:
@@ -101,6 +163,16 @@ def test_dashboard_styles_contains_eval_history_styles() -> None:
     body = response.text
     assert ".eval-trend-grid" in body
     assert ".eval-sparkline" in body
+    assert ".hero" in body
+
+
+def test_dashboard_styles_wrap_long_api_summary_values_on_mobile() -> None:
+    client = TestClient(app)
+
+    response = client.get("/dashboard/static/styles.css")
+
+    assert response.status_code == 200
+    assert ".summary-line {\n  overflow-wrap: anywhere;" in response.text
 
 
 def test_dashboard_contains_provider_benchmark_panel() -> None:
@@ -110,7 +182,7 @@ def test_dashboard_contains_provider_benchmark_panel() -> None:
 
     assert response.status_code == 200
     body = response.text
-    assert "Provider Benchmark" in body
+    assert "provider-benchmark-panel" in body
     assert "provider-benchmark-summary" in body
     assert "provider-benchmark-cases" in body
 
@@ -125,7 +197,6 @@ def test_dashboard_app_js_contains_provider_benchmark_wiring() -> None:
     assert "refreshProviderBenchmark" in body
     assert "renderProviderBenchmark" in body
     assert "/v1/provider-benchmarks" in body
-    # Empty-state guidance points the user at the manual, offline command.
     assert "run_provider_benchmark.sh" in body
 
 
@@ -147,7 +218,7 @@ def test_dashboard_contains_provider_benchmark_trend_panel() -> None:
 
     assert response.status_code == 200
     body = response.text
-    assert "Provider Benchmark Trends" in body
+    assert "provider-trend-panel" in body
     assert "provider-trend-summary" in body
     assert "provider-trend-table" in body
 
@@ -162,7 +233,6 @@ def test_dashboard_app_js_contains_provider_benchmark_trend_wiring() -> None:
     assert "refreshProviderBenchmarkHistory" in body
     assert "renderProviderBenchmarkHistory" in body
     assert "/v1/provider-benchmarks/history" in body
-    # Empty-state guidance points the user at the manual archive script.
     assert "archive_provider_benchmark_snapshot.sh" in body
 
 
