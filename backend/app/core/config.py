@@ -437,6 +437,20 @@ class Settings:
         default_factory=lambda: _optional_str_env("ANTHROPIC_MODEL")
     )
 
+    # Phase 10A — LLM wiki compilation layer. The wiki is OPTIONAL and OFF by
+    # default. In 10A only the deterministic mock ingest path exists
+    # (``wiki_ingest_mode="mock"`` replays fixture proposals; no network / API
+    # key / real LLM). ``wiki_ingest_mode="llm"`` is reserved for the Phase 10B
+    # ingest agent and is not implemented here. ``wiki_dir`` lives under the
+    # gitignored ``data/`` tree; only committed test fixtures live elsewhere.
+    wiki_enabled: bool = field(
+        default_factory=lambda: _bool_env("WIKI_ENABLED", False)
+    )
+    wiki_dir: str = field(default_factory=lambda: os.getenv("WIKI_DIR", "data/wiki"))
+    wiki_ingest_mode: str = field(
+        default_factory=lambda: os.getenv("WIKI_INGEST_MODE", "mock")
+    )
+
     def validate_persistence(self) -> None:
         backend = self.storage_backend.strip().lower()
         if backend not in {"local", "postgres"}:
