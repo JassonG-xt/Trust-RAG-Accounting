@@ -1,0 +1,41 @@
+{
+  "proposal_id": "prop-alpha-sop-0001",
+  "source_doc_id": "alpha_trading_bookkeeping_sop_2026",
+  "source_content_hash": "sha256:fixturealphasop2026deadbeefcafef00d0001",
+  "analysis": {
+    "entities": [
+      "Alpha Trading Co."
+    ],
+    "affected_page_ids": [
+      "client-alpha-trading-co",
+      "policy-alpha-bookkeeping-sop",
+      "source-alpha-trading-bookkeeping-sop-2026"
+    ],
+    "new_page_specs": [],
+    "contradictions": [],
+    "temporal_changes": [],
+    "notes": "Mock analysis fixture for Phase 10A end-to-end apply test."
+  },
+  "patches": [
+    {
+      "page_id": "client-alpha-trading-co",
+      "page_type": "client",
+      "new_content": "---\npage_id: client-alpha-trading-co\npage_type: client\ntitle: Alpha Trading Co.\nclient: Alpha Trading Co.\nstatus: active\nvalid_from: '2026-01-01'\nvalid_to: null\nsuperseded_by: null\nsources:\n- alpha_trading_bookkeeping_sop_2026\nrevision: 1\nupdated: null\n---\n\n# Alpha Trading Co.\n\nFictional client compiled from its bookkeeping SOP. Bookkeeping is governed by [[policy-alpha-bookkeeping-sop]].\n",
+      "diff": null
+    },
+    {
+      "page_id": "policy-alpha-bookkeeping-sop",
+      "page_type": "policy",
+      "new_content": "---\npage_id: policy-alpha-bookkeeping-sop\npage_type: policy\ntitle: Alpha Trading Co. bookkeeping SOP\nclient: Alpha Trading Co.\nstatus: active\nvalid_from: '2026-01-01'\nvalid_to: null\nsuperseded_by: null\nsources:\n- alpha_trading_bookkeeping_sop_2026\nrevision: 1\nupdated: null\n---\n\n# Alpha Trading Co. bookkeeping SOP\n\nClient-specific bookkeeping procedure. Derived from [[source-alpha-trading-bookkeeping-sop-2026]]. Applies to Alpha only.\n",
+      "diff": null
+    },
+    {
+      "page_id": "source-alpha-trading-bookkeeping-sop-2026",
+      "page_type": "source_summary",
+      "new_content": "---\npage_id: source-alpha-trading-bookkeeping-sop-2026\npage_type: source_summary\ntitle: 'Source summary: Alpha bookkeeping SOP 2026'\nclient: Alpha Trading Co.\nstatus: active\nvalid_from: '2026-01-01'\nvalid_to: null\nsuperseded_by: null\nsources:\n- alpha_trading_bookkeeping_sop_2026\nrevision: 1\nupdated: null\n---\n\n# Source summary: Alpha bookkeeping SOP 2026\n\nOne-page summary of the raw source. Belongs to [[client-alpha-trading-co]].\n",
+      "diff": null
+    }
+  ],
+  "risk": "sensitive",
+  "created_at": "2026-07-21T00:00:00Z"
+}
