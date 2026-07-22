@@ -38,5 +38,6 @@ def patch_prompt(source_doc_id: str) -> str:
     return (
         f"PATCH phase for source '{source_doc_id}'. Stage the page upserts that compile "
         "this source into the wiki (stage_page_upsert), grounding every page in the "
-        "source id. Call finish_ingest when done."
+        "source id. A policy or invoice_rule page MUST set policy_family (the version "
+        "family it belongs to). Call finish_ingest when done."
     )

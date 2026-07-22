@@ -180,11 +180,11 @@ def test_apply_sweeps_ghost_on_page_type_change(tmp_path):
     assert (wiki / "concepts" / "shared-page.md").exists()
 
     apply_proposal(
-        _proposal("srcA", "h2", [PagePatch(page_id="shared-page", page_type="policy",
-                                           new_content=_page_md("shared-page", "policy", "# s\n"))]),
+        _proposal("srcA", "h2", [PagePatch(page_id="shared-page", page_type="source_summary",
+                                           new_content=_page_md("shared-page", "source_summary", "# s\n"))]),
         wiki, pages_out=tmp_path / "p2.json", chunks_out=tmp_path / "c2.json",
         known_doc_ids=KNOWN_DOC_IDS,
     )
-    assert (wiki / "policies" / "shared-page.md").exists()
+    assert (wiki / "sources" / "shared-page.md").exists()
     assert not (wiki / "concepts" / "shared-page.md").exists()  # ghost swept
     assert set(load_wiki(wiki)) == {"shared-page"}

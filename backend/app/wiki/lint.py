@@ -117,14 +117,17 @@ def lint_wiki(
     else:
         for pid, page in pages.items():
             page_client = page.frontmatter.client
-            if page_client is None:
-                continue
             for doc_id in page.frontmatter.sources:
                 src_client = doc_clients.get(doc_id)
-                if src_client is not None and src_client != page_client:
+                if src_client is None:
+                    continue  # global source — any page may cite it
+                # A client-owned source may only be cited by a page of that same
+                # client. A global page (client=None) or a different-client page
+                # citing it launders client-scoped material — forbidden.
+                if page_client != src_client:
                     report.errors.append(
                         LintFinding(code="client_isolation", page_id=pid,
-                                    message=(f"page client '{page_client}' cites "
+                                    message=(f"page (client={page_client!r}) cites "
                                              f"source '{doc_id}' owned by "
                                              f"'{src_client}'"))
                     )
@@ -148,8 +151,18 @@ def lint_wiki(
                                 message=f"superseded_by '{fm.superseded_by}' "
                                         "does not resolve")
                 )
-        elif fm.status == "active" and fm.policy_family is not None:
-            active_by_family.setdefault((fm.policy_family, fm.client), []).append(pid)
+        elif fm.status == "active":
+            # A versioned page (policy / invoice_rule) MUST carry a
+            # policy_family, otherwise the one-active-per-family grouping below
+            # silently skips it (the 10A stale-active fix would be inert).
+            if fm.page_type in {"policy", "invoice_rule"} and fm.policy_family is None:
+                report.errors.append(
+                    LintFinding(code="missing_policy_family", page_id=pid,
+                                message=f"active {fm.page_type} page must set "
+                                        "policy_family")
+                )
+            if fm.policy_family is not None:
+                active_by_family.setdefault((fm.policy_family, fm.client), []).append(pid)
 
     for (family, client), members in active_by_family.items():
         if len(members) > 1:

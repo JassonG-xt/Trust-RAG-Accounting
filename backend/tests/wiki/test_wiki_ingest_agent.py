@@ -109,9 +109,8 @@ def test_enqueue_is_staged_then_approve_applies(tmp_path):
     assert not (wiki / "policies").exists()
 
     result = approve_and_apply(
-        queue, proposal.proposal_id, wiki, at=NOW,
+        queue, proposal.proposal_id, wiki, at=NOW, repository=make_repository(),
         pages_out=tmp_path / "p.json", chunks_out=tmp_path / "c.json",
-        known_doc_ids=KNOWN_DOC_IDS, doc_clients=DOC_CLIENTS,
     )
     assert result.status == "applied"
     assert queue.get(proposal.proposal_id).status == "approved"
@@ -178,8 +177,7 @@ def test_injected_page_never_reaches_disk_via_apply_gate(tmp_path):
     queue.enqueue(proposal, created_at=NOW)
     with pytest.raises(WikiApplyRejected):
         approve_and_apply(
-            queue, proposal.proposal_id, wiki, at=NOW,
+            queue, proposal.proposal_id, wiki, at=NOW, repository=make_repository(),
             pages_out=tmp_path / "p.json", chunks_out=tmp_path / "c.json",
-            known_doc_ids=KNOWN_DOC_IDS, doc_clients=DOC_CLIENTS,
         )
     assert not (wiki / "policies").exists()

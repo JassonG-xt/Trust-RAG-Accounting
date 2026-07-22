@@ -32,6 +32,19 @@ def _is_quarantined(doc: Any) -> bool:
     )
 
 
+def derive_doc_maps(repository) -> tuple[set[str], dict[str, str | None]]:
+    """Return ``(known_doc_ids, doc_clients)`` from the raw corpus.
+
+    The single source of truth for arming the client-isolation / unknown-source
+    lint gates so no write path has to remember to pass them.
+    """
+
+    docs = repository.load_documents()
+    known = {d.document_id for d in docs}
+    clients = {d.document_id: d.client for d in docs}
+    return known, clients
+
+
 def build_ingest_context(source_doc_id: str, *, repository, wiki_dir: Path | str) -> IngestContext:
     docs = {d.document_id: d for d in repository.load_documents()}
     src = docs.get(source_doc_id)
@@ -48,6 +61,7 @@ def build_ingest_context(source_doc_id: str, *, repository, wiki_dir: Path | str
     ]
     # The agent may only cite non-quarantined document ids.
     allowed = {d_id for d_id, d in docs.items() if not _is_quarantined(d)}
+    doc_clients = {d_id: d.client for d_id, d in docs.items()}
     wiki_pages, _ = load_wiki_tolerant(wiki_dir)
     return IngestContext(
         source_doc_id=source_doc_id,
@@ -55,6 +69,7 @@ def build_ingest_context(source_doc_id: str, *, repository, wiki_dir: Path | str
         source_client=src.client,
         wiki_pages=wiki_pages,
         allowed_source_ids=allowed,
+        doc_clients=doc_clients,
     )
 
 

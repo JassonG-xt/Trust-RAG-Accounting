@@ -3,6 +3,7 @@ page_id: invoice-rule-beta-delivery-description
 page_type: invoice_rule
 title: Beta Catering delivery invoice description rule
 client: Beta Catering Ltd.
+policy_family: beta_delivery_invoice_rule
 status: active
 valid_from: 2026-01-01
 valid_to: null

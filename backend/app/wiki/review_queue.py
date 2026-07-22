@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from ..review.state_machine import apply_review_action
 from .apply import apply_proposal
+from .ingest import derive_doc_maps
 from .models import ApplyResult, WikiUpdateProposal
 
 
@@ -105,12 +106,31 @@ def approve_and_apply(
     wiki_dir: Path | str,
     *,
     at: str,
-    **apply_kwargs,
+    repository,
+    pages_out=None,
+    chunks_out=None,
+    applied_ledger_path=None,
+    force: bool = False,
 ) -> ApplyResult:
-    """Approve a proposal and run the applier (the only approve→write path)."""
+    """Approve a proposal and run the applier (the only approve→write path).
 
+    The client-isolation / unknown-source lint gates are armed from
+    ``repository`` here — a write path can never ship them unarmed (the caller
+    cannot pass ``doc_clients=None`` through this function).
+    """
+
+    known_doc_ids, doc_clients = derive_doc_maps(repository)
     status = queue.act(proposal_id, "approve", at=at)
     if status != "approved":
         raise RuntimeError(f"proposal {proposal_id} is {status}, not approved")
     rec = queue.get(proposal_id)
-    return apply_proposal(rec.proposal, wiki_dir, **apply_kwargs)
+    return apply_proposal(
+        rec.proposal,
+        wiki_dir,
+        pages_out=pages_out,
+        chunks_out=chunks_out,
+        applied_ledger_path=applied_ledger_path,
+        known_doc_ids=known_doc_ids,
+        doc_clients=doc_clients,
+        force=force,
+    )

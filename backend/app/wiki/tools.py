@@ -32,6 +32,7 @@ class IngestContext:
     source_client: str | None
     wiki_pages: dict[str, WikiPage]
     allowed_source_ids: set[str]
+    doc_clients: dict[str, str | None] = field(default_factory=dict)
     analysis: AnalysisResult | None = None
     patches: list[PagePatch] = field(default_factory=list)
     finished: bool = False
@@ -156,12 +157,27 @@ def _build_patch(ctx: IngestContext, args: dict) -> PagePatch:
     bad = [s for s in sources if s not in ctx.allowed_source_ids]
     if bad:
         raise ToolError(f"sources not allowed (quarantined or unknown): {bad}")
+    page_client = args.get("client")
+    page_type = args.get("page_type")
+    # Client isolation enforced at staging (not only at the apply gate): a
+    # client-owned source may only feed a page of that same client.
+    for doc_id in sources:
+        src_client = ctx.doc_clients.get(doc_id)
+        if src_client is not None and page_client != src_client:
+            raise ToolError(
+                f"client isolation: page (client={page_client!r}) may not cite "
+                f"source '{doc_id}' owned by '{src_client}'"
+            )
+    # Versioned page types must carry a policy_family so the lint's
+    # one-active-per-family grouping is not silently skipped.
+    if page_type in {"policy", "invoice_rule"} and not args.get("policy_family"):
+        raise ToolError(f"{page_type} page requires a policy_family")
     try:
         fm = WikiFrontmatter(
             page_id=args["page_id"],
             page_type=args["page_type"],
             title=args["title"],
-            client=args.get("client"),
+            client=page_client,
             policy_family=args.get("policy_family"),
             status=args.get("status") or "active",
             valid_from=args.get("valid_from"),

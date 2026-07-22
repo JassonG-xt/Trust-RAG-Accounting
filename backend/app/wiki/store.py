@@ -189,7 +189,7 @@ def page_to_document(page: WikiPage, wiki_dir: Path | str) -> AccountingDocument
         version=f"rev{fm.revision}",
         document_type=fm.page_type,
         client=fm.client,
-        policy_family=None,
+        policy_family=fm.policy_family,
         valid_from=fm.valid_from,
         valid_to=fm.valid_to,
         source_path=rel_path,
