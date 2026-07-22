@@ -62,6 +62,27 @@ class LLMGenerationResponse(BaseModel):
     raw_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ToolCall(BaseModel):
+    """One tool invocation the model asked for."""
+
+    id: str
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatToolResult(BaseModel):
+    """One turn from a tool-calling provider.
+
+    Either ``tool_calls`` (the model wants to call tools) or ``text`` (a plain
+    completion / the model is done). The ingest agent (Phase 10B) drives the
+    loop off this shape.
+    """
+
+    tool_calls: list[ToolCall] = Field(default_factory=list)
+    text: str | None = None
+    raw_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 @runtime_checkable
 class LLMProvider(Protocol):
     """Anything that can turn a chat request into a text completion."""
@@ -71,6 +92,29 @@ class LLMProvider(Protocol):
         ...
 
     def generate(self, request: LLMGenerationRequest) -> LLMGenerationResponse:
+        ...
+
+
+@runtime_checkable
+class ToolCallingProvider(Protocol):
+    """A provider that supports one round of tool-calling.
+
+    Implemented for ``openai_compatible`` (real) and by the deterministic
+    ``ScriptedToolProvider`` (mock, offline). ``messages`` are OpenAI-style
+    chat dicts and ``tools`` are OpenAI ``function`` tool specs; the ingest
+    agent owns the conversation and the loop, the provider only answers one
+    turn at a time.
+    """
+
+    @property
+    def name(self) -> str:
+        ...
+
+    def chat_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> ChatToolResult:
         ...
 
 

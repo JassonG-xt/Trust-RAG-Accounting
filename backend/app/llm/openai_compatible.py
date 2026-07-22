@@ -20,11 +20,15 @@ than mirrors) the HTTP conventions:
 
 from __future__ import annotations
 
+import json
+
 from .providers import (
+    ChatToolResult,
     LLMGenerationRequest,
     LLMGenerationResponse,
     LLMProviderError,
     LLMProviderNotConfiguredError,
+    ToolCall,
 )
 
 _CONFIG_HINT = (
@@ -115,5 +119,65 @@ class OpenAICompatibleProvider:
             text=text,
             provider=self.name,
             model=self._model,
+            raw_metadata={"usage": data.get("usage")},
+        )
+
+    def chat_with_tools(self, messages, tools) -> ChatToolResult:
+        """One tool-calling turn over ``/chat/completions`` (Phase 10B).
+
+        Sends OpenAI-style ``tools`` and parses ``tool_calls`` back. Malformed
+        JSON in a tool-call's ``arguments`` is surfaced as a ``LLMProviderError``
+        so the agent's retry-once-then-fail-closed logic can handle it.
+        """
+
+        import httpx  # local import keeps the default mock path import-light
+
+        payload = {
+            "model": self._model,
+            "messages": messages,
+            "tools": tools,
+            "temperature": 0.0,
+        }
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            response = httpx.post(
+                f"{self._base_url}/chat/completions",
+                json=payload,
+                headers=headers,
+                timeout=self._timeout,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except httpx.HTTPStatusError as exc:
+            raise LLMProviderError(
+                f"openai-compatible tool call failed with HTTP {exc.response.status_code}"
+            ) from None
+        except httpx.HTTPError as exc:
+            raise LLMProviderError(
+                f"openai-compatible tool call failed: {type(exc).__name__}"
+            ) from None
+
+        message = (data.get("choices") or [{}])[0].get("message") or {}
+        raw_calls = message.get("tool_calls") or []
+        tool_calls: list[ToolCall] = []
+        for call in raw_calls:
+            fn = call.get("function") or {}
+            raw_args = fn.get("arguments") or "{}"
+            try:
+                args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise LLMProviderError(
+                    f"tool call {fn.get('name')!r} had unparseable arguments: "
+                    f"{type(exc).__name__}"
+                ) from None
+            tool_calls.append(
+                ToolCall(id=call.get("id") or fn.get("name") or "call", name=fn.get("name") or "", arguments=args)
+            )
+        return ChatToolResult(
+            tool_calls=tool_calls,
+            text=message.get("content"),
             raw_metadata={"usage": data.get("usage")},
         )
