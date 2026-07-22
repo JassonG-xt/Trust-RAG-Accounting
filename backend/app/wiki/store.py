@@ -18,12 +18,22 @@ import json
 from pathlib import Path
 
 import yaml
+from pydantic import ValidationError
 
 from ..ingestion.chunker import chunk_document
-from ..ingestion.frontmatter import parse_frontmatter_markdown
+from ..ingestion.frontmatter import (
+    FrontMatterError,
+    MissingFrontMatterError,
+    parse_frontmatter_markdown,
+)
 from ..ingestion.models import AccountingDocument, DocumentChunk, compute_checksum
 from ..ingestion.store_writer import write_chunk_store
 from .models import WikiFrontmatter, WikiPage
+
+# A load-time problem the tolerant loader surfaces instead of crashing:
+# ``(code, page_id_or_None, message)``. The lint converts these into
+# ``LintFinding`` errors (importing LintFinding here would be a cycle).
+LoadIssue = tuple[str, str | None, str]
 
 # Top-level reserved files that are not content pages.
 RESERVED_FILES = {"index.md", "log.md", "schema.md"}
@@ -80,10 +90,12 @@ def page_path(wiki_dir: Path | str, page: WikiPage) -> Path:
 
 
 def load_wiki(wiki_dir: Path | str) -> dict[str, WikiPage]:
-    """Load every content page under ``wiki_dir`` keyed by ``page_id``.
+    """Load every content page under ``wiki_dir`` keyed by ``page_id`` (strict).
 
     Reserved top-level files (index.md / log.md / schema.md) are skipped.
-    Traversal is sorted so results are deterministic across runs.
+    Traversal is sorted so results are deterministic across runs. Raises on a
+    malformed page — callers that must tolerate a hand-edited vault (the lint,
+    and the apply lint-gate) use :func:`load_wiki_tolerant` instead.
     """
 
     wiki_dir = Path(wiki_dir)
@@ -96,6 +108,60 @@ def load_wiki(wiki_dir: Path | str) -> dict[str, WikiPage]:
         page = parse_page(path.read_text(encoding="utf-8"))
         pages[page.frontmatter.page_id] = page
     return pages
+
+
+def load_wiki_tolerant(wiki_dir: Path | str) -> tuple[dict[str, WikiPage], list[LoadIssue]]:
+    """Load pages, converting per-file parse failures into :data:`LoadIssue`s.
+
+    One malformed or mis-typed page (bad enum, ``revision: 0``, a stray
+    ``README.md`` with no front matter, a filename that disagrees with its
+    ``page_id``, or a duplicate ``page_id``) must never crash the whole
+    lint/apply toolchain — the point of the pattern is that a human curates the
+    vault. The first file wins on a duplicate ``page_id``; the collision is
+    reported.
+    """
+
+    wiki_dir = Path(wiki_dir)
+    pages: dict[str, WikiPage] = {}
+    issues: list[LoadIssue] = []
+    if not wiki_dir.exists():
+        return pages, issues
+    for path in sorted(wiki_dir.rglob("*.md")):
+        if path.name in RESERVED_FILES:
+            continue
+        rel = str(path.relative_to(wiki_dir))
+        try:
+            page = parse_page(path.read_text(encoding="utf-8"))
+        except MissingFrontMatterError as exc:
+            issues.append(("missing_frontmatter", None, f"{rel}: {exc}"))
+            continue
+        except (FrontMatterError, ValidationError, ValueError) as exc:
+            issues.append(("parse_error", None, f"{rel}: {exc}"))
+            continue
+        pid = page.frontmatter.page_id
+        if path.stem != pid:
+            issues.append(
+                ("page_id_filename_mismatch", pid,
+                 f"{rel}: filename stem {path.stem!r} != page_id {pid!r}")
+            )
+        if pid in pages:
+            issues.append(("duplicate_page_id", pid, f"{rel}: duplicate page_id"))
+            continue
+        pages[pid] = page
+    return pages, issues
+
+
+def find_page_files(wiki_dir: Path | str, page_id: str) -> list[Path]:
+    """Return every on-disk file named ``<page_id>.md`` under any subdir.
+
+    Used by the applier to sweep a page_id's stale file when a re-typed page
+    would otherwise leave a shadowing ghost under the previous subdir.
+    """
+
+    wiki_dir = Path(wiki_dir)
+    if not wiki_dir.exists():
+        return []
+    return sorted(p for p in wiki_dir.rglob(f"{page_id}.md") if p.name not in RESERVED_FILES)
 
 
 def write_page(wiki_dir: Path | str, page: WikiPage) -> Path:
@@ -123,7 +189,7 @@ def page_to_document(page: WikiPage, wiki_dir: Path | str) -> AccountingDocument
         version=f"rev{fm.revision}",
         document_type=fm.page_type,
         client=fm.client,
-        policy_family=None,
+        policy_family=fm.policy_family,
         valid_from=fm.valid_from,
         valid_to=fm.valid_to,
         source_path=rel_path,

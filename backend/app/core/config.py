@@ -437,18 +437,22 @@ class Settings:
         default_factory=lambda: _optional_str_env("ANTHROPIC_MODEL")
     )
 
-    # Phase 10A — LLM wiki compilation layer. The wiki is OPTIONAL and OFF by
-    # default. In 10A only the deterministic mock ingest path exists
-    # (``wiki_ingest_mode="mock"`` replays fixture proposals; no network / API
-    # key / real LLM). ``wiki_ingest_mode="llm"`` is reserved for the Phase 10B
-    # ingest agent and is not implemented here. ``wiki_dir`` lives under the
-    # gitignored ``data/`` tree; only committed test fixtures live elsewhere.
+    # Phase 10A/10B — LLM wiki compilation layer. The wiki is OPTIONAL and OFF
+    # by default. ``wiki_ingest_mode="mock"`` drives the ingest agent with a
+    # deterministic scripted provider (no network / API key / real LLM — this is
+    # what CI and the test suite use); ``"llm"`` uses the OpenAI-compatible
+    # provider locally. Every staged proposal routes through the wiki review
+    # queue before the applier writes anything. ``wiki_dir`` lives under the
+    # gitignored ``data/`` tree.
     wiki_enabled: bool = field(
         default_factory=lambda: _bool_env("WIKI_ENABLED", False)
     )
     wiki_dir: str = field(default_factory=lambda: os.getenv("WIKI_DIR", "data/wiki"))
     wiki_ingest_mode: str = field(
         default_factory=lambda: os.getenv("WIKI_INGEST_MODE", "mock")
+    )
+    wiki_ingest_max_tool_calls: int = field(
+        default_factory=lambda: _int_env("WIKI_INGEST_MAX_TOOL_CALLS", 20)
     )
 
     def validate_persistence(self) -> None:

@@ -3,6 +3,7 @@ page_id: policy-reimbursement-2024
 page_type: policy
 title: Client Reimbursement Policy 2024
 client: null
+policy_family: reimbursement_policy
 status: superseded
 valid_from: 2024-01-01
 valid_to: 2025-12-31

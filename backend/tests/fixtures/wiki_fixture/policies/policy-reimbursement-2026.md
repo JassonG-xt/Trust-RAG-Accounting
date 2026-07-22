@@ -3,6 +3,7 @@ page_id: policy-reimbursement-2026
 page_type: policy
 title: Client Reimbursement Policy 2026
 client: null
+policy_family: reimbursement_policy
 status: active
 valid_from: 2026-01-01
 valid_to: null

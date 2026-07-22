@@ -3,6 +3,7 @@ page_id: policy-alpha-bookkeeping-sop
 page_type: policy
 title: Alpha Trading Co. bookkeeping SOP
 client: Alpha Trading Co.
+policy_family: alpha_bookkeeping_sop
 status: active
 valid_from: 2026-01-01
 valid_to: null

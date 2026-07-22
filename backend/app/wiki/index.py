@@ -17,11 +17,26 @@ from pathlib import Path
 
 from .models import WikiPage
 
-_WIKILINK = re.compile(r"\[\[([^\]|#]+)")
-LOG_LINE = re.compile(r"^## \[(\d{4}-\d{2}-\d{2})\] (\w+) \| (.+)$")
+_WIKILINK = re.compile(r"\[\[([^\]|#\n]+?)(?:[#|][^\]\n]*)?\]\]")
+LOG_LINE = re.compile(r"^## \[(\d{4}-\d{2}-\d{2})\] ([\w-]+) \| (.+)$")
 
 _LOG_HEADER = "# Wiki Op Log"
 _INDEX_HEADER = "# Wiki Index"
+
+
+def _strip_code_fences(text: str) -> str:
+    """Drop fenced code blocks so ``[[...]]``-looking text inside a code fence
+    is not mistaken for a wikilink."""
+
+    out: list[str] = []
+    in_fence = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            out.append(line)
+    return "\n".join(out)
 
 
 # ---------------------------------------------------------------------------
@@ -40,13 +55,15 @@ def render_index(pages: dict[str, WikiPage]) -> str:
 
 
 def parse_wikilinks(text: str) -> set[str]:
-    """Return the set of ``page_id`` targets referenced by ``[[...]]`` links.
+    """Return the set of ``page_id`` targets referenced by closed ``[[...]]``
+    links, ignoring anything inside code fences.
 
     Tolerates Obsidian ``[[id|alias]]`` and ``[[id#heading]]`` forms by
-    keeping only the target id.
+    keeping only the target id; an unclosed ``[[`` is not a link.
     """
 
-    return {m.group(1).strip() for m in _WIKILINK.finditer(text)}
+    scan = _strip_code_fences(text)
+    return {m.group(1).strip() for m in _WIKILINK.finditer(scan)}
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +72,18 @@ def parse_wikilinks(text: str) -> set[str]:
 
 
 def format_log_entry(date: str, op: str, title: str) -> str:
-    return f"## [{date}] {op} | {title}"
+    """Render and validate one op-log line against :data:`LOG_LINE`.
+
+    Rejects newlines in the title (which would split the entry and let the tail
+    escape the grammar check) and any op/date that breaks the grammar.
+    """
+
+    if "\n" in title or "\r" in title:
+        raise ValueError("log entry title must not contain newlines")
+    line = f"## [{date}] {op} | {title}"
+    if not LOG_LINE.match(line):
+        raise ValueError(f"log entry does not match grammar {LOG_LINE.pattern!r}: {line!r}")
+    return line
 
 
 def append_log(log_path: Path | str, entries: list[str]) -> Path:
@@ -70,10 +98,3 @@ def append_log(log_path: Path | str, entries: list[str]) -> Path:
     body = "\n".join([existing, "", *entries]) if entries else existing
     log_path.write_text(body + "\n", encoding="utf-8")
     return log_path
-
-
-def parse_log_lines(text: str) -> list[str]:
-    """Return the ``## [...]`` heading lines in an op log (grammar-checked
-    elsewhere by the lint)."""
-
-    return [line for line in text.splitlines() if line.startswith("## [")]

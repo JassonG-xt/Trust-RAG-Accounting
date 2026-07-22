@@ -13,6 +13,7 @@ from pathlib import Path
 _TESTS_DIR = Path(__file__).resolve().parent.parent
 FIXTURE_WIKI = _TESTS_DIR / "fixtures" / "wiki_fixture"
 PROPOSALS_DIR = _TESTS_DIR / "fixtures" / "wiki_proposals"
+SAMPLE_DOCS = _TESTS_DIR.parent.parent / "sample_docs"
 
 # document_id -> owning client (None = global), from sample_docs/ front matter.
 DOC_CLIENTS: dict[str, str | None] = {
@@ -24,3 +25,14 @@ DOC_CLIENTS: dict[str, str | None] = {
     "monthly_bookkeeping_checklist_2026": None,
 }
 KNOWN_DOC_IDS = set(DOC_CLIENTS)
+
+
+def make_repository():
+    """A DocumentRepository that loads straight from sample_docs/ (no data/ store)."""
+
+    from backend.app.services.document_repository import DocumentRepository
+
+    missing = SAMPLE_DOCS / "__no_such_store__.json"
+    return DocumentRepository(
+        chunk_store_path=missing, document_store_path=missing, sample_dir=SAMPLE_DOCS
+    )

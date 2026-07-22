@@ -72,15 +72,35 @@ def test_apply_writes_pages_index_log_and_stores(tmp_path):
     assert json.loads(chunks_out.read_text())["kind"] == "chunks"
 
 
-def test_reapply_bumps_revision(tmp_path):
+def test_reapply_same_proposal_is_idempotent_noop(tmp_path):
     wiki = tmp_path / "wiki"
     proposal = mock_ingest(SRC, proposals_dir=PROPOSALS_DIR)
     apply_proposal(proposal, wiki, pages_out=tmp_path / "p1.json", chunks_out=tmp_path / "c1.json")
-    apply_proposal(proposal, wiki, pages_out=tmp_path / "p2.json", chunks_out=tmp_path / "c2.json")
+    result2 = apply_proposal(
+        proposal, wiki, pages_out=tmp_path / "p2.json", chunks_out=tmp_path / "c2.json"
+    )
 
+    # Unchanged source (same source_content_hash) → no-op, nothing rewritten.
+    assert result2.status == "noop"
+    assert result2.applied_page_ids == []
     page = parse_page((wiki / "policies" / "policy-alpha-bookkeeping-sop.md").read_text())
-    assert page.frontmatter.revision == 2  # bumped against the prior on-disk page
-    # Re-apply must not duplicate pages.
+    assert page.frontmatter.revision == 1  # not re-bumped
+    assert set(load_wiki(wiki)) == EXPECTED_PAGES
+    # Op log has exactly one round of ingest entries, not two.
+    assert (wiki / "log.md").read_text().count("## [2026-07-21] ingest |") == 3
+
+
+def test_force_reapply_bumps_revision(tmp_path):
+    wiki = tmp_path / "wiki"
+    proposal = mock_ingest(SRC, proposals_dir=PROPOSALS_DIR)
+    apply_proposal(proposal, wiki, pages_out=tmp_path / "p1.json", chunks_out=tmp_path / "c1.json")
+    result2 = apply_proposal(
+        proposal, wiki, pages_out=tmp_path / "p2.json", chunks_out=tmp_path / "c2.json", force=True
+    )
+
+    assert result2.status == "applied"
+    page = parse_page((wiki / "policies" / "policy-alpha-bookkeeping-sop.md").read_text())
+    assert page.frontmatter.revision == 2  # forced re-apply bumps
     assert set(load_wiki(wiki)) == EXPECTED_PAGES
 
 
