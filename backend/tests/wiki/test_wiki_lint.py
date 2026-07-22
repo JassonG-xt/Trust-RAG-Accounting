@@ -21,6 +21,7 @@ def _mk(
     *,
     body="# t\n",
     client=None,
+    policy_family=None,
     status="active",
     superseded_by=None,
     sources=("reimbursement_policy_2026",),
@@ -32,6 +33,7 @@ def _mk(
         page_type=page_type,
         title=page_id,
         client=client,
+        policy_family=policy_family,
         status=status,
         superseded_by=superseded_by,
         sources=list(sources),
@@ -108,16 +110,32 @@ def test_dangling_superseded_by_error(tmp_path):
     assert "dangling_superseded_by" in errors
 
 
-def test_multiple_active_in_lineage_error(tmp_path):
-    # Two active pages in one supersession lineage (a -> b, both active).
+def test_multiple_active_same_family_error(tmp_path):
+    # Two active pages sharing (policy_family, client) — the classic
+    # forgot-to-supersede mistake; unlinked by superseded_by.
     pages = [
-        _mk("policy-a", "policy", status="active", superseded_by="policy-b",
+        _mk("policy-a", "policy", policy_family="reimbursement", status="active",
             body="# a\n\n[[policy-b]]"),
-        _mk("policy-b", "policy", status="active", body="# b\n\n[[policy-a]]"),
+        _mk("policy-b", "policy", policy_family="reimbursement", status="active",
+            body="# b\n\n[[policy-a]]"),
     ]
     _build(tmp_path, pages)
     errors, _ = _codes(lint_wiki(tmp_path, known_doc_ids=KNOWN_DOC_IDS, doc_clients=DOC_CLIENTS))
     assert "multiple_active" in errors
+
+
+def test_one_active_plus_superseded_same_family_is_clean(tmp_path):
+    # Same family, but exactly one active + one properly superseded → clean.
+    pages = [
+        _mk("policy-new", "policy", policy_family="reimbursement", status="active",
+            valid_from="2026-01-01", body="# new\n\n[[policy-old]]"),
+        _mk("policy-old", "policy", policy_family="reimbursement", status="superseded",
+            superseded_by="policy-new", valid_from="2024-01-01", valid_to="2025-12-31",
+            body="# old\n\n[[policy-new]]"),
+    ]
+    _build(tmp_path, pages)
+    errors, _ = _codes(lint_wiki(tmp_path, known_doc_ids=KNOWN_DOC_IDS, doc_clients=DOC_CLIENTS))
+    assert "multiple_active" not in errors
 
 
 def test_index_missing_page_error(tmp_path):

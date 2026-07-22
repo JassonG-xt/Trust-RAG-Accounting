@@ -9,7 +9,7 @@ The real review-queue wiring and the LLM ingest agent land in Phase 10B.
 
 from __future__ import annotations
 
-from .apply import apply_proposal
+from .apply import WikiApplyRejected, apply_proposal
 from .lint import LintFinding, LintReport, lint_wiki
 from .mock_ingest import mock_ingest
 from .models import (
@@ -20,7 +20,14 @@ from .models import (
     WikiPage,
     WikiUpdateProposal,
 )
-from .store import load_wiki, parse_page, refresh_wiki_stores, render_markdown
+from .store import (
+    find_page_files,
+    load_wiki,
+    load_wiki_tolerant,
+    parse_page,
+    refresh_wiki_stores,
+    render_markdown,
+)
 
 __all__ = [
     "AnalysisResult",
@@ -28,12 +35,15 @@ __all__ = [
     "LintFinding",
     "LintReport",
     "PagePatch",
+    "WikiApplyRejected",
     "WikiFrontmatter",
     "WikiPage",
     "WikiUpdateProposal",
     "apply_proposal",
+    "find_page_files",
     "lint_wiki",
     "load_wiki",
+    "load_wiki_tolerant",
     "mock_ingest",
     "parse_page",
     "refresh_wiki_stores",

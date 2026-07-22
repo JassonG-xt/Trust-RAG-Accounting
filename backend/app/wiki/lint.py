@@ -16,14 +16,17 @@ violates these):
    source id exists in the raw store (when ``known_doc_ids`` is provided), and
    every ``[[wikilink]]`` resolves to an existing ``page_id``.
 3. **Temporal pairing.** Every ``status="superseded"`` page carries a
-   ``superseded_by`` that resolves; within a supersession lineage at most one
-   page is ``active``.
+   ``superseded_by`` that resolves; at most one ``active`` page exists per
+   ``(policy_family, client)`` group.
 4. **Index consistency.** ``index.md`` lists exactly the on-disk page set;
    every ``log.md`` heading matches the op-log grammar.
 
+A malformed, mis-typed, or duplicate-``page_id`` page becomes a lint error via
+the tolerant loader rather than crashing the run.
+
 Warnings (non-fatal): orphan pages (no inbound wikilink from another page),
-overlapping active validity windows within a lineage, and the skipped
-client-isolation check noted above.
+empty-body pages (contribute no chunks), overlapping active validity windows
+within a group, and the skipped client-isolation check noted above.
 """
 
 from __future__ import annotations
@@ -33,8 +36,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from .index import LOG_LINE, parse_wikilinks
-from .models import WikiPage
-from .store import RESERVED_FILES, load_wiki
+from .store import load_wiki_tolerant
 
 
 class LintFinding(BaseModel):
@@ -61,20 +63,6 @@ def _overlaps(a_from, a_to, b_from, b_to) -> bool:
     return lo <= min(a_hi, b_hi)
 
 
-def _lineage_root(page_id: str, pages: dict[str, WikiPage]) -> str:
-    """Follow ``superseded_by`` to the newest page in the lineage (cycle-safe)."""
-
-    seen: set[str] = set()
-    current = page_id
-    while current in pages and current not in seen:
-        seen.add(current)
-        nxt = pages[current].frontmatter.superseded_by
-        if not nxt or nxt not in pages:
-            break
-        current = nxt
-    return current
-
-
 def lint_wiki(
     wiki_dir: Path | str,
     *,
@@ -84,9 +72,13 @@ def lint_wiki(
     """Run the tier-1 lint over a wiki directory."""
 
     wiki_dir = Path(wiki_dir)
-    pages = load_wiki(wiki_dir)
+    pages, load_issues = load_wiki_tolerant(wiki_dir)
     report = LintReport()
     page_ids = set(pages)
+
+    # --- Load-time problems (bad/duplicate/mis-typed pages) become errors ----
+    for code, pid, msg in load_issues:
+        report.errors.append(LintFinding(code=code, page_id=pid, message=msg))
 
     # --- Invariant 2 (part): sources present / known; wikilinks resolve ------
     for pid, page in pages.items():
@@ -95,6 +87,11 @@ def lint_wiki(
             report.errors.append(
                 LintFinding(code="missing_sources", page_id=pid,
                             message="page has an empty sources list")
+            )
+        if not page.body.strip():
+            report.warnings.append(
+                LintFinding(code="empty_body", page_id=pid,
+                            message="page body is empty; contributes no chunks")
             )
         if known_doc_ids is not None:
             for doc_id in fm.sources:
@@ -132,8 +129,11 @@ def lint_wiki(
                                              f"'{src_client}'"))
                     )
 
-    # --- Invariant 3: temporal pairing + stale-active -----------------------
-    active_by_lineage: dict[str, list[str]] = {}
+    # --- Invariant 3: temporal pairing + one active per (policy_family, client)
+    # Active pages are grouped by (policy_family, client); >1 in a group is the
+    # "forgot to supersede" mistake. Pages without a policy_family (concept /
+    # source_summary / client pages) carry no temporal topic and are skipped.
+    active_by_family: dict[tuple[str, str | None], list[str]] = {}
     for pid, page in pages.items():
         fm = page.frontmatter
         if fm.status == "superseded":
@@ -148,15 +148,16 @@ def lint_wiki(
                                 message=f"superseded_by '{fm.superseded_by}' "
                                         "does not resolve")
                 )
-        elif fm.status == "active":
-            active_by_lineage.setdefault(_lineage_root(pid, pages), []).append(pid)
+        elif fm.status == "active" and fm.policy_family is not None:
+            active_by_family.setdefault((fm.policy_family, fm.client), []).append(pid)
 
-    for root, members in active_by_lineage.items():
+    for (family, client), members in active_by_family.items():
         if len(members) > 1:
             report.errors.append(
-                LintFinding(code="multiple_active", page_id=root,
-                            message="more than one active page in the "
-                                    f"supersession lineage: {sorted(members)}")
+                LintFinding(code="multiple_active", page_id=sorted(members)[0],
+                            message="more than one active page for "
+                                    f"(policy_family={family!r}, client={client!r}): "
+                                    f"{sorted(members)}")
             )
             for i, a in enumerate(members):
                 fa = pages[a].frontmatter
@@ -210,4 +211,4 @@ def lint_wiki(
     return report
 
 
-__all__ = ["LintFinding", "LintReport", "lint_wiki", "RESERVED_FILES"]
+__all__ = ["LintFinding", "LintReport", "lint_wiki"]
