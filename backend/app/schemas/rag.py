@@ -253,6 +253,9 @@ class HumanReviewSummary(BaseModel):
 
 class RAGQueryRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
+    # Phase 10C — optional per-request retrieval corpus override. None → the
+    # server's configured RETRIEVAL_SOURCE (raw by default).
+    retrieval_source: Literal["raw", "wiki", "hybrid"] | None = None
 
 
 class RAGQueryResponse(BaseModel):

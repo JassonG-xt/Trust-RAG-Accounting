@@ -113,9 +113,15 @@ def apply_proposal(
     applied_ledger_path: Path | str | None = None,
     known_doc_ids: set[str] | None = None,
     doc_clients: dict[str, str | None] | None = None,
+    source_doc_types: dict[str, str] | None = None,
     force: bool = False,
 ) -> ApplyResult:
-    """Apply an approved proposal (fail-closed) and return what was written."""
+    """Apply an approved proposal (fail-closed) and return what was written.
+
+    ``source_doc_types`` (``raw doc_id -> document_type``) is forwarded to the
+    derived-store refresh so wiki chunks inherit the retrieval document_type of
+    the source they compile (Phase 10C); approve_and_apply self-sources it.
+    """
 
     wiki_dir = Path(wiki_dir)
     date = proposal.created_at[:10]
@@ -160,7 +166,9 @@ def apply_proposal(
     # 3. Commit: replay the identical writes on the real dir.
     wiki_dir.mkdir(parents=True, exist_ok=True)
     applied = _write_projection(wiki_dir, proposal, date)
-    pages_path, chunks_path = refresh_wiki_stores(wiki_dir, pages_out, chunks_out)
+    pages_path, chunks_path = refresh_wiki_stores(
+        wiki_dir, pages_out, chunks_out, source_doc_types=source_doc_types
+    )
 
     ledger[proposal.source_doc_id] = proposal.source_content_hash
     _write_ledger(applied_ledger_path, ledger)

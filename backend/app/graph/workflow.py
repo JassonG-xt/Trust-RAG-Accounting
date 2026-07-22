@@ -239,12 +239,21 @@ def run_query(
     *,
     tenant_id: str = "local",
     actor_id: str = "local-admin",
+    retrieval_source: str | None = None,
 ) -> dict:
-    """Convenience entry point used by the FastAPI route and tests."""
+    """Convenience entry point used by the FastAPI route and tests.
+
+    ``retrieval_source`` (``raw`` | ``wiki`` | ``hybrid``) overrides the
+    configured default for this call only; the retriever nodes read it via the
+    repository router, so the node graph itself is unchanged.
+    """
+
+    from ..services.document_repository import use_retrieval_source
 
     workflow = get_workflow()
     state = initial_state(question, tenant_id=tenant_id, actor_id=actor_id)
-    return workflow.invoke(state)
+    with use_retrieval_source(retrieval_source):
+        return workflow.invoke(state)
 
 
 __all__ = [

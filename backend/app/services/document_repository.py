@@ -24,6 +24,7 @@ accounting-workflow safety policy, not a retrieval concern.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 from pathlib import Path
@@ -46,6 +47,13 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_CHUNK_STORE = _PROJECT_ROOT / "data" / "trustrag_chunks.json"
 _DEFAULT_DOCUMENT_STORE = _PROJECT_ROOT / "data" / "trustrag_documents.json"
 _DEFAULT_SAMPLE_DIR = _PROJECT_ROOT / "sample_docs"
+# Phase 10C — derived wiki chunk store (mirrors wiki.apply's default output at
+# ``<wiki_dir>.parent/trustrag_wiki_chunks.json``). Gitignored under data/; it
+# only exists once a wiki proposal has been approved + applied.
+_DEFAULT_WIKI_CHUNK_STORE = _PROJECT_ROOT / "data" / "trustrag_wiki_chunks.json"
+# A path guaranteed not to exist — used to disable the document-store / sample-dir
+# fallback legs for the wiki corpus (it loads only from the wiki chunk store).
+_NO_STORE = _PROJECT_ROOT / "data" / "__no_such_store__"
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +198,8 @@ class DocumentRepository:
         chunk_store_path: Path | None = None,
         document_store_path: Path | None = None,
         sample_dir: Path | None = None,
+        *,
+        allow_fallback: bool = True,
     ) -> None:
         self.chunk_store_path = (
             Path(chunk_store_path) if chunk_store_path else _DEFAULT_CHUNK_STORE
@@ -198,6 +208,10 @@ class DocumentRepository:
             Path(document_store_path) if document_store_path else _DEFAULT_DOCUMENT_STORE
         )
         self.sample_dir = Path(sample_dir) if sample_dir else _DEFAULT_SAMPLE_DIR
+        # When False (the wiki / hybrid corpora), a missing store yields an
+        # *empty* corpus rather than the hardcoded raw seed — serving raw seed
+        # docs under RETRIEVAL_SOURCE=wiki would be a silent trust violation.
+        self.allow_fallback = allow_fallback
         self._documents: list[AccountingDocument] | None = None
         self._chunks: list[DocumentChunk] | None = None
         self._retrieval_service: RetrievalService | None = None
@@ -226,16 +240,17 @@ class DocumentRepository:
             chunks = chunk_documents(documents)
             self._source = f"sample_docs:{self.sample_dir}"
         else:
-            documents = _hardcoded_fallback_documents()
-            chunks = chunk_documents(documents)
-            self._source = "hardcoded-fallback"
-            logger.warning(
-                "DocumentRepository falling back to hardcoded seed (no chunk "
-                "store at %s, no document store at %s, no sample_docs in %s)",
-                self.chunk_store_path,
-                self.document_store_path,
-                self.sample_dir,
-            )
+            documents = _hardcoded_fallback_documents() if self.allow_fallback else []
+            chunks = chunk_documents(documents) if documents else []
+            self._source = "hardcoded-fallback" if self.allow_fallback else "empty"
+            if self.allow_fallback:
+                logger.warning(
+                    "DocumentRepository falling back to hardcoded seed (no chunk "
+                    "store at %s, no document store at %s, no sample_docs in %s)",
+                    self.chunk_store_path,
+                    self.document_store_path,
+                    self.sample_dir,
+                )
 
         self._documents = documents
         self._chunks = chunks
@@ -251,6 +266,14 @@ class DocumentRepository:
         payload = json.loads(path.read_text(encoding="utf-8"))
         raw_chunks = payload.get("chunks", [])
         chunks = [DocumentChunk(**c) for c in raw_chunks]
+        return chunks, DocumentRepository._documents_from_chunks(chunks)
+
+    @staticmethod
+    def _documents_from_chunks(
+        chunks: list[DocumentChunk],
+    ) -> list[AccountingDocument]:
+        """Derive one document-level record per document_id from chunks."""
+
         documents: dict[str, AccountingDocument] = {}
         for c in chunks:
             if c.document_id in documents:
@@ -271,7 +294,24 @@ class DocumentRepository:
                 content="",
                 checksum=c.checksum,
             )
-        return chunks, list(documents.values())
+        return list(documents.values())
+
+    @classmethod
+    def from_chunks(
+        cls, chunks: list[DocumentChunk], *, source: str = "in-memory"
+    ) -> DocumentRepository:
+        """Build a preloaded repository over an explicit chunk list.
+
+        Used for the ``hybrid`` corpus (raw + wiki chunks fused into one
+        retriever). No fallback: the chunk list is authoritative.
+        """
+
+        repo = cls(allow_fallback=False)
+        repo._chunks = list(chunks)
+        repo._documents = cls._documents_from_chunks(repo._chunks)
+        repo._retrieval_service = RetrievalService(repo._chunks)
+        repo._source = source
+        return repo
 
     @staticmethod
     def _load_documents_from_json(path: Path) -> list[AccountingDocument]:
@@ -414,15 +454,64 @@ class DocumentRepository:
 
 
 # ---------------------------------------------------------------------------
-# Singleton
+# Singleton + retrieval-source routing (Phase 10C)
 # ---------------------------------------------------------------------------
+#
+# ``get_repository()`` is the accessor the LangGraph retriever nodes call. It
+# routes to the raw / wiki / hybrid corpus based on a ContextVar that
+# ``run_query`` sets per request. This keeps the graph nodes byte-identical
+# (the design's "unchanged nodes"): the only in-request callers of
+# ``get_repository`` are the two retriever nodes, and the ContextVar defaults
+# to the configured source (raw) everywhere else.
 
+_RETRIEVAL_SOURCES = ("raw", "wiki", "hybrid")
 
 _repository_singleton: DocumentRepository | None = None
+_wiki_repository_singleton: DocumentRepository | None = None
+_hybrid_repository_singleton: DocumentRepository | None = None
 _singleton_lock = Lock()
 
+_active_retrieval_source: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "trustrag_retrieval_source", default=None
+)
 
-def get_repository() -> DocumentRepository:
+
+def _normalize_source(source: str | None) -> str:
+    src = (source or "").strip().lower()
+    return src if src in _RETRIEVAL_SOURCES else "raw"
+
+
+def resolve_retrieval_source() -> str:
+    """The active retrieval source: request override, else the configured default."""
+
+    override = _active_retrieval_source.get()
+    if override is not None:
+        return _normalize_source(override)
+    from ..core.config import get_settings
+
+    return _normalize_source(getattr(get_settings(), "retrieval_source", "raw"))
+
+
+class use_retrieval_source:
+    """Context manager scoping the active retrieval source to a request."""
+
+    def __init__(self, source: str | None) -> None:
+        self._source = source
+        self._token: contextvars.Token | None = None
+
+    def __enter__(self) -> str:
+        resolved = _normalize_source(source=self._source) if self._source else None
+        self._token = _active_retrieval_source.set(resolved)
+        return resolve_retrieval_source()
+
+    def __exit__(self, *exc: object) -> None:
+        if self._token is not None:
+            _active_retrieval_source.reset(self._token)
+
+
+def get_raw_repository() -> DocumentRepository:
+    """The raw-corpus repository — always the raw store, regardless of source."""
+
     global _repository_singleton
     with _singleton_lock:
         if _repository_singleton is None:
@@ -430,9 +519,50 @@ def get_repository() -> DocumentRepository:
         return _repository_singleton
 
 
-def reset_repository() -> None:
-    """Reset the singleton — used by tests that want a clean load."""
+def get_wiki_repository() -> DocumentRepository:
+    """The wiki-corpus repository over the derived wiki chunk store (no fallback)."""
 
-    global _repository_singleton
+    global _wiki_repository_singleton
+    with _singleton_lock:
+        if _wiki_repository_singleton is None:
+            _wiki_repository_singleton = DocumentRepository(
+                chunk_store_path=_DEFAULT_WIKI_CHUNK_STORE,
+                document_store_path=_NO_STORE,
+                sample_dir=_NO_STORE,
+                allow_fallback=False,
+            )
+        return _wiki_repository_singleton
+
+
+def get_hybrid_repository() -> DocumentRepository:
+    """Raw + wiki chunks fused into one retriever (Phase 10C hybrid corpus)."""
+
+    global _hybrid_repository_singleton
+    with _singleton_lock:
+        if _hybrid_repository_singleton is None:
+            combined = get_raw_repository().load_chunks() + get_wiki_repository().load_chunks()
+            _hybrid_repository_singleton = DocumentRepository.from_chunks(
+                combined, source="hybrid:raw+wiki"
+            )
+        return _hybrid_repository_singleton
+
+
+def get_repository() -> DocumentRepository:
+    """Return the repository for the active retrieval source (raw by default)."""
+
+    source = resolve_retrieval_source()
+    if source == "wiki":
+        return get_wiki_repository()
+    if source == "hybrid":
+        return get_hybrid_repository()
+    return get_raw_repository()
+
+
+def reset_repository() -> None:
+    """Reset all corpus singletons — used by tests that want a clean load."""
+
+    global _repository_singleton, _wiki_repository_singleton, _hybrid_repository_singleton
     with _singleton_lock:
         _repository_singleton = None
+        _wiki_repository_singleton = None
+        _hybrid_repository_singleton = None

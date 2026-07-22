@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from ..review.state_machine import apply_review_action
 from .apply import apply_proposal
-from .ingest import derive_doc_maps
+from .ingest import derive_doc_maps, derive_source_doc_types
 from .models import ApplyResult, WikiUpdateProposal
 
 
@@ -120,6 +120,7 @@ def approve_and_apply(
     """
 
     known_doc_ids, doc_clients = derive_doc_maps(repository)
+    source_doc_types = derive_source_doc_types(repository)
     status = queue.act(proposal_id, "approve", at=at)
     if status != "approved":
         raise RuntimeError(f"proposal {proposal_id} is {status}, not approved")
@@ -132,5 +133,6 @@ def approve_and_apply(
         applied_ledger_path=applied_ledger_path,
         known_doc_ids=known_doc_ids,
         doc_clients=doc_clients,
+        source_doc_types=source_doc_types,
         force=force,
     )
