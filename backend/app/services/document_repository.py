@@ -534,6 +534,22 @@ def get_wiki_repository() -> DocumentRepository:
         return _wiki_repository_singleton
 
 
+def wiki_page_source_map() -> dict[str, list[str]]:
+    """``wiki_page_id -> underlying raw doc_ids`` from the wiki corpus.
+
+    Built from the loaded wiki chunk metadata (page_id + the page's ``sources``).
+    Used at the query boundary to resolve wiki page identity back to the raw
+    documents it compiles (two-layer citations + wiki-mode eval).
+    """
+
+    mapping: dict[str, list[str]] = {}
+    for chunk in get_wiki_repository().load_chunks():
+        page_id = chunk.metadata.get("page_id")
+        if page_id and page_id not in mapping:
+            mapping[page_id] = list(chunk.metadata.get("sources") or [])
+    return mapping
+
+
 def get_hybrid_repository() -> DocumentRepository:
     """Raw + wiki chunks fused into one retriever (Phase 10C hybrid corpus)."""
 

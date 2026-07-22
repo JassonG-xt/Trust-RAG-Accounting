@@ -248,12 +248,19 @@ def run_query(
     repository router, so the node graph itself is unchanged.
     """
 
-    from ..services.document_repository import use_retrieval_source
+    from ..services.document_repository import (
+        use_retrieval_source,
+        wiki_page_source_map,
+    )
+    from ..wiki.citations import enrich_wiki_citations
 
     workflow = get_workflow()
     state = initial_state(question, tenant_id=tenant_id, actor_id=actor_id)
-    with use_retrieval_source(retrieval_source):
-        return workflow.invoke(state)
+    with use_retrieval_source(retrieval_source) as source:
+        result = workflow.invoke(state)
+    if source in ("wiki", "hybrid"):
+        enrich_wiki_citations(result, wiki_page_source_map())
+    return result
 
 
 __all__ = [
