@@ -141,3 +141,37 @@ def test_open_superseded_page_is_closed_at_successor_valid_from():
     # Active successor stays open and records the inverse replaces edge.
     assert derived["policy-new"].valid_to is None
     assert derived["policy-new"].replaces == "policy-old"
+
+
+def test_superseded_page_closed_at_own_valid_from_when_successor_undated():
+    """P1-2: an undated successor must not leave the superseded page open (→ active)."""
+
+    from datetime import date
+
+    from backend.app.graph.nodes.temporal_checker import _is_active
+
+    old = WikiPage(
+        frontmatter=WikiFrontmatter(
+            page_id="policy-old", page_type="policy", title="Old",
+            policy_family="fam", status="superseded",
+            valid_from="2024-01-01", valid_to=None, superseded_by="policy-new",
+            sources=["reimbursement_policy_2024"],
+        ),
+        body="# old\n",
+    )
+    new = WikiPage(
+        frontmatter=WikiFrontmatter(
+            page_id="policy-new", page_type="policy", title="New",
+            policy_family="fam", status="active",
+            valid_from=None, valid_to=None, superseded_by=None,
+            sources=["reimbursement_policy_2026"],
+        ),
+        body="# new\n",
+    )
+    derived = _derive_retrieval_fields({"policy-old": old, "policy-new": new}, None)
+
+    # Successor undated → predecessor closes at its OWN valid_from, never open.
+    assert derived["policy-old"].valid_to == "2024-01-01"
+    # So the temporal checker will not serve the superseded page as active.
+    record = {"valid_from": "2024-01-01", "valid_to": derived["policy-old"].valid_to}
+    assert _is_active(record, date(2026, 5, 27)) is False

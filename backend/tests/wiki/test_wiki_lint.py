@@ -173,3 +173,21 @@ def test_orphan_page_is_warning_not_error(tmp_path):
     _, warnings = _codes(report)
     assert "orphan_page" in warnings
     assert report.ok  # orphan is non-fatal
+
+
+def test_active_versioned_page_missing_valid_from_is_error(tmp_path):
+    """P1-2: an active policy / invoice_rule page must carry valid_from."""
+
+    pages = [_mk("policy-a", "policy", policy_family="fam", valid_from=None)]
+    _build(tmp_path, pages)
+    report = lint_wiki(tmp_path, known_doc_ids=KNOWN_DOC_IDS, doc_clients=DOC_CLIENTS)
+    errors, _ = _codes(report)
+    assert "missing_valid_from" in errors
+
+
+def test_active_versioned_page_with_valid_from_has_no_missing_valid_from(tmp_path):
+    pages = [_mk("policy-a", "policy", policy_family="fam", valid_from="2026-01-01")]
+    _build(tmp_path, pages)
+    report = lint_wiki(tmp_path, known_doc_ids=KNOWN_DOC_IDS, doc_clients=DOC_CLIENTS)
+    errors, _ = _codes(report)
+    assert "missing_valid_from" not in errors

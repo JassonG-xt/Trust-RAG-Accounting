@@ -236,7 +236,12 @@ def _derive_retrieval_fields(
                     break
         valid_to = fm.valid_to
         if fm.superseded_by and valid_to is None:
-            valid_to = valid_from_by_id.get(fm.superseded_by)
+            # A superseded page must never be served as the active version. Close
+            # it at the successor's valid_from; if the successor is undated, fall
+            # back to the page's own valid_from so it still expires for any later
+            # as_of. (A page with no valid_from at all is already inactive per
+            # temporal_checker._is_active, so leaving valid_to None is safe then.)
+            valid_to = valid_from_by_id.get(fm.superseded_by) or fm.valid_from
         out[pid] = _RetrievalFields(
             document_type=document_type,
             replaces=replaces_by_id.get(pid),
