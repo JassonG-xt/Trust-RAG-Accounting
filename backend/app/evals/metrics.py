@@ -47,6 +47,38 @@ def _skipped(name: str) -> MetricResult:
     )
 
 
+def _is_wiki_mode(response: dict) -> bool:
+    """True when the response was served from the wiki / hybrid corpus.
+
+    ``run_query`` stamps ``retrieval_source`` only for wiki / hybrid, so raw-mode
+    responses take the identity path through every resolver below and every
+    metric's verdict is byte-identical to before Phase 10C.
+    """
+
+    return response.get("retrieval_source") in ("wiki", "hybrid")
+
+
+def _wiki_page_sources(response: dict) -> dict:
+    return response.get("wiki_page_sources") or {}
+
+
+def _resolve_ids_to_raw(ids: list[str], response: dict) -> list[str]:
+    """Expand wiki ``page_id``s to their underlying raw doc_ids (wiki mode only).
+
+    A page maps to its ``sources`` list; an id that is not a wiki page (already a
+    raw id, e.g. a raw hit in hybrid mode) passes through unchanged. Order is
+    preserved so primary-first checks still hold.
+    """
+
+    if not _is_wiki_mode(response):
+        return list(ids)
+    page_sources = _wiki_page_sources(response)
+    out: list[str] = []
+    for i in ids:
+        out.extend(page_sources.get(i, [i]))
+    return out
+
+
 def _citation_doc_ids(response: dict) -> list[str]:
     """Pull doc_ids from response.citations.
 
@@ -54,11 +86,19 @@ def _citation_doc_ids(response: dict) -> list[str]:
     prefer ``doc_id`` because that's the field every node in the
     pipeline writes. ``document_id`` mirrors it but only the
     answer-generator branch sets it explicitly.
+
+    Phase 10C: in wiki mode a ``wiki``-layer citation is addressed by ``page_id``
+    but grounded in raw documents, so we report its ``underlying_doc_ids`` (the
+    raw trust anchor the cases assert against) instead of the page id.
     """
 
+    wiki_mode = _is_wiki_mode(response)
     out: list[str] = []
     for c in response.get("citations") or []:
         if not isinstance(c, dict):
+            continue
+        if wiki_mode and c.get("citation_layer") == "wiki":
+            out.extend(c.get("underlying_doc_ids") or [])
             continue
         doc_id = c.get("doc_id") or c.get("document_id")
         if doc_id:
@@ -319,12 +359,17 @@ def metric_temporal_correctness(
     observed_active = temporal.get("selected_active_document")
     observed_expired = temporal.get("expired_documents") or []
 
+    # Wiki mode: temporal analysis is keyed by wiki page_id; resolve each page to
+    # the raw document(s) it compiles so the raw-doc-id expectations still hold.
+    resolved_active = _resolve_ids_to_raw([observed_active] if observed_active else [], response)
+    resolved_expired = _resolve_ids_to_raw(observed_expired, response)
+
     issues: list[str] = []
-    if expected_active is not None and observed_active != expected_active:
+    if expected_active is not None and expected_active not in resolved_active:
         issues.append(
             f"expected_active={expected_active!r}, observed_active={observed_active!r}"
         )
-    missing_expired = [d for d in expected_expired if d not in observed_expired]
+    missing_expired = [d for d in expected_expired if d not in resolved_expired]
     if missing_expired:
         issues.append(f"missing_expired_documents={missing_expired}")
 

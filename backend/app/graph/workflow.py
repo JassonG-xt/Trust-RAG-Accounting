@@ -259,8 +259,41 @@ def run_query(
     with use_retrieval_source(retrieval_source) as source:
         result = workflow.invoke(state)
     if source in ("wiki", "hybrid"):
-        enrich_wiki_citations(result, wiki_page_source_map())
+        page_sources = wiki_page_source_map()
+        enrich_wiki_citations(result, page_sources)
+        # Record the source + the page->raw map so a wiki-native consumer (the
+        # eval) can resolve wiki page identities back to raw documents. Additive
+        # and only in wiki/hybrid mode — raw responses are unchanged.
+        result["retrieval_source"] = source
+        result["wiki_page_sources"] = page_sources
+        _guard_wiki_query_injection(result, question)
     return result
+
+
+def _guard_wiki_query_injection(result: dict, question: str) -> None:
+    """Flag a prompt-injection attempt phrased in the query (wiki/hybrid only).
+
+    ``safety_checker`` detects injection by scanning *retrieved evidence*, but the
+    wiki corpus excludes adversarial documents by design — so an injection phrase
+    in the user's own question leaves no malicious chunk to flag. Re-check the
+    query at the boundary so wiki mode is no less safe than raw. This only ever
+    *raises* the signal (never lowers it) and never runs on the raw path, so raw
+    responses stay byte-identical.
+    """
+
+    from .nodes.safety_checker import _is_injection
+
+    if not _is_injection(question):
+        return
+    safety = result.get("safety_analysis")
+    if not isinstance(safety, dict) or safety.get("prompt_injection_detected"):
+        return
+    safety["prompt_injection_detected"] = True
+    safety.setdefault("matched_reasons", []).append(
+        "user question contains a prompt-injection pattern (wiki-mode boundary check)"
+    )
+    if safety.get("risk_level") == "none":
+        safety["risk_level"] = "high"
 
 
 __all__ = [
