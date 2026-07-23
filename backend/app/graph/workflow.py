@@ -271,14 +271,19 @@ def run_query(
 
 
 def _guard_wiki_query_injection(result: dict, question: str) -> None:
-    """Flag a prompt-injection attempt phrased in the query (wiki/hybrid only).
+    """Gate a prompt-injection attempt phrased in the query (wiki/hybrid only).
 
     ``safety_checker`` detects injection by scanning *retrieved evidence*, but the
     wiki corpus excludes adversarial documents by design — so an injection phrase
     in the user's own question leaves no malicious chunk to flag. Re-check the
-    query at the boundary so wiki mode is no less safe than raw. This only ever
-    *raises* the signal (never lowers it) and never runs on the raw path, so raw
-    responses stay byte-identical.
+    query at the boundary so wiki mode is no less safe than raw.
+
+    This is a **real gate**, not a bare flag (a safety flag that does not act is
+    worse than none): on a hit it flags the injection AND routes the response to
+    human review AND replaces any confident answer with a refusal, so a detected
+    injection is never served as a confident answer. Idempotent when the judge
+    already routed to review (the common case). Only runs on wiki/hybrid — the
+    raw path is never entered, so raw responses stay byte-identical.
     """
 
     from .nodes.safety_checker import _is_injection
@@ -286,14 +291,31 @@ def _guard_wiki_query_injection(result: dict, question: str) -> None:
     if not _is_injection(question):
         return
     safety = result.get("safety_analysis")
-    if not isinstance(safety, dict) or safety.get("prompt_injection_detected"):
+    if not isinstance(safety, dict):
         return
     safety["prompt_injection_detected"] = True
-    safety.setdefault("matched_reasons", []).append(
-        "user question contains a prompt-injection pattern (wiki-mode boundary check)"
-    )
     if safety.get("risk_level") == "none":
         safety["risk_level"] = "high"
+    reason = "user question contains a prompt-injection pattern (wiki-mode boundary check)"
+    if reason not in (safety.get("matched_reasons") or []):
+        safety["matched_reasons"] = [*(safety.get("matched_reasons") or []), reason]
+
+    # Route to human review and refuse — a detected injection must not be served
+    # as a confident, cited answer.
+    result["needs_human_review"] = True
+    result["human_review_required"] = True
+    hr_reasons = result.get("human_review_reasons") or []
+    if "prompt_injection" not in hr_reasons:
+        result["human_review_reasons"] = [*hr_reasons, "prompt_injection"]
+    result["answer"] = _WIKI_INJECTION_REFUSAL
+    result["citations"] = []
+
+
+_WIKI_INJECTION_REFUSAL = (
+    "This request contains a prompt-injection pattern in the query itself. Those "
+    "instructions are disregarded. The question has been routed to human review "
+    "instead of being answered automatically."
+)
 
 
 __all__ = [
