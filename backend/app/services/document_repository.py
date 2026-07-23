@@ -55,6 +55,11 @@ _DEFAULT_WIKI_CHUNK_STORE = _PROJECT_ROOT / "data" / "trustrag_wiki_chunks.json"
 # fallback legs for the wiki corpus (it loads only from the wiki chunk store).
 _NO_STORE = _PROJECT_ROOT / "data" / "__no_such_store__"
 
+# Phase 10C — hybrid corpus: question types whose answers benefit from the wiki's
+# cross-document compilation, and the small explainable bonus their wiki hits get.
+_SYNTHESIS_QUESTION_TYPES = frozenset({"temporal_policy_comparison", "risk_review"})
+_WIKI_AFFINITY_BONUS = 0.05
+
 
 # ---------------------------------------------------------------------------
 # Injection trigger detection (workflow-level safety policy)
@@ -215,6 +220,9 @@ class DocumentRepository:
         self._documents: list[AccountingDocument] | None = None
         self._chunks: list[DocumentChunk] | None = None
         self._retrieval_service: RetrievalService | None = None
+        # Phase 10C — set on the hybrid corpus so synthesis questions can boost
+        # wiki hits; None on the raw / wiki corpora (affinity is a no-op there).
+        self._wiki_page_ids: set[str] | None = None
         self._lock = Lock()
         self._source: str | None = None
 
@@ -415,6 +423,8 @@ class DocumentRepository:
             include_malicious=include_malicious,
         )
 
+        scored = self._apply_wiki_affinity(scored, question_type)
+
         if client is not None:
             # Legacy explicit-client override path. Honored *after*
             # retrieval — drop anything whose chunk.client is set
@@ -430,6 +440,27 @@ class DocumentRepository:
         ]
 
     # -- Diagnostics -----------------------------------------------------
+
+    def _apply_wiki_affinity(
+        self, scored: list[ScoredChunk], question_type: str | None
+    ) -> list[ScoredChunk]:
+        """Boost compiled wiki pages on synthesis questions (hybrid corpus only).
+
+        Phase 10C: under ``RETRIEVAL_SOURCE=hybrid`` a synthesis-type question
+        (``temporal_policy_comparison`` / ``risk_review``) benefits from the
+        wiki's cross-document compilation, so wiki hits get a small, explainable
+        ``wiki_affinity`` bonus recorded in the score breakdown and are re-ranked
+        accordingly. A no-op for the raw / wiki corpora (``_wiki_page_ids`` unset)
+        and for non-synthesis questions, so those paths are unchanged.
+        """
+
+        if not self._wiki_page_ids or question_type not in _SYNTHESIS_QUESTION_TYPES:
+            return scored
+        for s in scored:
+            if s.document_id in self._wiki_page_ids and not s.is_context_expansion:
+                s.score_breakdown.wiki_affinity = _WIKI_AFFINITY_BONUS
+                s.score = round(s.score + _WIKI_AFFINITY_BONUS, 4)
+        return sorted(scored, key=lambda c: (-(c.score or 0.0), c.chunk_id))
 
     def describe(self) -> list[dict]:
         return [
@@ -554,12 +585,19 @@ def get_hybrid_repository() -> DocumentRepository:
     """Raw + wiki chunks fused into one retriever (Phase 10C hybrid corpus)."""
 
     global _hybrid_repository_singleton
+    if _hybrid_repository_singleton is not None:
+        return _hybrid_repository_singleton
+    # Fetch the source corpora *before* taking the singleton lock — each of
+    # get_wiki/get_raw acquires it, and it is not reentrant.
+    wiki_chunks = get_wiki_repository().load_chunks()
+    raw_chunks = get_raw_repository().load_chunks()
     with _singleton_lock:
         if _hybrid_repository_singleton is None:
-            combined = get_raw_repository().load_chunks() + get_wiki_repository().load_chunks()
-            _hybrid_repository_singleton = DocumentRepository.from_chunks(
-                combined, source="hybrid:raw+wiki"
+            repo = DocumentRepository.from_chunks(
+                raw_chunks + wiki_chunks, source="hybrid:raw+wiki"
             )
+            repo._wiki_page_ids = {c.document_id for c in wiki_chunks}
+            _hybrid_repository_singleton = repo
         return _hybrid_repository_singleton
 
 
