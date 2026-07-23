@@ -1,0 +1,107 @@
+{
+  "cases": [
+    {
+      "case_id": "cross_doc_synthesis_001",
+      "category": "cross_doc_synthesis",
+      "status": "active",
+      "question": "现行报销政策和它的上一版相比，打车审批门槛是多少？",
+      "description": "Version comparison (no explicit year, so as_of stays current): surface both reimbursement versions, select the current one, flag the prior one expired.",
+      "expectation": {
+        "must_contain_answer_terms": ["100"],
+        "expected_primary_document_id": "reimbursement_policy_2026",
+        "expected_citation_document_ids": ["reimbursement_policy_2026", "reimbursement_policy_2024"],
+        "expected_selected_active_document": "reimbursement_policy_2026",
+        "expected_expired_documents": ["reimbursement_policy_2024"],
+        "forbidden_citation_document_ids": ["malicious_accounting_instruction_sample"]
+      }
+    },
+    {
+      "case_id": "cross_doc_synthesis_002",
+      "category": "cross_doc_synthesis",
+      "status": "active",
+      "question": "现行报销政策取代了哪个版本？",
+      "description": "Supersession lineage: current reimbursement policy replaces the prior version.",
+      "expectation": {
+        "expected_selected_active_document": "reimbursement_policy_2026",
+        "expected_expired_documents": ["reimbursement_policy_2024"],
+        "expected_citation_document_ids": ["reimbursement_policy_2026"],
+        "forbidden_citation_document_ids": ["malicious_accounting_instruction_sample"]
+      }
+    },
+    {
+      "case_id": "cross_doc_synthesis_003",
+      "category": "cross_doc_synthesis",
+      "status": "active",
+      "question": "Alpha Trading Co. 的记账 SOP 适用于哪个客户？",
+      "description": "Client aggregation: the Alpha bookkeeping SOP is client-scoped to Alpha, never Beta.",
+      "expectation": {
+        "must_contain_answer_terms": ["Alpha"],
+        "expected_primary_document_id": "alpha_trading_bookkeeping_sop_2026",
+        "expected_citation_document_ids": ["alpha_trading_bookkeeping_sop_2026"],
+        "forbidden_citation_document_ids": ["beta_catering_invoice_rule_2026", "malicious_accounting_instruction_sample"]
+      }
+    },
+    {
+      "case_id": "cross_doc_synthesis_004",
+      "category": "cross_doc_synthesis",
+      "status": "active",
+      "question": "Beta Catering 没有明确服务描述的配送发票能直接入账吗？",
+      "description": "Client-scoped invoice rule: Beta's delivery-invoice description requirement, no Alpha leakage.",
+      "expectation": {
+        "must_contain_answer_terms": ["Beta Catering"],
+        "expected_primary_document_id": "beta_catering_invoice_rule_2026",
+        "expected_citation_document_ids": ["beta_catering_invoice_rule_2026"],
+        "forbidden_citation_document_ids": ["alpha_trading_bookkeeping_sop_2026", "malicious_accounting_instruction_sample"]
+      }
+    },
+    {
+      "case_id": "cross_doc_synthesis_005",
+      "category": "cross_doc_synthesis",
+      "status": "active",
+      "question": "上一版报销政策现在还有效吗，还是已经被取代？",
+      "description": "Superseded-but-retained: the prior policy is kept as counter-evidence and is no longer active.",
+      "expectation": {
+        "expected_selected_active_document": "reimbursement_policy_2026",
+        "expected_expired_documents": ["reimbursement_policy_2024"],
+        "must_not_contain_answer_terms": ["照做"]
+      }
+    },
+    {
+      "case_id": "cross_doc_synthesis_006",
+      "category": "cross_doc_synthesis",
+      "status": "active",
+      "question": "现行报销政策打车超过 100 元要审批，这来自哪一版，之前是哪一版？",
+      "description": "Fact + lineage: the 100-RMB manager-approval rule is the current version, superseding the prior one.",
+      "expectation": {
+        "must_contain_answer_terms": ["100"],
+        "expected_primary_document_id": "reimbursement_policy_2026",
+        "expected_citation_document_ids": ["reimbursement_policy_2026", "reimbursement_policy_2024"],
+        "expected_selected_active_document": "reimbursement_policy_2026",
+        "expected_expired_documents": ["reimbursement_policy_2024"]
+      }
+    },
+    {
+      "case_id": "cross_doc_synthesis_007",
+      "category": "cross_doc_synthesis",
+      "status": "active",
+      "question": "小规模纳税人增值税是怎么处理的？",
+      "description": "Standalone concept retrieval (the VAT concept page). Baseline for the cross-reference case below.",
+      "expectation": {
+        "must_contain_answer_terms": ["VAT"],
+        "expected_citation_document_ids": ["vat_policy_note_2025"],
+        "forbidden_citation_document_ids": ["malicious_accounting_instruction_sample"]
+      }
+    },
+    {
+      "case_id": "cross_doc_synthesis_008",
+      "category": "cross_doc_synthesis",
+      "status": "active",
+      "question": "现行报销政策里提到的增值税概念，具体指什么？",
+      "description": "Cross-reference synthesis (HARD, expected report-only gap): the reimbursement page wikilinks the VAT concept, but chunk retrieval does not follow wikilinks, so the VAT page is not co-retrieved. Documents where compiled-wiki value needs wikilink-aware retrieval (future work).",
+      "expectation": {
+        "must_contain_answer_terms": ["VAT"],
+        "expected_citation_document_ids": ["vat_policy_note_2025"]
+      }
+    }
+  ]
+}

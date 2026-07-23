@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import NamedTuple
 
 import yaml
 from pydantic import ValidationError
@@ -178,20 +179,108 @@ def write_page(wiki_dir: Path | str, page: WikiPage) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def page_to_document(page: WikiPage, wiki_dir: Path | str) -> AccountingDocument:
-    """Map a wiki page onto the ingestion document model for chunking."""
+class _RetrievalFields(NamedTuple):
+    """Per-page document-level fields the wiki chunk store needs to look like the
+    raw corpus to the retriever + temporal layer (Phase 10C)."""
+
+    document_type: str
+    replaces: str | None
+    valid_to: str | None
+
+
+def _derive_retrieval_fields(
+    pages: dict[str, WikiPage],
+    source_doc_types: dict[str, str] | None,
+) -> dict[str, _RetrievalFields]:
+    """Compute, per page, the retrieval ``document_type`` + temporal lineage.
+
+    The 10A mapping was shape-compatible but semantically incomplete; this closes
+    the three gaps that would otherwise fail the 10C "no regression in wiki mode"
+    gate wholesale:
+
+    * ``document_type`` — the hard metadata filter matches a chunk's
+      ``document_type`` against the *raw* vocabulary (``bookkeeping_sop`` /
+      ``invoice_compliance`` / ...), which is disjoint from the wiki ``page_type``
+      vocabulary (``client`` / ``policy`` / ...). So a wiki page inherits the
+      document_type of the raw source(s) it compiles — that is what lets a typed
+      query hit wiki chunks at all. Falls back to ``page_type`` when no source
+      type is known (``source_doc_types`` absent / source unmapped).
+    * ``replaces`` — the raw corpus records supersession as
+      ``newer.replaces = older``; the wiki records the inverse
+      (``older.superseded_by = newer``). We invert the edge so the temporal
+      checker can resolve a supersession chain over wiki pages.
+    * ``valid_to`` — a page that is superseded but left with an open ``valid_to``
+      would pass ``temporal_checker._is_active`` and be served as the current
+      rule (status is dropped before the evidence layer). We close it at its
+      successor's ``valid_from`` so a superseded page is never active once its
+      replacement takes effect.
+    """
+
+    valid_from_by_id = {pid: p.frontmatter.valid_from for pid, p in pages.items()}
+    # page_id -> the page_id it replaces (invert the superseded_by edge).
+    replaces_by_id: dict[str, str] = {}
+    for pid, page in pages.items():
+        successor = page.frontmatter.superseded_by
+        if successor:
+            replaces_by_id[successor] = pid
+
+    out: dict[str, _RetrievalFields] = {}
+    for pid, page in pages.items():
+        fm = page.frontmatter
+        document_type = fm.page_type
+        if source_doc_types:
+            for sid in fm.sources:
+                mapped = source_doc_types.get(sid)
+                if mapped:
+                    document_type = mapped
+                    break
+        valid_to = fm.valid_to
+        if fm.superseded_by and valid_to is None:
+            # A superseded page must never be served as the active version. Close
+            # it at the successor's valid_from; if the successor is undated, fall
+            # back to the page's own valid_from so it still expires for any later
+            # as_of. (A page with no valid_from at all is already inactive per
+            # temporal_checker._is_active, so leaving valid_to None is safe then.)
+            valid_to = valid_from_by_id.get(fm.superseded_by) or fm.valid_from
+        out[pid] = _RetrievalFields(
+            document_type=document_type,
+            replaces=replaces_by_id.get(pid),
+            valid_to=valid_to,
+        )
+    return out
+
+
+def page_to_document(
+    page: WikiPage,
+    wiki_dir: Path | str,
+    *,
+    retrieval: _RetrievalFields | None = None,
+) -> AccountingDocument:
+    """Map a wiki page onto the ingestion document model for chunking.
+
+    ``retrieval`` carries the Phase 10C fields that let the derived chunk look
+    like the raw corpus to the retriever + temporal layer (see
+    :func:`_derive_retrieval_fields`). When omitted the page keeps its own
+    ``page_type`` as ``document_type`` and no supersession lineage — the
+    pre-10C behavior, used only by isolated unit calls; the store-refresh path
+    always supplies it.
+    """
 
     fm = page.frontmatter
     rel_path = str(page_path(wiki_dir, page).relative_to(Path(wiki_dir)))
+    document_type = retrieval.document_type if retrieval is not None else fm.page_type
+    replaces = retrieval.replaces if retrieval is not None else None
+    valid_to = retrieval.valid_to if retrieval is not None else fm.valid_to
     return AccountingDocument(
         document_id=fm.page_id,
         title=fm.title,
         version=f"rev{fm.revision}",
-        document_type=fm.page_type,
+        document_type=document_type,
         client=fm.client,
         policy_family=fm.policy_family,
+        replaces=replaces,
         valid_from=fm.valid_from,
-        valid_to=fm.valid_to,
+        valid_to=valid_to,
         source_path=rel_path,
         content=page.body,
         checksum=compute_checksum(page.body, {"page_id": fm.page_id}),
@@ -199,16 +288,23 @@ def page_to_document(page: WikiPage, wiki_dir: Path | str) -> AccountingDocument
     )
 
 
-def chunk_page(page: WikiPage, wiki_dir: Path | str) -> list[DocumentChunk]:
+def chunk_page(
+    page: WikiPage,
+    wiki_dir: Path | str,
+    *,
+    retrieval: _RetrievalFields | None = None,
+) -> list[DocumentChunk]:
     """Chunk a page and stamp each chunk with wiki page metadata.
 
     The stamped metadata (page_id / page_type / client / status / sources)
     is what a retriever needs to filter and to build the two-layer citation
-    chain in Phase 10C.
+    chain in Phase 10C. The chunk's *document-level* fields (document_type,
+    replaces, valid_to) come from ``retrieval`` so the chunk matches the raw
+    corpus's hard metadata filter and temporal reasoning.
     """
 
     fm = page.frontmatter
-    document = page_to_document(page, wiki_dir)
+    document = page_to_document(page, wiki_dir, retrieval=retrieval)
     chunks = chunk_document(document)
     for chunk in chunks:
         chunk.metadata = {
@@ -247,18 +343,27 @@ def refresh_wiki_stores(
     wiki_dir: Path | str,
     pages_out: Path | str,
     chunks_out: Path | str,
+    *,
+    source_doc_types: dict[str, str] | None = None,
 ) -> tuple[Path, Path]:
     """Regenerate the derived wiki page + chunk JSON stores from disk.
 
     Only reflects pages currently on disk — it is a pure projection of
     approved state, never a decision about what that state should be.
+
+    ``source_doc_types`` (``raw doc_id -> document_type``) lets each wiki chunk
+    inherit the retrieval ``document_type`` of the raw source it compiles, so a
+    typed query filters wiki chunks the same way it filters raw ones. Supply it
+    from the raw corpus (``wiki.ingest.derive_source_doc_types``); when omitted,
+    chunks fall back to ``page_type`` (pre-10C behavior).
     """
 
     wiki_dir = Path(wiki_dir)
     pages = load_wiki(wiki_dir)
+    derived = _derive_retrieval_fields(pages, source_doc_types)
     all_chunks: list[DocumentChunk] = []
     for pid in sorted(pages):
-        all_chunks.extend(chunk_page(pages[pid], wiki_dir))
+        all_chunks.extend(chunk_page(pages[pid], wiki_dir, retrieval=derived[pid]))
     chunks_path = write_chunk_store(all_chunks, Path(chunks_out), source=str(wiki_dir))
     pages_path = _write_pages_store(pages, pages_out, source=str(wiki_dir))
     return pages_path, chunks_path

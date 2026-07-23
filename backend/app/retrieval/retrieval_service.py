@@ -68,6 +68,14 @@ _PHASE_3B_BM25_WEIGHT = 0.40
 _PHASE_3B_VECTOR_WEIGHT = 0.25
 
 
+# Phase 10C — hybrid corpus wiki-affinity: question types whose answers benefit
+# from the wiki's cross-document compilation, and the small explainable bonus
+# their wiki hits receive. Only the hybrid corpus passes ``wiki_page_ids``, so
+# this is a no-op for the raw / wiki corpora and non-synthesis questions.
+_SYNTHESIS_QUESTION_TYPES = frozenset({"temporal_policy_comparison", "risk_review"})
+_WIKI_AFFINITY_BONUS = 0.05
+
+
 class RetrievalService:
     """Wraps keyword + BM25 (+ vector) (+ reranker) behind one entry point."""
 
@@ -82,6 +90,7 @@ class RetrievalService:
         secure_payload_filter: dict[str, Any] | None = None,
         index_vectors: bool = True,
         telemetry: Telemetry | None = None,
+        wiki_page_ids: set[str] | None = None,
     ) -> None:
         self._chunks: list[DocumentChunk] = list(chunks)
         self._chunk_by_doc_index: dict[tuple[str, int], DocumentChunk] = {
@@ -89,6 +98,9 @@ class RetrievalService:
         }
         self._settings = settings or get_settings()
         self._telemetry = telemetry or NoopTelemetry()
+        # Phase 10C — set only for the hybrid corpus so synthesis questions can
+        # boost wiki hits; None on raw / wiki (affinity is a no-op there).
+        self._wiki_page_ids: set[str] | None = set(wiki_page_ids) if wiki_page_ids else None
 
         self._keyword = KeywordRetriever(self._chunks)
         self._bm25 = BM25Retriever(self._chunks)
@@ -209,6 +221,7 @@ class RetrievalService:
             )
         else:
             ranked = ranked[:top_k]
+        ranked = self._apply_wiki_affinity(ranked, question_type)
         results = self._expand_with_context_neighbors(
             ranked,
             include_malicious=include_malicious,
@@ -235,6 +248,26 @@ class RetrievalService:
                 attributes={"question_type": question_type or "unknown"},
             )
         return results
+
+    def _apply_wiki_affinity(
+        self, ranked: list[ScoredChunk], question_type: str | None
+    ) -> list[ScoredChunk]:
+        """Boost compiled wiki pages on synthesis questions (hybrid corpus only).
+
+        Under ``RETRIEVAL_SOURCE=hybrid`` a synthesis-type question benefits from
+        the wiki's cross-document compilation, so wiki hits get a small,
+        explainable ``wiki_affinity`` bonus recorded in the score breakdown and
+        are re-ranked accordingly. No-op when ``_wiki_page_ids`` is unset
+        (raw / wiki corpora) or the question is not a synthesis type.
+        """
+
+        if not self._wiki_page_ids or question_type not in _SYNTHESIS_QUESTION_TYPES:
+            return ranked
+        for s in ranked:
+            if s.document_id in self._wiki_page_ids and not s.is_context_expansion:
+                s.score_breakdown.wiki_affinity = _WIKI_AFFINITY_BONUS
+                s.score = round(s.score + _WIKI_AFFINITY_BONUS, 4)
+        return sorted(ranked, key=lambda c: (-(c.score or 0.0), c.chunk_id))
 
     # -- Sub-retriever accessors (tests + ablation) --------------------------
 

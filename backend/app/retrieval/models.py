@@ -98,6 +98,10 @@ class ScoreBreakdown(BaseModel):
       rewards expired or replaced versions).
     * ``temporal`` — date-validity contribution for the query's
       inferred as-of date.
+    * ``wiki_affinity`` — small bonus for a compiled wiki page on a
+      synthesis-type question (``temporal_policy_comparison`` /
+      ``risk_review``) under ``RETRIEVAL_SOURCE=hybrid`` (Phase 10C).
+      0 in raw / wiki mode and for non-synthesis questions.
     * ``malicious_penalty`` — negative contribution that drives a
       malicious chunk to 0 in the default safety path.
     """
@@ -110,6 +114,7 @@ class ScoreBreakdown(BaseModel):
     client_match: float = 0.0
     stance: float = 0.0
     temporal: float = 0.0
+    wiki_affinity: float = 0.0
     malicious_penalty: float = 0.0
 
     def total(self) -> float:
@@ -124,6 +129,7 @@ class ScoreBreakdown(BaseModel):
             + self.client_match
             + self.stance
             + self.temporal
+            + self.wiki_affinity
             + self.malicious_penalty
         )
 

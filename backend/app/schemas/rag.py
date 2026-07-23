@@ -219,6 +219,14 @@ class Citation(BaseModel):
     )
     section_title: str | None = None
     page_number: int | None = None
+    # Phase 10C — two-layer citation (additive, back-compatible). A ``source``
+    # citation grounds directly in a raw document; a ``wiki`` citation grounds in
+    # a compiled wiki page whose ``underlying_doc_ids`` are the raw documents it
+    # was compiled from. ``source`` is the default so raw-mode responses are
+    # unchanged.
+    citation_layer: Literal["source", "wiki"] = "source"
+    wiki_page_id: str | None = None
+    underlying_doc_ids: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +261,9 @@ class HumanReviewSummary(BaseModel):
 
 class RAGQueryRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
+    # Phase 10C — optional per-request retrieval corpus override. None → the
+    # server's configured RETRIEVAL_SOURCE (raw by default).
+    retrieval_source: Literal["raw", "wiki", "hybrid"] | None = None
 
 
 class RAGQueryResponse(BaseModel):

@@ -161,6 +161,16 @@ def lint_wiki(
                                 message=f"active {fm.page_type} page must set "
                                         "policy_family")
                 )
+            # An active versioned page MUST carry valid_from: temporal_checker
+            # treats a page with no valid_from as never-active (it would never be
+            # served), and its predecessor cannot be closed at an absent
+            # successor date (Phase 10C P1-2 — superseded-served-as-active).
+            if fm.page_type in {"policy", "invoice_rule"} and not fm.valid_from:
+                report.errors.append(
+                    LintFinding(code="missing_valid_from", page_id=pid,
+                                message=f"active {fm.page_type} page must set "
+                                        "valid_from")
+                )
             if fm.policy_family is not None:
                 active_by_family.setdefault((fm.policy_family, fm.client), []).append(pid)
 

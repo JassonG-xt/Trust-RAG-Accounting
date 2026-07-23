@@ -239,12 +239,89 @@ def run_query(
     *,
     tenant_id: str = "local",
     actor_id: str = "local-admin",
+    retrieval_source: str | None = None,
 ) -> dict:
-    """Convenience entry point used by the FastAPI route and tests."""
+    """Convenience entry point used by the FastAPI route and tests.
+
+    ``retrieval_source`` (``raw`` | ``wiki`` | ``hybrid``) overrides the
+    configured default for this call only; the retriever nodes read it via the
+    repository router, so the node graph itself is unchanged.
+    """
+
+    from ..services.document_repository import (
+        raw_document_ids,
+        use_retrieval_source,
+        wiki_page_source_map,
+    )
+    from ..wiki.citations import enforce_wiki_citation_grounding, enrich_wiki_citations
 
     workflow = get_workflow()
     state = initial_state(question, tenant_id=tenant_id, actor_id=actor_id)
-    return workflow.invoke(state)
+    with use_retrieval_source(retrieval_source) as source:
+        result = workflow.invoke(state)
+    if source in ("wiki", "hybrid"):
+        page_sources = wiki_page_source_map()
+        enrich_wiki_citations(result, page_sources)
+        # Record the source + the page->raw map so a wiki-native consumer (the
+        # eval) can resolve wiki page identities back to raw documents. Additive
+        # and only in wiki/hybrid mode — raw responses are unchanged.
+        result["retrieval_source"] = source
+        result["wiki_page_sources"] = page_sources
+        # Faithfulness gate: never serve a wiki citation that is not itself
+        # grounded in the raw store (empty or unknown underlying_doc_ids).
+        issues = enforce_wiki_citation_grounding(result, raw_document_ids())
+        if issues:
+            result["wiki_citation_issues"] = issues
+        _guard_wiki_query_injection(result, question)
+    return result
+
+
+def _guard_wiki_query_injection(result: dict, question: str) -> None:
+    """Gate a prompt-injection attempt phrased in the query (wiki/hybrid only).
+
+    ``safety_checker`` detects injection by scanning *retrieved evidence*, but the
+    wiki corpus excludes adversarial documents by design — so an injection phrase
+    in the user's own question leaves no malicious chunk to flag. Re-check the
+    query at the boundary so wiki mode is no less safe than raw.
+
+    This is a **real gate**, not a bare flag (a safety flag that does not act is
+    worse than none): on a hit it flags the injection AND routes the response to
+    human review AND replaces any confident answer with a refusal, so a detected
+    injection is never served as a confident answer. Idempotent when the judge
+    already routed to review (the common case). Only runs on wiki/hybrid — the
+    raw path is never entered, so raw responses stay byte-identical.
+    """
+
+    from .nodes.safety_checker import _is_injection
+
+    if not _is_injection(question):
+        return
+    safety = result.get("safety_analysis")
+    if not isinstance(safety, dict):
+        return
+    safety["prompt_injection_detected"] = True
+    if safety.get("risk_level") == "none":
+        safety["risk_level"] = "high"
+    reason = "user question contains a prompt-injection pattern (wiki-mode boundary check)"
+    if reason not in (safety.get("matched_reasons") or []):
+        safety["matched_reasons"] = [*(safety.get("matched_reasons") or []), reason]
+
+    # Route to human review and refuse — a detected injection must not be served
+    # as a confident, cited answer.
+    result["needs_human_review"] = True
+    result["human_review_required"] = True
+    hr_reasons = result.get("human_review_reasons") or []
+    if "prompt_injection" not in hr_reasons:
+        result["human_review_reasons"] = [*hr_reasons, "prompt_injection"]
+    result["answer"] = _WIKI_INJECTION_REFUSAL
+    result["citations"] = []
+
+
+_WIKI_INJECTION_REFUSAL = (
+    "This request contains a prompt-injection pattern in the query itself. Those "
+    "instructions are disregarded. The question has been routed to human review "
+    "instead of being answered automatically."
+)
 
 
 __all__ = [

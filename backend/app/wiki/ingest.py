@@ -45,6 +45,18 @@ def derive_doc_maps(repository) -> tuple[set[str], dict[str, str | None]]:
     return known, clients
 
 
+def derive_source_doc_types(repository) -> dict[str, str]:
+    """Return ``raw doc_id -> document_type`` from the raw corpus.
+
+    Feeds :func:`backend.app.wiki.store.refresh_wiki_stores` so each wiki chunk
+    inherits the retrieval ``document_type`` of the raw source it compiles — the
+    bridge that lets a typed query hit wiki chunks (their ``page_type`` vocabulary
+    is disjoint from the raw ``document_type`` vocabulary the hard filter uses).
+    """
+
+    return {d.document_id: d.document_type for d in repository.load_documents()}
+
+
 def build_ingest_context(source_doc_id: str, *, repository, wiki_dir: Path | str) -> IngestContext:
     docs = {d.document_id: d for d in repository.load_documents()}
     src = docs.get(source_doc_id)

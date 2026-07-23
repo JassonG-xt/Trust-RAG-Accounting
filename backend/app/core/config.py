@@ -454,6 +454,12 @@ class Settings:
     wiki_ingest_max_tool_calls: int = field(
         default_factory=lambda: _int_env("WIKI_INGEST_MAX_TOOL_CALLS", 20)
     )
+    # Phase 10C — retrieval corpus for /v1/rag/query: raw (default) | wiki | hybrid.
+    # ``raw`` preserves the existing behavior exactly; ``wiki`` serves from the
+    # derived wiki chunk store; ``hybrid`` fuses both. Overridable per request.
+    retrieval_source: str = field(
+        default_factory=lambda: os.getenv("RETRIEVAL_SOURCE", "raw")
+    )
 
     def validate_persistence(self) -> None:
         backend = self.storage_backend.strip().lower()
@@ -495,6 +501,8 @@ class Settings:
             raise ValueError("TRUSTRAG_TELEMETRY_MODE must be noop, local, or otlp")
         if telemetry_mode == "otlp" and not self.otlp_endpoint:
             raise ValueError("TRUSTRAG_TELEMETRY_MODE=otlp requires TRUSTRAG_OTLP_ENDPOINT")
+        if self.retrieval_source.strip().lower() not in {"raw", "wiki", "hybrid"}:
+            raise ValueError("RETRIEVAL_SOURCE must be raw, wiki, or hybrid")
 
     def validate_runtime(self) -> None:
         self.validate_persistence()

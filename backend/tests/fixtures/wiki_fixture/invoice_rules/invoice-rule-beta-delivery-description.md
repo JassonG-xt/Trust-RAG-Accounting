@@ -16,5 +16,6 @@ updated: 2026-07-21
 
 # Beta Catering delivery invoice description rule
 
-A delivery invoice for [[client-beta-catering-ltd]] must carry a clear service
+This is part of the Beta Catering Ltd. Invoice Compliance requirements. A
+delivery invoice for [[client-beta-catering-ltd]] must carry a clear service
 description before it can be booked. Vague descriptions are held for review.
