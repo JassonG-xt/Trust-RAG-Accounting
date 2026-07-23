@@ -540,6 +540,12 @@ def get_wiki_repository() -> DocumentRepository:
         return _wiki_repository_singleton
 
 
+def raw_document_ids() -> set[str]:
+    """The raw corpus's document ids — the grounding set for wiki citations."""
+
+    return {d.document_id for d in get_raw_repository().load_documents()}
+
+
 def wiki_page_source_map() -> dict[str, list[str]]:
     """``wiki_page_id -> underlying raw doc_ids`` from the wiki corpus.
 

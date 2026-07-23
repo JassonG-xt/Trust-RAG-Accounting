@@ -16,6 +16,7 @@ from backend.app.graph.workflow import run_query
 from backend.app.schemas.rag import Citation
 from backend.app.services.document_repository import reset_repository
 from backend.app.wiki.citations import (
+    enforce_wiki_citation_grounding,
     enrich_wiki_citations,
     validate_wiki_citation_grounding,
 )
@@ -125,3 +126,58 @@ def test_raw_mode_citations_stay_source_layer(wiki_corpus):
     for c in state.get("citations") or []:
         assert c.get("citation_layer", "source") == "source"
         assert not c.get("underlying_doc_ids")
+
+
+# ---------------------------------------------------------------------------
+# P2-4 / P2-5 — the faithfulness validator is enforced at the boundary
+# ---------------------------------------------------------------------------
+
+
+def test_enforce_drops_empty_underlying_wiki_citation():
+    known = {"reimbursement_policy_2026"}
+    state = {
+        "citations": [
+            {"doc_id": "policy-good", "citation_layer": "wiki",
+             "underlying_doc_ids": ["reimbursement_policy_2026"]},
+            {"doc_id": "concept-empty", "citation_layer": "wiki",
+             "underlying_doc_ids": []},  # P2-5: empty-sources page
+        ]
+    }
+    issues = enforce_wiki_citation_grounding(state, known)
+    assert issues  # the empty one is reported
+    remaining = {c["doc_id"] for c in state["citations"]}
+    assert remaining == {"policy-good"}  # ungrounded one dropped, grounded kept
+
+
+def test_enforce_drops_unknown_underlying_and_keeps_raw():
+    known = {"reimbursement_policy_2026"}
+    state = {
+        "citations": [
+            {"doc_id": "policy-ghost", "citation_layer": "wiki",
+             "underlying_doc_ids": ["ghost_doc"]},  # not in raw store
+            {"doc_id": "reimbursement_policy_2026", "citation_layer": "source"},
+        ]
+    }
+    issues = enforce_wiki_citation_grounding(state, known)
+    assert issues
+    remaining = {c["doc_id"] for c in state["citations"]}
+    assert remaining == {"reimbursement_policy_2026"}  # raw citation untouched
+
+
+def test_enforce_noop_when_all_grounded():
+    known = {"reimbursement_policy_2026"}
+    state = {"citations": [
+        {"doc_id": "policy-good", "citation_layer": "wiki",
+         "underlying_doc_ids": ["reimbursement_policy_2026"]},
+    ]}
+    assert enforce_wiki_citation_grounding(state, known) == []
+    assert len(state["citations"]) == 1
+
+
+def test_wiki_query_citations_stay_grounded_end_to_end(wiki_corpus):
+    """The happy path: real wiki query keeps its grounded citations, no issues."""
+
+    state = run_query(_REIMBURSEMENT_Q, retrieval_source="wiki")
+    assert state.get("citations")
+    assert not state.get("wiki_citation_issues")
+    assert validate_wiki_citation_grounding(state["citations"], KNOWN_DOC_IDS) == []

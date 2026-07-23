@@ -68,3 +68,31 @@ def validate_wiki_citation_grounding(
                 f"wiki citation {page_id!r} cites unknown raw docs: {unknown}"
             )
     return issues
+
+
+def _is_ungrounded_wiki(cite: dict, known_raw_doc_ids: set[str]) -> bool:
+    if cite.get("citation_layer") != "wiki":
+        return False
+    underlying = cite.get("underlying_doc_ids") or []
+    return not underlying or any(d not in known_raw_doc_ids for d in underlying)
+
+
+def enforce_wiki_citation_grounding(
+    state: dict, known_raw_doc_ids: set[str]
+) -> list[str]:
+    """Drop any ungrounded wiki citation from ``state`` and return the issues.
+
+    The runtime half of the faithfulness rule (the citation bridge is also a
+    lint invariant): an answer must never be served with a ``wiki``-layer
+    citation that is not itself grounded — one with an empty ``underlying_doc_ids``
+    (P2-5, an empty-``sources`` page) or one naming a raw doc absent from the raw
+    store. Grounded citations (the normal case) pass through unchanged.
+    """
+
+    citations = state.get("citations") or []
+    issues = validate_wiki_citation_grounding(citations, known_raw_doc_ids)
+    if issues:
+        state["citations"] = [
+            c for c in citations if not _is_ungrounded_wiki(c, known_raw_doc_ids)
+        ]
+    return issues

@@ -249,10 +249,11 @@ def run_query(
     """
 
     from ..services.document_repository import (
+        raw_document_ids,
         use_retrieval_source,
         wiki_page_source_map,
     )
-    from ..wiki.citations import enrich_wiki_citations
+    from ..wiki.citations import enforce_wiki_citation_grounding, enrich_wiki_citations
 
     workflow = get_workflow()
     state = initial_state(question, tenant_id=tenant_id, actor_id=actor_id)
@@ -266,6 +267,11 @@ def run_query(
         # and only in wiki/hybrid mode — raw responses are unchanged.
         result["retrieval_source"] = source
         result["wiki_page_sources"] = page_sources
+        # Faithfulness gate: never serve a wiki citation that is not itself
+        # grounded in the raw store (empty or unknown underlying_doc_ids).
+        issues = enforce_wiki_citation_grounding(result, raw_document_ids())
+        if issues:
+            result["wiki_citation_issues"] = issues
         _guard_wiki_query_injection(result, question)
     return result
 
