@@ -40,87 +40,90 @@
 
       <main class="dashboard-shell">
         <section class="workspace-column">
-          <section class="panel query-panel" aria-labelledby="query-title">
+          <div class="conversation-workspace">
+            <section class="panel query-panel" aria-labelledby="query-title">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">控制台</p>
+                  <h2 id="query-title">RAG 查询</h2>
+                </div>
+                <button class="secondary-button" id="clear-query" type="button">清空</button>
+              </div>
+
+              <label class="field-label" for="question-input">问题</label>
+              <textarea
+                id="question-input"
+                rows="4"
+                placeholder="输入一个 bookkeeping、invoice、reimbursement、tax policy 或安全性问题。"
+              ></textarea>
+
+              <div class="example-list" id="example-list" aria-label="示例问题"></div>
+
+              <div class="query-actions">
+                <button class="primary-button" id="run-query" type="button">运行查询</button>
+                <p class="inline-status" id="query-status">空闲</p>
+              </div>
+            </section>
+
+            <div class="focus-column">
+              <section class="panel answer-panel" aria-labelledby="answer-title">
+                <div class="panel-header">
+                  <div>
+                    <p class="eyebrow">结果</p>
+                    <h2 id="answer-title">回答</h2>
+                  </div>
+                  <div class="badge-row" id="answer-badges"></div>
+                </div>
+
+                <div class="answer-shell">
+                  <div class="answer-text" id="answer-text">
+                    运行查询以查看回答、证据和结构化分析。
+                  </div>
+                  <dl class="metadata-grid" id="answer-metadata"></dl>
+                  <div id="review-handoff" class="review-handoff" hidden aria-live="polite"></div>
+                </div>
+
+                <div class="json-strip" aria-label="结构化分析">
+                  <details class="json-details">
+                    <summary>安全 JSON</summary>
+                    <pre id="safety-json">{}</pre>
+                  </details>
+                  <details class="json-details">
+                    <summary>时效 JSON</summary>
+                    <pre id="temporal-json">{}</pre>
+                  </details>
+                  <details class="json-details">
+                    <summary>冲突 JSON</summary>
+                    <pre id="conflict-json">{}</pre>
+                  </details>
+                </div>
+              </section>
+            </div>
+          </div>
+
+          <section class="panel evidence-panel" aria-labelledby="citations-title">
             <div class="panel-header">
               <div>
-                <p class="eyebrow">控制台</p>
-                <h2 id="query-title">RAG 查询</h2>
+                <p class="eyebrow">证据</p>
+                <h2 id="citations-title">证据 / 引用</h2>
               </div>
-              <button class="secondary-button" id="clear-query" type="button">清空</button>
             </div>
 
-            <label class="field-label" for="question-input">问题</label>
-            <textarea
-              id="question-input"
-              rows="8"
-              placeholder="输入一个 bookkeeping、invoice、reimbursement、tax policy 或安全性问题。"
-            ></textarea>
-
-            <div class="example-list" id="example-list" aria-label="示例问题"></div>
-
-            <div class="query-actions">
-              <button class="primary-button" id="run-query" type="button">运行查询</button>
-              <p class="inline-status" id="query-status">空闲</p>
+            <div class="evidence-columns">
+              <div>
+                <h3>引用</h3>
+                <div class="list-stack" id="citations-list"></div>
+              </div>
+              <div>
+                <h3>支持证据</h3>
+                <div class="list-stack" id="support-list"></div>
+              </div>
+              <div>
+                <h3>反对证据</h3>
+                <div class="list-stack" id="counter-list"></div>
+              </div>
             </div>
           </section>
-
-          <div class="focus-column">
-            <section class="panel answer-panel" aria-labelledby="answer-title">
-              <div class="panel-header">
-                <div>
-                  <p class="eyebrow">结果</p>
-                  <h2 id="answer-title">回答</h2>
-                </div>
-                <div class="badge-row" id="answer-badges"></div>
-              </div>
-
-              <div class="answer-shell">
-                <div class="answer-text" id="answer-text">
-                  运行查询以查看回答、证据和结构化分析。
-                </div>
-                <dl class="metadata-grid" id="answer-metadata"></dl>
-              </div>
-
-              <div class="json-strip" aria-label="结构化分析">
-                <details class="json-details">
-                  <summary>安全 JSON</summary>
-                  <pre id="safety-json">{}</pre>
-                </details>
-                <details class="json-details">
-                  <summary>时效 JSON</summary>
-                  <pre id="temporal-json">{}</pre>
-                </details>
-                <details class="json-details">
-                  <summary>冲突 JSON</summary>
-                  <pre id="conflict-json">{}</pre>
-                </details>
-              </div>
-            </section>
-
-            <section class="panel evidence-panel" aria-labelledby="citations-title">
-              <div class="panel-header">
-                <div>
-                  <p class="eyebrow">证据</p>
-                  <h2 id="citations-title">证据 / 引用</h2>
-                </div>
-              </div>
-
-              <div class="evidence-columns">
-                <div>
-                  <h3>引用</h3>
-                  <div class="list-stack" id="citations-list"></div>
-                </div>
-                <div>
-                  <h3>支持证据</h3>
-                  <div class="list-stack" id="support-list"></div>
-                </div>
-                <div>
-                  <h3>反对证据</h3>
-                  <div class="list-stack" id="counter-list"></div>
-                </div>
-              </div>
-            </section>
-          </div>
         </section>
 
         <aside class="rail-column">
@@ -146,6 +149,7 @@
                 <button class="secondary-button" data-refresh="review" type="button">刷新</button>
                 <button class="secondary-button" id="review-export-json" type="button">导出 JSON</button>
                 <button class="secondary-button" id="review-export-csv" type="button">导出 CSV</button>
+                <button class="secondary-button danger-button" id="review-clear-queue" type="button">清空队列</button>
               </div>
             </div>
             <p class="review-disclaimer">

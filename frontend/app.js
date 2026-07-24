@@ -55,10 +55,15 @@ const DOC_TYPE_LABELS = {
 const REASON_LABELS = {
   tax_policy_always_review: "税务政策强制审阅",
   invoice_compliance_always_review: "发票合规强制审阅",
+  evidence_conflict: "证据冲突",
+  temporal_conflict: "时效冲突",
+  insufficient_evidence: "证据不足",
+  confidence_below_threshold: "置信度低于阈值",
   risk_review: "风险审阅",
   judge_requested_review: "评审请求审阅",
   answerable_with_review: "可答但需审阅",
   low_confidence: "低置信度",
+  prompt_injection: "提示注入",
 };
 
 const META_LABELS = {
@@ -190,6 +195,10 @@ function bindReviewFilters() {
   if (exportCsv) {
     exportCsv.addEventListener("click", () => downloadExport("csv"));
   }
+  const clearQueue = $("review-clear-queue");
+  if (clearQueue) {
+    clearQueue.addEventListener("click", clearReviewQueue);
+  }
 }
 
 let _reviewFilterTimer = null;
@@ -255,6 +264,74 @@ function downloadExport(format) {
   const suffix = format === "csv" ? "csv" : "json";
   const url = `/v1/review/queue/export.${suffix}${qs ? `?${qs}` : ""}`;
   window.open(url, "_blank");
+}
+
+async function clearReviewQueue() {
+  if (!reviewQueueEnabled()) return;
+  const confirmed = typeof window !== "undefined" && typeof window.confirm === "function"
+    ? window.confirm("将清空全部审阅检查点与操作记录，且不可恢复。确定继续？")
+    : false;
+  if (!confirmed) return;
+
+  const button = $("review-clear-queue");
+  const summary = $("review-summary");
+  if (button) button.disabled = true;
+  if (summary) summary.textContent = "清空中…";
+
+  try {
+    const data = await fetchJson("/v1/review/queue", {method: "DELETE"});
+    if (typeof clearReviewHighlights === "function") {
+      clearReviewHighlights();
+    }
+    state.actionHistory = {};
+    state.actionStatus = {};
+    // Avoid sticky filters (e.g. status=approved, has_actions) hiding future pending rows.
+    resetReviewFilters();
+    // Drop stale answer-panel handoff that still references deleted queue ids.
+    const handoff = $("review-handoff");
+    if (handoff) {
+      handoff.hidden = true;
+      handoff.classList.remove("is-persisted", "is-warn", "is-note");
+      handoff.replaceChildren();
+    }
+    if (state.query) {
+      state.query = {
+        ...state.query,
+        needs_human_review: false,
+        human_review: {
+          required: false,
+          status: null,
+          review_queue_id: null,
+          reasons: [],
+        },
+      };
+    }
+    await refreshReview();
+    if (summary) {
+      if (data && data.enabled === false) {
+        summary.textContent = "审阅队列已禁用，未清空。";
+      } else {
+        const cleared = Number(data?.cleared ?? 0);
+        const clearedActions = Number(data?.cleared_actions ?? 0);
+        summary.textContent = `已清空 ${cleared} 条检查点、${clearedActions} 条操作记录。`;
+      }
+    }
+  } catch (error) {
+    if (summary) {
+      const msg = messageOf(error);
+      if (/\b404\b/.test(msg)) {
+        summary.textContent = "清空失败：生产环境已禁用全局清空队列。";
+      } else if (/\b403\b/.test(msg)) {
+        summary.textContent = "清空失败：公开演示已关闭审阅写操作。";
+      } else {
+        summary.textContent = `清空失败：${msg}`;
+      }
+    }
+  } finally {
+    if (button && reviewQueueEnabled()) {
+      button.disabled = false;
+    }
+  }
 }
 
 function renderExamples() {
@@ -338,7 +415,7 @@ function reviewQueueEnabled() {
 }
 
 function setReviewControlsEnabled(enabled) {
-  ["review-filters", "review-export-json", "review-export-csv"].forEach((id) => {
+  ["review-filters", "review-export-json", "review-export-csv", "review-clear-queue"].forEach((id) => {
     const node = $(id);
     if (!node) return;
     node.hidden = !enabled;
@@ -918,6 +995,11 @@ async function runQuery() {
       renderPublicDemoReviewDisabled();
     }
     await Promise.allSettled(followUpTasks);
+    // Only auto-focus when a row was actually persisted to the queue.
+    const review = data.human_review || {};
+    if (reviewQueueEnabled() && review.review_queue_id) {
+      focusReviewEntry(review.review_queue_id);
+    }
   } catch (error) {
     $("query-status").textContent = `查询失败：${messageOf(error)}`;
   } finally {
@@ -934,10 +1016,12 @@ async function fetchJson(url, options = {}) {
 }
 
 function renderQuery(data) {
-  $("answer-text").textContent = data.answer || "未返回回答。";
+  const answerNode = $("answer-text");
+  answerNode.textContent = data.answer || "未返回回答。";
+  const review = data.human_review || {};
   const answerBadges = [
     makeBadge(labelQuestionType(data.question_type), data.question_type === "unsafe_request" ? "fail" : "pass"),
-    data.needs_human_review ? makeBadge("需人工审阅", "warn") : makeBadge("无需审阅", "pass"),
+    reviewBadgeFor(data, review),
   ];
   if (data.safety_analysis?.unsafe_request_detected) {
     answerBadges.push(makeBadge("检测到不安全请求", "fail"));
@@ -947,7 +1031,6 @@ function renderQuery(data) {
   }
   $("answer-badges").replaceChildren(...answerBadges);
 
-  const review = data.human_review || {};
   $("answer-metadata").replaceChildren(...makeMetadataNodes({
     "置信度": formatScore(data.confidence),
     "问题类型": labelQuestionType(data.question_type),
@@ -962,6 +1045,165 @@ function renderQuery(data) {
   renderCitations($("citations-list"), data.citations || []);
   renderEvidenceList($("support-list"), data.support_evidence || []);
   renderEvidenceList($("counter-list"), data.counter_evidence || []);
+  renderReviewHandoff(data);
+
+  // Keep the answer in view on stacked/mobile layouts without jumping when already visible.
+  // Guard missing DOM layout APIs so lightweight harnesses (XSS regression) still work.
+  // When a case was persisted to the queue, runQuery will later focus the queue instead.
+  const shouldFocusQueue = Boolean(review.review_queue_id);
+  if (
+    !shouldFocusQueue
+    && typeof answerNode.getBoundingClientRect === "function"
+    && typeof answerNode.scrollIntoView === "function"
+    && typeof window !== "undefined"
+    && typeof window.innerHeight === "number"
+  ) {
+    const rect = answerNode.getBoundingClientRect();
+    const fullyVisible = rect.top >= 0 && rect.bottom <= window.innerHeight;
+    if (!fullyVisible) {
+      answerNode.scrollIntoView({block: "nearest", behavior: "smooth"});
+    }
+  }
+}
+
+function reviewBadgeFor(data, review) {
+  if (review && review.review_queue_id) {
+    return makeBadge("已写入队列", "warn");
+  }
+  if (review && review.required) {
+    return makeBadge("需审阅未写入", "warn");
+  }
+  if (data && data.needs_human_review) {
+    return makeBadge("标记需关注", "warn");
+  }
+  return makeBadge("无需审阅", "pass");
+}
+
+/** Show an answer-panel CTA stratified by whether the case was actually queued. */
+function renderReviewHandoff(data) {
+  const handoff = $("review-handoff");
+  if (!handoff) return;
+
+  const review = (data && data.human_review) || {};
+  const needed = Boolean((data && data.needs_human_review) || review.required);
+  if (!needed) {
+    handoff.hidden = true;
+    handoff.classList.remove("is-persisted", "is-warn", "is-note");
+    handoff.replaceChildren();
+    clearReviewHighlights();
+    return;
+  }
+
+  const reasons = labelReasons(review.reasons);
+  const queueId = review.review_queue_id || "";
+  const status = review.status || "";
+  const actions = elx("div", {className: "review-handoff-actions"});
+  let titleText = "标记需关注";
+  let bodyText = "未达到入队策略（例如置信度未低于阈值，或问题类型无需强制审阅）。";
+  let variant = "is-note";
+
+  if (queueId) {
+    titleText = "已写入审阅队列";
+    bodyText = [
+      reasons ? `原因：${reasons}` : null,
+      `队列 ID：${queueId}`,
+    ].filter(Boolean).join(" · ");
+    variant = "is-persisted";
+  } else if (review.required) {
+    titleText = "需审阅但未写入队列";
+    const statusHint = status ? `状态：${status}` : "状态未知";
+    bodyText = [
+      reasons ? `原因：${reasons}` : null,
+      statusHint,
+      status === "public_demo_not_persisted"
+        ? "公开演示不落库。"
+        : (status === "handoff_failed" ? "交接写入失败，请查看错误字段。" : null),
+    ].filter(Boolean).join(" · ");
+    variant = "is-warn";
+  } else if (reasons) {
+    bodyText = `标记原因：${reasons}。未达到入队策略，不会出现在审阅列表。`;
+  }
+
+  handoff.classList.remove("is-persisted", "is-warn", "is-note");
+  handoff.classList.add(variant);
+
+  const title = elx("p", {className: "review-handoff-title", text: titleText});
+  const body = elx("p", {className: "review-handoff-body", text: bodyText});
+
+  if (!reviewQueueEnabled()) {
+    actions.appendChild(elx("p", {
+      className: "review-handoff-note",
+      text: "公开演示已关闭审阅队列写操作，无法在此处理。",
+    }));
+  } else if (queueId) {
+    const button = elx("button", {className: "primary-button", text: "打开审阅队列"});
+    button.type = "button";
+    button.addEventListener("click", () => focusReviewEntry(queueId));
+    actions.appendChild(button);
+  } else if (review.required) {
+    const button = elx("button", {className: "secondary-button", text: "查看审阅面板"});
+    button.type = "button";
+    button.addEventListener("click", () => focusReviewEntry(null));
+    actions.appendChild(button);
+  }
+
+  handoff.hidden = false;
+  handoff.replaceChildren(title, body, actions);
+}
+
+function clearReviewHighlights() {
+  if (typeof document === "undefined" || !document.querySelectorAll) return;
+  document.querySelectorAll(".review-item.is-highlighted").forEach((node) => {
+    node.classList.remove("is-highlighted");
+  });
+  if (state._highlightTimer) {
+    clearTimeout(state._highlightTimer);
+    state._highlightTimer = null;
+  }
+}
+
+function findReviewEntryNode(reviewQueueId) {
+  if (!reviewQueueId) return null;
+  const list = $("review-list");
+  if (!list || !list.querySelectorAll) return null;
+  const target = String(reviewQueueId);
+  const nodes = list.querySelectorAll("[data-review-id]");
+  for (let i = 0; i < nodes.length; i += 1) {
+    if (nodes[i].dataset && nodes[i].dataset.reviewId === target) {
+      return nodes[i];
+    }
+  }
+  return null;
+}
+
+/** Scroll the review panel into view and briefly highlight the matching entry. */
+function focusReviewEntry(reviewQueueId) {
+  clearReviewHighlights();
+
+  const entry = findReviewEntryNode(reviewQueueId);
+  const title = $("review-title");
+  const panel = (title && title.closest) ? title.closest(".panel") : null;
+  const list = $("review-list");
+  const summary = $("review-summary");
+  const target = entry || panel || list;
+  if (
+    target
+    && typeof target.scrollIntoView === "function"
+  ) {
+    target.scrollIntoView({block: "center", behavior: "smooth"});
+  }
+
+  if (entry && entry.classList) {
+    entry.classList.add("is-highlighted");
+    if (typeof setTimeout === "function") {
+      state._highlightTimer = setTimeout(() => {
+        entry.classList.remove("is-highlighted");
+        state._highlightTimer = null;
+      }, 2500);
+    }
+  } else if (reviewQueueId && summary) {
+    summary.textContent = "队列中未找到该条目（可能被筛选隐藏或已清空）。";
+  }
 }
 
 function renderCitations(container, citations) {

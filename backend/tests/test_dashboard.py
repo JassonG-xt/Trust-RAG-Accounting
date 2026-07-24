@@ -29,6 +29,25 @@ def test_dashboard_returns_html() -> None:
     assert "demo-mode-pill" in body
 
 
+def test_dashboard_conversation_workspace_keeps_query_and_answer_contract() -> None:
+    client = TestClient(app)
+
+    response = client.get("/dashboard")
+
+    assert response.status_code == 200
+    body = response.text
+    assert "conversation-workspace" in body
+    assert 'id="question-input"' in body
+    assert 'id="answer-text"' in body
+    assert "query-panel" in body
+    assert "answer-panel" in body
+    assert "evidence-panel" in body
+    assert 'id="citations-list"' in body
+    assert body.index("conversation-workspace") < body.index("evidence-panel")
+    assert body.index("query-panel") < body.index("answer-panel")
+    assert body.index("answer-panel") < body.index("evidence-panel")
+
+
 def test_dashboard_uses_collapsed_raw_analysis_view() -> None:
     client = TestClient(app)
 
@@ -51,6 +70,41 @@ def test_dashboard_carries_review_action_disclaimer() -> None:
     body = response.text
     assert "review_actions.jsonl" in body
     assert "本地演示流程" in body
+
+
+def test_dashboard_review_handoff_cta_wiring() -> None:
+    """Answer panel exposes a handoff CTA that can focus the review queue."""
+    client = TestClient(app)
+
+    html = client.get("/dashboard").text
+    js = client.get("/dashboard/static/app.js").text
+    css = client.get("/dashboard/static/styles.css").text
+
+    assert 'id="review-handoff"' in html
+    assert "renderReviewHandoff" in js
+    assert "focusReviewEntry" in js
+    assert "已写入审阅队列" in js
+    assert "需审阅但未写入队列" in js
+    assert "resetReviewFilters" in js
+    assert "confidence_below_threshold" in js
+    assert ".review-handoff" in css
+    assert ".review-item.is-highlighted" in css
+    assert ".review-handoff.is-persisted" in css
+
+
+def test_dashboard_review_clear_queue_wiring() -> None:
+    """Review panel wires a clear-queue control to DELETE /v1/review/queue."""
+    client = TestClient(app)
+
+    html = client.get("/dashboard").text
+    js = client.get("/dashboard/static/app.js").text
+    css = client.get("/dashboard/static/styles.css").text
+
+    assert 'id="review-clear-queue"' in html
+    assert "clearReviewQueue" in js
+    assert 'method: "DELETE"' in js
+    assert "/v1/review/queue" in js
+    assert ".danger-button" in css
 
 
 def test_dashboard_contains_eval_trend_panel() -> None:
