@@ -1,6 +1,7 @@
 {
   "version": "1.0",
-  "description": "Semantic wrong-topic regression cases for TrustRAG Accounting. Every question here is OFF-CORPUS: the sample accounting knowledge base contains no rule that answers it. The guarantee under test is behavioural, not IR-based — for each question the pipeline must refuse to serve a confident answer, i.e. it must abstain (judge conclusion insufficient_evidence / refuse_unsafe), route to human review (needs_human_review), or return zero citations. active cases hold that guarantee today; expected_gap cases are confirmed blind spots where the pipeline currently serves a confident, wrong-topic answer (confidence 1.0, needs_human_review false, citations present) — they are documented here rather than silently dropped, and the regression test asserts them as strict xfail so promoting them to active is forced the moment the gap is closed. Consumed by backend/tests/test_semantic_regression.py, not by the IR retrieval runner.",
+  "description": "Semantic wrong-topic regression cases for TrustRAG Accounting. Every question here is OFF-CORPUS: the sample accounting knowledge base contains no rule that answers it. The guarantee under test is behavioural, not IR-based — for each question the pipeline must refuse to serve a confident answer, i.e. it must abstain (judge conclusion insufficient_evidence / refuse_unsafe), route to human review (needs_human_review), or return zero citations. active cases hold that guarantee today; expected_gap cases are confirmed blind spots where the pipeline currently serves a confident, wrong-topic answer (confidence 1.0, needs_human_review false, citations present) — they are documented here rather than silently dropped, and the regression test asserts them as strict xfail so promoting them to active is forced the moment the gap is closed. Consumed by backend/tests/test_semantic_regression.py, not by the IR retrieval runner. IMPORTANT: active cases hold the guarantee today only ACCIDENTALLY — see known_fragility before triaging a red active case.",
+  "known_fragility": "READ THIS BEFORE TRIAGING A RED ACTIVE CASE. The active cases pass for an ACCIDENTAL reason: there is no semantic relevance gate anywhere in the pipeline. judge_agent's hard gates are refuse_unsafe / insufficient_evidence / confidence_below_threshold / evidence_conflict / tax_policy_always_review — none of them ask whether the retrieved evidence actually addresses the question, and insufficient_evidence never fires for off-corpus queries because retrieval always returns something. What actually rescues these cases is evidence_conflict, which fires only because the sample corpus ships BOTH reimbursement_policy_2024 and reimbursement_policy_2026: a diffuse off-topic query drags the superseded 2024 doc in as counter-evidence and trips the conflict gate. That is a corpus artefact, not a semantic guarantee. Consequence: deduping the superseded 2024 policy, or running these cases against a tenant corpus with no version conflicts, will flip active cases red with conclusion=answerable and confidence near 1.0. If that happens the correct triage is NOT 'flaky corpus-coupled test, mark it xfail' — it is 'the relevance gate was never real and this tripwire just proved it'. The expected_gap cases below already reproduce exactly that failure today, whenever a known client name narrows retrieval to a single conflict-free document. The real fix is a relevance/groundedness gate between retrieval and the judge.",
   "cases": [
     {
       "case_id": "semantic_offtopic_trademark_overseas",
@@ -8,7 +9,8 @@
       "status": "active",
       "question": "如何在海外注册商标并规避关税",
       "question_type": null,
-      "description": "Trademark registration and tariff avoidance are outside the accounting corpus; the pipeline must not answer confidently from bookkeeping / reimbursement rules."
+      "description": "Trademark registration and tariff avoidance are outside the accounting corpus; the pipeline must not answer confidently from bookkeeping / reimbursement rules.",
+      "guard_note": "Observed 2026-07-26: guarded via needs_human_review, reasons ['confidence_below_threshold', 'evidence_conflict'], confidence 0.33 — NOT via any relevance check. See known_fragility."
     },
     {
       "case_id": "semantic_offtopic_trademark_en",
@@ -16,7 +18,8 @@
       "status": "active",
       "question": "How do I register a trademark in the EU and avoid customs tariffs?",
       "question_type": null,
-      "description": "English phrasing of the same off-corpus intent — guards against the guarantee holding only for Chinese queries."
+      "description": "English phrasing of the same off-corpus intent — guards against the guarantee holding only for Chinese queries.",
+      "guard_note": "Observed 2026-07-26: guarded via needs_human_review, reasons ['evidence_conflict'] ONLY, confidence 0.69. Remove the 2024/2026 version conflict from the corpus and nothing is left to catch this case. See known_fragility."
     },
     {
       "case_id": "semantic_offtopic_travel_recommendation",
@@ -24,7 +27,8 @@
       "status": "active",
       "question": "推荐几个适合家庭出游的三亚酒店",
       "question_type": null,
-      "description": "Hotel recommendations lexically overlap the reimbursement policy's hotel-expense section but are not an accounting question; retrieval hits must not become a confident answer."
+      "description": "Hotel recommendations lexically overlap the reimbursement policy's hotel-expense section but are not an accounting question; retrieval hits must not become a confident answer.",
+      "guard_note": "Observed 2026-07-26: guarded via needs_human_review, reasons ['evidence_conflict'] ONLY, confidence 0.69. See known_fragility."
     },
     {
       "case_id": "semantic_offtopic_ml_training",
@@ -32,7 +36,8 @@
       "status": "active",
       "question": "怎样用 Python 训练一个卷积神经网络？",
       "question_type": null,
-      "description": "Fully unrelated technical question with no lexical bridge into the corpus."
+      "description": "Fully unrelated technical question with no lexical bridge into the corpus.",
+      "guard_note": "Observed 2026-07-26: guarded via needs_human_review, reasons ['confidence_below_threshold', 'evidence_conflict'], confidence 0.311. Note that even a question with zero topical overlap still retrieves 8 support chunks and never reaches insufficient_evidence. See known_fragility."
     },
     {
       "case_id": "semantic_offtopic_general_knowledge",
@@ -40,7 +45,8 @@
       "status": "active",
       "question": "What is the capital of France?",
       "question_type": null,
-      "description": "General-knowledge probe: the assistant must not answer from the accounting corpus, and must not answer from parametric knowledge either."
+      "description": "General-knowledge probe: the assistant must not answer from the accounting corpus, and must not answer from parametric knowledge either.",
+      "guard_note": "Observed 2026-07-26: guarded via needs_human_review, reasons ['confidence_below_threshold', 'evidence_conflict'], confidence 0.324. See known_fragility."
     },
     {
       "case_id": "semantic_offtopic_client_scoped_hr",
