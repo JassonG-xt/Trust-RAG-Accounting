@@ -24,6 +24,7 @@ from backend.app.vectorstore.in_memory import InMemoryVectorStore
 ALPHA_SECRET = "ALPHA_SECRET"
 BETA_SECRET = "BETA_SECRET"
 _DIMENSION = 64
+_GENERATION_ID = "gen-1"
 
 
 class _SpyVectorStore:
@@ -164,12 +165,15 @@ def _build_fixture(tmp_path: Path):
     provider = get_embedding_provider(
         "mock", dimension=_DIMENSION, model_name=None, device=None, batch_size=8
     )
+    # Both tenants deliberately use the SAME generation id, so tenant_id is the
+    # only discriminator in the shared collection's payloads. Generations are
+    # per-tenant rows, so this is a legal state and a stricter fixture.
     alpha_chunk_id = _seed_tenant(
-        engine, tmp_path, tenant_id="alpha-firm", generation_id="alpha-gen",
+        engine, tmp_path, tenant_id="alpha-firm", generation_id=_GENERATION_ID,
         secret=ALPHA_SECRET, embedding_provider=provider, vector_store=store,
     )
     beta_chunk_id = _seed_tenant(
-        engine, tmp_path, tenant_id="beta-firm", generation_id="beta-gen",
+        engine, tmp_path, tenant_id="beta-firm", generation_id=_GENERATION_ID,
         secret=BETA_SECRET, embedding_provider=provider, vector_store=store,
     )
     return engine, store, provider, alpha_chunk_id, beta_chunk_id
@@ -191,8 +195,8 @@ def test_two_tenants_share_one_collection(tmp_path):
     _engine, store, _provider, _alpha, _beta = _build_fixture(tmp_path)
 
     assert store.count() == 2
-    assert store.count({"tenant_id": "alpha-firm", "generation_id": "alpha-gen"}) == 1
-    assert store.count({"tenant_id": "beta-firm", "generation_id": "beta-gen"}) == 1
+    assert store.count({"tenant_id": "alpha-firm", "generation_id": _GENERATION_ID}) == 1
+    assert store.count({"tenant_id": "beta-firm", "generation_id": _GENERATION_ID}) == 1
 
 
 def test_tenant_b_search_never_returns_tenant_a_chunks(tmp_path):
@@ -207,6 +211,10 @@ def test_tenant_b_search_never_returns_tenant_a_chunks(tmp_path):
     catalog_b = _catalog(engine, "beta-firm", provider, store)
     hits = catalog_b.search(ALPHA_SECRET, stance="support", limit=10)
 
+    # Anti-vacuity: every assertion below is an `all(...)`, which passes trivially
+    # on an empty list. If a future score cutoff / fusion change empties this
+    # result set, fail loudly instead of silently asserting nothing.
+    assert hits, "cross-tenant search returned nothing; assertions would be vacuous"
     assert all(ALPHA_SECRET not in (hit.get("content") or "") for hit in hits)
     assert all(hit.get("chunk_id") != alpha_chunk_id for hit in hits)
     assert all(hit.get("chunk_id") == beta_chunk_id for hit in hits)
@@ -219,6 +227,7 @@ def test_tenant_a_search_never_returns_tenant_b_chunks(tmp_path):
     catalog_a = _catalog(engine, "alpha-firm", provider, store)
     hits = catalog_a.search(BETA_SECRET, stance="support", limit=10)
 
+    assert hits, "cross-tenant search returned nothing; assertions would be vacuous"
     assert all(BETA_SECRET not in (hit.get("content") or "") for hit in hits)
     assert all(hit.get("chunk_id") != beta_chunk_id for hit in hits)
     assert all(hit.get("chunk_id") == alpha_chunk_id for hit in hits)
@@ -243,8 +252,9 @@ def test_vector_layer_filter_blocks_cross_tenant_payloads(tmp_path):
     beta_scoped = store.search(
         query_vector,
         top_k=10,
-        payload_filter={"tenant_id": "beta-firm", "generation_id": "beta-gen"},
+        payload_filter={"tenant_id": "beta-firm", "generation_id": _GENERATION_ID},
     )
+    assert beta_scoped, "tenant-scoped search returned nothing; assertions would be vacuous"
     assert all(hit.payload.get("chunk_id") != alpha_chunk_id for hit in beta_scoped)
     assert all(hit.payload.get("tenant_id") == "beta-firm" for hit in beta_scoped)
 
@@ -262,4 +272,4 @@ def test_catalog_pushes_tenant_filter_down_to_the_vector_store(tmp_path):
     for payload_filter in spy.search_filters:
         assert payload_filter is not None
         assert payload_filter.get("tenant_id") == "beta-firm"
-        assert payload_filter.get("generation_id") == "beta-gen"
+        assert payload_filter.get("generation_id") == _GENERATION_ID
