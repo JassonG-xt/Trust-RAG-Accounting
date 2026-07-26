@@ -515,6 +515,45 @@ class use_retrieval_source:
             _active_retrieval_source.reset(self._token)
 
 
+# ---------------------------------------------------------------------------
+# Per-request tenant repository binding (Phase 11 — RAG path tenant scoping)
+# ---------------------------------------------------------------------------
+#
+# The retriever nodes resolve their corpus through ``get_repository()``. For the
+# raw source that is normally the process-global raw store, which is tenant-blind.
+# In multi-tenant (postgres) mode the ``/v1/rag/query`` route binds the request's
+# tenant-scoped catalog here (via ``run_query(catalog=...)``) so retrieval reads
+# only that tenant's documents — the RAG analogue of ``/v1/documents`` calling
+# ``container.catalog_for(tenant_id)``. The wiki / hybrid corpora are derived
+# global stores and are intentionally left unscoped by this binding.
+
+_active_tenant_repository: contextvars.ContextVar[Any | None] = contextvars.ContextVar(
+    "trustrag_tenant_repository", default=None
+)
+
+
+class use_tenant_repository:
+    """Context manager binding the active tenant-scoped repository (raw source).
+
+    ``repository`` is any object exposing ``get_retrieval_service()`` — a
+    :class:`DocumentRepository` in local mode, a ``PostgresDocumentCatalog`` in
+    postgres mode. ``None`` is a no-op, so ``get_repository()`` falls back to the
+    global raw store and every existing ``run_query`` caller is unchanged.
+    """
+
+    def __init__(self, repository: Any | None) -> None:
+        self._repository = repository
+        self._token: contextvars.Token | None = None
+
+    def __enter__(self) -> Any | None:
+        self._token = _active_tenant_repository.set(self._repository)
+        return self._repository
+
+    def __exit__(self, *exc: object) -> None:
+        if self._token is not None:
+            _active_tenant_repository.reset(self._token)
+
+
 def get_raw_repository() -> DocumentRepository:
     """The raw-corpus repository — always the raw store, regardless of source."""
 
@@ -583,13 +622,22 @@ def get_hybrid_repository() -> DocumentRepository:
 
 
 def get_repository() -> DocumentRepository:
-    """Return the repository for the active retrieval source (raw by default)."""
+    """Return the repository for the active retrieval source (raw by default).
+
+    For the raw source a per-request tenant repository (bound by the RAG route
+    via :class:`use_tenant_repository`) takes precedence, so retrieval is scoped
+    to the caller's tenant instead of the process-global raw store. The wiki /
+    hybrid corpora are derived global stores and ignore the binding.
+    """
 
     source = resolve_retrieval_source()
     if source == "wiki":
         return get_wiki_repository()
     if source == "hybrid":
         return get_hybrid_repository()
+    tenant_repository = _active_tenant_repository.get()
+    if tenant_repository is not None:
+        return tenant_repository
     return get_raw_repository()
 
 

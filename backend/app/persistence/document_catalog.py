@@ -77,6 +77,18 @@ class PostgresDocumentCatalog:
     def chunk_count(self) -> int:
         return len(self.load_chunks())
 
+    def get_retrieval_service(self) -> RetrievalService:
+        """Retrieval seam consumed by the RAG graph nodes.
+
+        Mirrors :meth:`DocumentRepository.get_retrieval_service` so a
+        tenant-scoped catalog is a drop-in for the process-global repository at
+        the ``support_retriever`` / ``counter_retriever`` call site.
+        """
+
+        self._ensure_loaded()
+        assert self._retrieval is not None
+        return self._retrieval
+
     def search(
         self,
         question: str,

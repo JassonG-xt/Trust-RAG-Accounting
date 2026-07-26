@@ -255,6 +255,7 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
                         tenant_id=principal.tenant_id,
                         actor_id=principal.subject_id,
                         retrieval_source=request.retrieval_source,
+                        catalog=container.catalog_for(principal.tenant_id),
                     )
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("workflow failed")
