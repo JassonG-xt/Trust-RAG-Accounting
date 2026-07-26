@@ -217,13 +217,18 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
         return FileResponse(FRONTEND_INDEX)
 
     @app.get("/v1/documents", response_model=DocumentsResponse, tags=["meta"])
-    def list_documents() -> DocumentsResponse:
+    def list_documents(http_request: Request) -> DocumentsResponse:
         """Diagnostic listing of every document currently loaded into the
         repository, plus the count of chunks it produced. Read-only — no
         upload / delete / update is exposed through HTTP in this phase.
+
+        Scoped to the authenticated principal's tenant: the middleware maps
+        ``/v1/documents`` to ``READ_DOCUMENTS`` and always sets
+        ``request.state.principal`` before this handler runs.
         """
 
-        repository = container.current_document_catalog()
+        principal: RequestPrincipal = http_request.state.principal
+        repository = container.catalog_for(principal.tenant_id)
         summaries = repository.describe()
         return DocumentsResponse(
             count=len(summaries),

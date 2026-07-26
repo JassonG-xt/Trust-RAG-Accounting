@@ -76,6 +76,12 @@ class ApplicationContainer:
     _trace_collector_provider: Callable[[], LocalTraceCollector] | None = field(
         default=None, repr=False
     )
+    _engine: Engine | None = field(default=None, repr=False)
+    _embedding_provider: Any | None = field(default=None, repr=False)
+    _vector_store: Any | None = field(default=None, repr=False)
+    _catalog_cache: dict[str, DocumentCatalog] = field(
+        default_factory=dict, repr=False
+    )
 
     def current_settings(self) -> Settings:
         return self._settings_provider() if self._settings_provider else self.settings
@@ -94,6 +100,32 @@ class ApplicationContainer:
         if self._trace_collector_provider:
             return self._trace_collector_provider()
         return self.trace_collector
+
+    def catalog_for(self, tenant_id: str) -> DocumentCatalog:
+        """Return the read catalog scoped to ``tenant_id``.
+
+        In postgres mode a per-tenant :class:`PostgresDocumentCatalog` is built
+        (and cached) over the shared engine so each request observes only its
+        own tenant's documents. In local mode there is no per-tenant engine, so
+        this falls back to the single configured catalog unchanged.
+        """
+
+        if self._engine is None:
+            return self.current_document_catalog()
+        cached = self._catalog_cache.get(tenant_id)
+        if cached is not None:
+            return cached
+        from ..persistence.document_catalog import PostgresDocumentCatalog
+
+        catalog = PostgresDocumentCatalog(
+            self._engine,
+            tenant_id=tenant_id,
+            settings=self.current_settings(),
+            embedding_provider=self._embedding_provider,
+            vector_store=self._vector_store,
+        )
+        self._catalog_cache[tenant_id] = catalog
+        return catalog
 
 
 def _build_current_review_service() -> ReviewService:
@@ -141,6 +173,10 @@ def build_application_container(
             region_name=current.s3_region,
             client=s3_client,
         )
+
+    database_engine = None
+    embedding_provider = None
+    vector_store = None
 
     if current.storage_backend.strip().lower() == "postgres":
         from sqlalchemy import create_engine
@@ -272,6 +308,9 @@ def build_application_container(
         _document_catalog_provider=document_provider,
         _review_service_provider=review_provider,
         _trace_collector_provider=trace_provider,
+        _engine=database_engine,
+        _embedding_provider=embedding_provider,
+        _vector_store=vector_store,
     )
 
 
