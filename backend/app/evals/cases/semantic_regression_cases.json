@@ -1,0 +1,64 @@
+{
+  "version": "1.0",
+  "description": "Semantic wrong-topic regression cases for TrustRAG Accounting. Every question here is OFF-CORPUS: the sample accounting knowledge base contains no rule that answers it. The guarantee under test is behavioural, not IR-based — for each question the pipeline must refuse to serve a confident answer, i.e. it must abstain (judge conclusion insufficient_evidence / refuse_unsafe), route to human review (needs_human_review), or return zero citations. active cases hold that guarantee today; expected_gap cases are confirmed blind spots where the pipeline currently serves a confident, wrong-topic answer (confidence 1.0, needs_human_review false, citations present) — they are documented here rather than silently dropped, and the regression test asserts them as strict xfail so promoting them to active is forced the moment the gap is closed. Consumed by backend/tests/test_semantic_regression.py, not by the IR retrieval runner.",
+  "cases": [
+    {
+      "case_id": "semantic_offtopic_trademark_overseas",
+      "category": "wrong_topic",
+      "status": "active",
+      "question": "如何在海外注册商标并规避关税",
+      "question_type": null,
+      "description": "Trademark registration and tariff avoidance are outside the accounting corpus; the pipeline must not answer confidently from bookkeeping / reimbursement rules."
+    },
+    {
+      "case_id": "semantic_offtopic_trademark_en",
+      "category": "wrong_topic",
+      "status": "active",
+      "question": "How do I register a trademark in the EU and avoid customs tariffs?",
+      "question_type": null,
+      "description": "English phrasing of the same off-corpus intent — guards against the guarantee holding only for Chinese queries."
+    },
+    {
+      "case_id": "semantic_offtopic_travel_recommendation",
+      "category": "wrong_topic",
+      "status": "active",
+      "question": "推荐几个适合家庭出游的三亚酒店",
+      "question_type": null,
+      "description": "Hotel recommendations lexically overlap the reimbursement policy's hotel-expense section but are not an accounting question; retrieval hits must not become a confident answer."
+    },
+    {
+      "case_id": "semantic_offtopic_ml_training",
+      "category": "wrong_topic",
+      "status": "active",
+      "question": "怎样用 Python 训练一个卷积神经网络？",
+      "question_type": null,
+      "description": "Fully unrelated technical question with no lexical bridge into the corpus."
+    },
+    {
+      "case_id": "semantic_offtopic_general_knowledge",
+      "category": "wrong_topic",
+      "status": "active",
+      "question": "What is the capital of France?",
+      "question_type": null,
+      "description": "General-knowledge probe: the assistant must not answer from the accounting corpus, and must not answer from parametric knowledge either."
+    },
+    {
+      "case_id": "semantic_offtopic_client_scoped_hr",
+      "category": "wrong_topic_client_scoped",
+      "status": "expected_gap",
+      "question": "Alpha Trading Co. 的员工怎么申请年假？",
+      "question_type": null,
+      "description": "Annual-leave / HR question scoped to a known client. No leave rule exists in the corpus.",
+      "gap_note": "Observed 2026-07-26: confidence 1.0, needs_human_review false, review_queue_id null, 2 citations. The answer is the Alpha SOP's front-matter disclaimer served as if it answered the leave question. Naming a known client makes the client filter return a single-client hit, which suppresses both the confidence and the evidence-conflict review gates."
+    },
+    {
+      "case_id": "semantic_offtopic_client_scoped_patent",
+      "category": "wrong_topic_client_scoped",
+      "status": "expected_gap",
+      "question": "Alpha Trading Co. 的餐饮发票在专利申请中怎么用？",
+      "question_type": null,
+      "description": "Patent-application question wrapped around an in-corpus keyword (meal invoice) and a known client.",
+      "gap_note": "Observed 2026-07-26: confidence 1.0, needs_human_review false, review_queue_id null, 1 citation. The pipeline returns the meal-invoice bookkeeping rule verbatim as the answer to a patent question."
+    }
+  ]
+}
