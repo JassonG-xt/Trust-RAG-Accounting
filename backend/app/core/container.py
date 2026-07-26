@@ -38,6 +38,7 @@ if TYPE_CHECKING:
         PostgresIndexGenerationRepository,
         PostgresIndexJobRepository,
     )
+    from ..persistence.tenants import TenantRegistryRepository
 
 
 class DocumentCatalog(Protocol):
@@ -64,6 +65,7 @@ class ApplicationContainer:
     )
     index_jobs: PostgresIndexJobRepository | None = None
     index_generations: PostgresIndexGenerationRepository | None = None
+    tenant_registry: TenantRegistryRepository | None = None
     telemetry: Telemetry = field(default_factory=NoopTelemetry)
     readiness_checks: dict[str, Callable[[], bool]] = field(default_factory=dict)
     _settings_provider: Callable[[], Settings] | None = field(default=None, repr=False)
@@ -155,6 +157,7 @@ def build_application_container(
             jwks_url=current.oidc_jwks_url,
             roles_claim=current.oidc_roles_claim,
             tenant_claim=current.oidc_tenant_claim,
+            multi_tenant=current.oidc_multi_tenant,
         )
     else:
         local_roles = frozenset({"viewer"}) if current.trustrag_public_demo_enabled else frozenset({"admin"})
@@ -177,6 +180,7 @@ def build_application_container(
     database_engine = None
     embedding_provider = None
     vector_store = None
+    tenant_registry = None
 
     if current.storage_backend.strip().lower() == "postgres":
         from sqlalchemy import create_engine
@@ -194,6 +198,9 @@ def build_application_container(
             current.database_url,
             pool_pre_ping=True,
         )
+        from ..persistence.tenants import TenantRegistryRepository
+
+        tenant_registry = TenantRegistryRepository(database_engine)
         readiness_checks: dict[str, Callable[[], bool]] = {
             "postgres": lambda: _database_is_ready(database_engine)
         }
@@ -302,6 +309,7 @@ def build_application_container(
         authenticator=authenticator,
         index_jobs=index_jobs,
         index_generations=index_generations,
+        tenant_registry=tenant_registry,
         telemetry=telemetry,
         readiness_checks=readiness_checks,
         _settings_provider=settings_provider,

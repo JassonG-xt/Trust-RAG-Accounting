@@ -152,6 +152,9 @@ class Settings:
     oidc_tenant_claim: str = field(
         default_factory=lambda: os.getenv("TRUSTRAG_OIDC_TENANT_CLAIM", "tenant_id")
     )
+    oidc_multi_tenant: bool = field(
+        default_factory=lambda: _bool_env("TRUSTRAG_OIDC_MULTI_TENANT", False)
+    )
     telemetry_mode: str = field(
         default_factory=lambda: os.getenv("TRUSTRAG_TELEMETRY_MODE", "noop")
     )

@@ -120,6 +120,10 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
             principal = authenticator.authenticate(token)
         except AuthenticationError:
             return JSONResponse(status_code=401, content={"detail": "authentication required"})
+        if container.tenant_registry is not None and not container.tenant_registry.is_active(
+            principal.tenant_id
+        ):
+            return JSONResponse(status_code=403, content={"detail": "tenant is not active"})
         if not container.authorization_policy.is_allowed(principal, permission):
             return JSONResponse(status_code=403, content={"detail": "permission denied"})
         request.state.principal = principal

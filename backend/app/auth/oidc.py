@@ -20,9 +20,12 @@ class OIDCJWTAuthenticator:
         public_key: bytes | str | None = None,
         roles_claim: str = "roles",
         tenant_claim: str = "tenant_id",
+        multi_tenant: bool = False,
     ) -> None:
-        if not issuer or not audience or not tenant_id:
-            raise ValueError("issuer, audience and tenant_id are required")
+        if not issuer or not audience:
+            raise ValueError("issuer and audience are required")
+        if not multi_tenant and not tenant_id:
+            raise ValueError("tenant_id is required unless multi_tenant is enabled")
         if not jwks_url and public_key is None:
             raise ValueError("either jwks_url or public_key is required")
         self._issuer = issuer
@@ -31,6 +34,7 @@ class OIDCJWTAuthenticator:
         self._public_key = public_key
         self._roles_claim = roles_claim
         self._tenant_claim = tenant_claim
+        self._multi_tenant = multi_tenant
         self._jwks_client = None
         if jwks_url:
             try:
@@ -62,7 +66,9 @@ class OIDCJWTAuthenticator:
             raise AuthenticationError("invalid bearer token") from exc
 
         token_tenant = str(claims.get(self._tenant_claim) or "")
-        if token_tenant != self._tenant_id:
+        if not token_tenant:
+            raise AuthenticationError("token has no tenant")
+        if not self._multi_tenant and token_tenant != self._tenant_id:
             raise AuthenticationError("token tenant does not match configured tenant")
         subject_id = str(claims.get("sub") or "").strip()
         if not subject_id:
