@@ -218,4 +218,3 @@ def test_tenant_id_and_name_are_stripped_before_store(tmp_path: Path) -> None:
     # Stored under the stripped key, never the padded one.
     assert registry.get("gamma") is not None
     assert registry.get("  gamma  ") is None
-
