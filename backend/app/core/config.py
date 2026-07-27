@@ -493,6 +493,11 @@ class Settings:
         auth_mode = self.auth_mode.strip().lower()
         if auth_mode not in {"local", "oidc"}:
             raise ValueError("TRUSTRAG_AUTH_MODE must be either 'local' or 'oidc'")
+        if auth_mode == "oidc" and backend != "postgres":
+            raise ValueError(
+                "TRUSTRAG_AUTH_MODE=oidc requires "
+                "TRUSTRAG_STORAGE_BACKEND=postgres (Postgres required)"
+            )
         if auth_mode == "oidc" and not all(
             (self.oidc_issuer, self.oidc_audience, self.oidc_jwks_url)
         ):
