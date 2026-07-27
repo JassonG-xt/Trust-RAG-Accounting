@@ -154,3 +154,68 @@ def test_registry_unavailable_returns_stable_404(tmp_path: Path) -> None:
     assert listed.json() == {"detail": "tenant registry unavailable"}
     assert created.status_code == 404
     assert created.json() == {"detail": "tenant registry unavailable"}
+
+
+# ---------------------------------------------------------------------------
+# Fix round 1 — reject blank/whitespace tenant_id and name before any write.
+# A blank or whitespace-only tenant_id would otherwise become a permanent
+# garbage primary key in the registry (no deletion endpoint exists).
+# ---------------------------------------------------------------------------
+
+
+def _platform_admin_client(
+    tmp_path: Path,
+) -> tuple[TestClient, TenantRegistryRepository]:
+    registry = _registry()
+    registry.create("platform", "Platform Operators", now=_NOW)
+    principal = RequestPrincipal("ops-1", "platform", frozenset({"platform_admin"}))
+    client = TestClient(create_app(_container(tmp_path, principal, registry)))
+    return client, registry
+
+
+def test_blank_tenant_id_is_rejected_without_write(tmp_path: Path) -> None:
+    client, registry = _platform_admin_client(tmp_path)
+
+    empty = client.post("/v1/admin/tenants", json={"tenant_id": "", "name": "X"})
+    whitespace = client.post(
+        "/v1/admin/tenants", json={"tenant_id": "   ", "name": "X"}
+    )
+
+    assert empty.status_code == 422
+    assert whitespace.status_code == 422
+    # Nothing was inserted under the blank / whitespace key.
+    assert registry.get("") is None
+    assert registry.get("   ") is None
+
+
+def test_blank_name_is_rejected_without_write(tmp_path: Path) -> None:
+    client, registry = _platform_admin_client(tmp_path)
+
+    empty = client.post(
+        "/v1/admin/tenants", json={"tenant_id": "delta", "name": ""}
+    )
+    whitespace = client.post(
+        "/v1/admin/tenants", json={"tenant_id": "delta", "name": "   "}
+    )
+
+    assert empty.status_code == 422
+    assert whitespace.status_code == 422
+    # A rejected name must not create the tenant row either.
+    assert registry.get("delta") is None
+
+
+def test_tenant_id_and_name_are_stripped_before_store(tmp_path: Path) -> None:
+    client, registry = _platform_admin_client(tmp_path)
+
+    created = client.post(
+        "/v1/admin/tenants", json={"tenant_id": "  gamma  ", "name": "  Gamma  "}
+    )
+
+    assert created.status_code == 201
+    body = created.json()
+    assert body["tenant_id"] == "gamma"
+    assert body["name"] == "Gamma"
+    # Stored under the stripped key, never the padded one.
+    assert registry.get("gamma") is not None
+    assert registry.get("  gamma  ") is None
+
