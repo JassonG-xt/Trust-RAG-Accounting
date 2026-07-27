@@ -10,6 +10,7 @@ class Permission(StrEnum):
     READ_REVIEW = "read_review"
     WRITE_REVIEW = "write_review"
     ADMIN = "admin"
+    MANAGE_TENANTS = "manage_tenants"
 
 
 @dataclass(frozen=True)

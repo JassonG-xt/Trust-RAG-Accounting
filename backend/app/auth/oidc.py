@@ -76,7 +76,11 @@ class OIDCJWTAuthenticator:
         raw_roles = claims.get(self._roles_claim, [])
         if isinstance(raw_roles, str):
             raw_roles = [raw_roles]
-        roles = frozenset(str(role) for role in raw_roles if str(role) in {"viewer", "reviewer", "admin"})
+        roles = frozenset(
+            str(role)
+            for role in raw_roles
+            if str(role) in {"viewer", "reviewer", "admin", "platform_admin"}
+        )
         if not roles:
             raise AuthenticationError("token has no recognized role")
         return RequestPrincipal(

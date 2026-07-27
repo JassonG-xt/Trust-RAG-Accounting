@@ -12,7 +12,8 @@ _ROLE_PERMISSIONS = {
             Permission.WRITE_REVIEW,
         }
     ),
-    "admin": frozenset(Permission),
+    "admin": frozenset(Permission) - {Permission.MANAGE_TENANTS},
+    "platform_admin": frozenset(Permission),
 }
 
 
@@ -31,6 +32,8 @@ def permission_for_request(method: str, path: str) -> Permission | None:
 
     if not path.startswith("/v1/") or path == "/v1/demo/config":
         return None
+    if path.startswith("/v1/admin/tenants"):
+        return Permission.MANAGE_TENANTS
     if path.startswith("/v1/debug/") or path.startswith("/v1/admin/"):
         return Permission.ADMIN
     if path.startswith("/v1/review/"):
