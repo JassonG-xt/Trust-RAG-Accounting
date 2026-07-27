@@ -157,6 +157,38 @@ def test_dashboard_app_js_contains_public_demo_wiring() -> None:
     assert "renderPublicDemoReviewDisabled" in body
 
 
+def test_dashboard_app_js_injects_bearer_token() -> None:
+    """fetchJson attaches the bearer token without dropping caller headers."""
+    client = TestClient(app)
+
+    response = client.get("/dashboard/static/app.js")
+
+    assert response.status_code == 200
+    body = response.text
+    assert "Authorization" in body
+    assert "Bearer " in body
+    assert "state.authToken" in body
+    assert "options.headers" in body
+
+
+def test_dashboard_app_js_bootstraps_auth_without_leaking_token() -> None:
+    """Auth bootstrap uses sessionStorage only and clears the URL fragment."""
+    client = TestClient(app)
+
+    html = client.get("/dashboard").text
+    js = client.get("/dashboard/static/app.js").text
+
+    assert 'id="auth-status"' in html
+    assert "bootstrapAuth" in js
+    assert "sessionStorage" in js
+    assert "trustrag_token" in js
+    assert "access_token" in js
+    assert "replaceState" in js
+    assert "localStorage" not in js
+    assert "console.log" not in js
+    assert "access_token=" not in js
+
+
 def test_dashboard_app_js_avoids_html_parsing_sinks() -> None:
     client = TestClient(app)
 

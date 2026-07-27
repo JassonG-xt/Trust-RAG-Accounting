@@ -123,7 +123,10 @@ function metaLabel(key) {
   return META_LABELS[key] || key;
 }
 
+const AUTH_TOKEN_KEY = "trustrag_token";
+
 const state = {
+  authToken: null,
   demoConfig: {
     public_demo_enabled: false,
     review_queue_enabled: true,
@@ -156,10 +159,79 @@ const state = {
 const $ = (id) => document.getElementById(id);
 
 document.addEventListener("DOMContentLoaded", () => {
+  bootstrapAuth();
   renderExamples();
   bindActions();
   refreshAll();
 });
+
+// Minimal auth bootstrap for the MVP: the OIDC provider redirects back with the
+// access token in the URL fragment, we keep it in memory + sessionStorage and
+// strip it from the address bar. Full auth-code + PKCE lands in Task 2.7.
+// Everything here runs from DOMContentLoaded so the DOM-less test sandbox never
+// touches browser storage or location.
+function bootstrapAuth() {
+  const token = readTokenFromFragment();
+  if (token) {
+    storeAuthToken(token);
+  } else {
+    state.authToken = readStoredAuthToken();
+  }
+  renderAuthStatus();
+}
+
+function authStorage() {
+  try {
+    return typeof sessionStorage === "undefined" ? null : sessionStorage;
+  } catch (error) {
+    // Storage can be blocked by browser policy; stay memory-only.
+    return null;
+  }
+}
+
+function readStoredAuthToken() {
+  const storage = authStorage();
+  return storage ? storage.getItem(AUTH_TOKEN_KEY) || null : null;
+}
+
+function storeAuthToken(token) {
+  state.authToken = token;
+  const storage = authStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(AUTH_TOKEN_KEY, token);
+  } catch (error) {
+    // Memory-only session is still usable.
+  }
+}
+
+function readTokenFromFragment() {
+  if (typeof location === "undefined") return null;
+  const fragment = (location.hash || "").replace(/^#/, "");
+  if (!fragment) return null;
+  const token = new URLSearchParams(fragment).get("access_token");
+  if (!token) return null;
+  clearUrlFragment();
+  return token;
+}
+
+function clearUrlFragment() {
+  const cleanUrl = `${location.pathname || "/"}${location.search || ""}`;
+  if (typeof history !== "undefined" && typeof history.replaceState === "function") {
+    history.replaceState(null, "", cleanUrl);
+  } else {
+    location.hash = "";
+  }
+}
+
+function renderAuthStatus() {
+  const node = $("auth-status");
+  if (!node) return;
+  const authenticated = Boolean(state.authToken);
+  // Never render the token itself — only whether a session exists.
+  node.textContent = authenticated ? "已登录" : "未登录";
+  node.dataset.authenticated = authenticated ? "true" : "false";
+}
 
 function bindActions() {
   $("run-query").addEventListener("click", runQuery);
@@ -1008,7 +1080,11 @@ async function runQuery() {
 }
 
 async function fetchJson(url, options = {}) {
-  const response = await fetch(url, options);
+  const headers = {...(options.headers || {})};
+  if (state.authToken) {
+    headers["Authorization"] = `Bearer ${state.authToken}`;
+  }
+  const response = await fetch(url, {...options, headers});
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}`);
   }
