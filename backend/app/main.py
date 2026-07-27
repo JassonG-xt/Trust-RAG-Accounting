@@ -16,7 +16,7 @@ import re
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -60,6 +60,11 @@ from .review import (
     ReviewQueueFilter,
     ReviewQueueResponse,
     ReviewQueueSummaryResponse,
+)
+from .schemas.admin import (
+    CreateTenantRequest,
+    TenantListResponse,
+    TenantSummary,
 )
 from .schemas.rag import (
     DemoConfigResponse,
@@ -891,6 +896,61 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
         if container.index_generations is None:
             raise HTTPException(status_code=503, detail="index generation storage unavailable")
         return container.index_generations.list_generations()
+
+    @app.get(
+        "/v1/admin/tenants",
+        response_model=TenantListResponse,
+        tags=["admin"],
+    )
+    def list_tenants() -> TenantListResponse:
+        """List active tenants for the internal platform admin console.
+
+        Authorization is enforced by the ``authorize_request`` middleware,
+        which maps ``/v1/admin/tenants`` to ``MANAGE_TENANTS`` (platform_admin
+        only), so no role check is repeated here. Returns a stable 404 when the
+        tenant registry is not configured (local / non-Postgres mode).
+        """
+
+        registry = container.tenant_registry
+        if registry is None:
+            raise HTTPException(status_code=404, detail="tenant registry unavailable")
+        return TenantListResponse(
+            tenants=[
+                TenantSummary(
+                    tenant_id=record.tenant_id,
+                    name=record.name,
+                    status=record.status,
+                    created_at=record.created_at,
+                )
+                for record in registry.list_active()
+            ]
+        )
+
+    @app.post(
+        "/v1/admin/tenants",
+        response_model=TenantSummary,
+        status_code=201,
+        tags=["admin"],
+    )
+    def create_tenant(request: CreateTenantRequest) -> TenantSummary:
+        """Provision a new active tenant (internal platform operation).
+
+        Duplicate ``tenant_id`` -> 409; registry unavailable -> 404.
+        """
+
+        registry = container.tenant_registry
+        if registry is None:
+            raise HTTPException(status_code=404, detail="tenant registry unavailable")
+        if registry.get(request.tenant_id) is not None:
+            raise HTTPException(status_code=409, detail="tenant already exists")
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        record = registry.create(request.tenant_id, request.name, now=now)
+        return TenantSummary(
+            tenant_id=record.tenant_id,
+            name=record.name,
+            status=record.status,
+            created_at=record.created_at,
+        )
 
     return app
 

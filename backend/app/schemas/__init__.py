@@ -1,5 +1,6 @@
 """Pydantic schemas exposed by the TrustRAG HTTP API."""
 
+from .admin import CreateTenantRequest, TenantListResponse, TenantSummary
 from .rag import (
     Citation,
     Claim,
@@ -20,6 +21,7 @@ __all__ = [
     "Citation",
     "Claim",
     "ConflictAnalysis",
+    "CreateTenantRequest",
     "DocumentSummary",
     "DocumentsResponse",
     "Evidence",
@@ -30,4 +32,6 @@ __all__ = [
     "RAGQueryResponse",
     "SafetyAnalysis",
     "TemporalAnalysis",
+    "TenantListResponse",
+    "TenantSummary",
 ]
