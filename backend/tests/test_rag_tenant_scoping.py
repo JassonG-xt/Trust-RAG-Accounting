@@ -249,3 +249,24 @@ def test_rag_query_does_not_leak_across_tenants(
         "cross-tenant leak: tenant B's /v1/rag/query surfaced tenant A's "
         f"sentinel {ALPHA_SECRET!r}"
     )
+
+
+@pytest.mark.parametrize("retrieval_source", ["wiki", "hybrid"])
+def test_tenant_rag_query_rejects_global_retrieval_sources_before_workflow(
+    two_tenant_container: ApplicationContainer,
+    retrieval_source: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tenant-bound requests cannot bypass raw-catalog isolation via wiki/hybrid."""
+
+    def workflow_must_not_run(*args, **kwargs):
+        raise AssertionError("global retrieval source reached the RAG workflow")
+
+    monkeypatch.setattr("backend.app.main.run_query", workflow_must_not_run)
+    response = _client_for(two_tenant_container, "beta-firm").post(
+        "/v1/rag/query",
+        json={"question": ALPHA_QUESTION, "retrieval_source": retrieval_source},
+    )
+
+    assert response.status_code == 400
+    assert "not available for tenant-scoped queries" in response.json()["detail"]

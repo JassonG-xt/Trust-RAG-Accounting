@@ -243,8 +243,16 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
 
     @app.post("/v1/rag/query", response_model=RAGQueryResponse, tags=["rag"])
     def rag_query(request: RAGQueryRequest, http_request: Request) -> RAGQueryResponse:
+        principal: RequestPrincipal = http_request.state.principal
+        if (
+            container._engine is not None
+            and request.retrieval_source in {"wiki", "hybrid"}
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="retrieval_source is not available for tenant-scoped queries",
+            )
         try:
-            principal: RequestPrincipal = http_request.state.principal
             review_service = container.current_review_service()
             with bind_request_context(
                 principal=principal,
