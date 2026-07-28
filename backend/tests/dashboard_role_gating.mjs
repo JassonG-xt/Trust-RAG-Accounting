@@ -24,6 +24,7 @@ class FakeNode {
     this.value = "";
     this.hidden = false;
     this.disabled = false;
+    this.listeners = [];
     this._text = "";
   }
 
@@ -74,7 +75,9 @@ class FakeNode {
     this.attributes[name] = String(value);
   }
 
-  addEventListener() {}
+  addEventListener(type, handler) {
+    this.listeners.push([type, handler]);
+  }
 }
 
 function collectTags(node) {
@@ -97,6 +100,11 @@ function boot({routes = {}} = {}) {
       return nodes.get(id);
     },
     querySelectorAll: () => [],
+    // refreshAll() -> refreshDemoConfig() -> applyDemoConfigToUi() writes the
+    // demo-mode flags onto document.body before any panel is touched.
+    get body() {
+      return this._body || (this._body = new FakeNode("body"));
+    },
     write() {
       throw new Error("unsafe document.write sink used");
     },
@@ -193,6 +201,38 @@ const TENANT_LIST = {
   check(
     !tags.includes("IMG") && !tags.includes("SVG"),
     `platform_admin: tenant payload created executable elements: ${tags.join(",")}`,
+  );
+}
+
+// --- the dashboard's own boot path runs the gating, not just the unit --------
+// Guards the `applyRoleGating()` entry in refreshAll's task list: without it
+// the console is dead in production while every substring assertion still
+// passes. Everything else refreshAll fetches is unrouted (501) on purpose —
+// the gating must survive its siblings failing.
+{
+  const env = boot({
+    routes: {"GET /v1/me": meRoute(["platform_admin"]), "GET /v1/admin/tenants": TENANT_LIST},
+  });
+
+  let thrown = null;
+  try {
+    await env.context.refreshAll();
+  } catch (error) {
+    thrown = error;
+  }
+
+  check(thrown === null, `refreshAll: dashboard init threw: ${thrown}`);
+  check(
+    env.panel.hidden === false,
+    "refreshAll: the tenant admin panel stayed hidden — role gating is not wired into dashboard init",
+  );
+  check(
+    env.urls().includes("GET /v1/admin/tenants"),
+    `refreshAll: the tenant list was never fetched, got ${JSON.stringify(env.urls())}`,
+  );
+  check(
+    env.node("tenant-list").textContent.includes("alpha-firm"),
+    "refreshAll: the tenant list was not rendered",
   );
 }
 
@@ -306,6 +346,24 @@ for (const failure of [
   check(
     env.urls().includes("GET /v1/admin/tenants"),
     `refreshPanel("tenants"): no tenant list request, got ${JSON.stringify(env.urls())}`,
+  );
+}
+
+// --- the 开通 button is actually bound to createTenant -----------------------
+// Guards the bindActions() wiring: calling createTenant() directly, as the
+// blocks above do, still passes if the button is never connected to it.
+{
+  const env = boot({routes: {"GET /v1/admin/tenants": TENANT_LIST}});
+
+  env.context.bindActions();
+
+  const wired = env.node("create-tenant").listeners
+    .some(([type, handler]) => type === "click" && handler === env.context.createTenant);
+  check(
+    wired,
+    `bindActions: the 开通 button is not bound to createTenant, got ${JSON.stringify(
+      env.node("create-tenant").listeners.map(([type]) => type),
+    )}`,
   );
 }
 
