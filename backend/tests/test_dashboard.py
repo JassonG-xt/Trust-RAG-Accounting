@@ -189,6 +189,25 @@ def test_dashboard_app_js_bootstraps_auth_without_leaking_token() -> None:
     assert "access_token=" not in js
 
 
+def test_dashboard_auth_bootstrap_wiring_behaves() -> None:
+    """The real app.js bootstraps auth on DOMContentLoaded without leaking the token."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for the vanilla dashboard auth wiring regression")
+
+    harness = Path(__file__).with_name("dashboard_auth_wiring.mjs")
+    app_js = Path(__file__).resolve().parents[2] / "frontend" / "app.js"
+    result = subprocess.run(
+        [node, str(harness), str(app_js)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "dashboard-auth-wiring: OK" in result.stdout
+
+
 def test_dashboard_app_js_avoids_html_parsing_sinks() -> None:
     client = TestClient(app)
 

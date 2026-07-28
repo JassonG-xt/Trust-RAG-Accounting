@@ -171,11 +171,18 @@ document.addEventListener("DOMContentLoaded", () => {
 // Everything here runs from DOMContentLoaded so the DOM-less test sandbox never
 // touches browser storage or location.
 function bootstrapAuth() {
-  const token = readTokenFromFragment();
-  if (token) {
-    storeAuthToken(token);
-  } else {
-    state.authToken = readStoredAuthToken();
+  try {
+    const token = readTokenFromFragment();
+    if (token) {
+      storeAuthToken(token);
+    } else {
+      state.authToken = readStoredAuthToken();
+    }
+  } catch (error) {
+    // Opaque-origin documents (sandboxed iframe, file://) throw on storage,
+    // location and history access. Stay anonymous rather than abort the rest
+    // of the dashboard bootstrap.
+    state.authToken = null;
   }
   renderAuthStatus();
 }
@@ -191,7 +198,13 @@ function authStorage() {
 
 function readStoredAuthToken() {
   const storage = authStorage();
-  return storage ? storage.getItem(AUTH_TOKEN_KEY) || null : null;
+  if (!storage) return null;
+  try {
+    return storage.getItem(AUTH_TOKEN_KEY) || null;
+  } catch (error) {
+    // Storage can be blocked by browser policy; stay memory-only.
+    return null;
+  }
 }
 
 function storeAuthToken(token) {
@@ -205,6 +218,19 @@ function storeAuthToken(token) {
   }
 }
 
+function clearAuthToken() {
+  state.authToken = null;
+  const storage = authStorage();
+  if (storage) {
+    try {
+      storage.removeItem(AUTH_TOKEN_KEY);
+    } catch (error) {
+      // Memory-only session is still usable.
+    }
+  }
+  renderAuthStatus();
+}
+
 function readTokenFromFragment() {
   if (typeof location === "undefined") return null;
   const fragment = (location.hash || "").replace(/^#/, "");
@@ -216,11 +242,16 @@ function readTokenFromFragment() {
 }
 
 function clearUrlFragment() {
-  const cleanUrl = `${location.pathname || "/"}${location.search || ""}`;
-  if (typeof history !== "undefined" && typeof history.replaceState === "function") {
-    history.replaceState(null, "", cleanUrl);
-  } else {
-    location.hash = "";
+  try {
+    const cleanUrl = `${location.pathname || "/"}${location.search || ""}`;
+    if (typeof history !== "undefined" && typeof history.replaceState === "function") {
+      history.replaceState(null, "", cleanUrl);
+    } else {
+      location.hash = "";
+    }
+  } catch (error) {
+    // Opaque-origin documents reject history/location writes; the address bar
+    // keeps the fragment but bootstrap must not fail because of it.
   }
 }
 
@@ -1086,6 +1117,10 @@ async function fetchJson(url, options = {}) {
   }
   const response = await fetch(url, {...options, headers});
   if (!response.ok) {
+    if (response.status === 401) {
+      // The stored token is stale; drop it so the UI stops claiming a session.
+      clearAuthToken();
+    }
     throw new Error(`${response.status} ${response.statusText}`);
   }
   return response.json();
