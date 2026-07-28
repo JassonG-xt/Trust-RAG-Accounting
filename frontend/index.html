@@ -128,6 +128,36 @@
         </section>
 
         <aside class="rail-column">
+          <section class="panel" id="tenant-admin" aria-labelledby="tenant-admin-title" hidden>
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">平台</p>
+                <h2 id="tenant-admin-title">租户管理</h2>
+              </div>
+              <button class="secondary-button" data-refresh="tenants" type="button">刷新</button>
+            </div>
+            <p class="review-disclaimer">
+              仅平台管理员可见。面板可见性只是界面呈现：<code>/v1/admin/tenants</code>
+              始终由后端 <code>manage_tenants</code> 权限授权，隐藏面板不构成访问控制。
+            </p>
+            <div class="summary-line" id="tenant-admin-summary">尚未加载租户数据。</div>
+
+            <form class="review-filters" id="create-tenant-form" aria-label="开通租户">
+              <label>
+                <span>租户 ID</span>
+                <input type="text" name="tenant_id" id="new-tenant-id" placeholder="alpha-firm" />
+              </label>
+              <label>
+                <span>名称</span>
+                <input type="text" name="name" id="new-tenant-name" placeholder="Alpha Firm" />
+              </label>
+              <button class="primary-button" id="create-tenant" type="button">开通</button>
+            </form>
+
+            <p class="inline-status" id="tenant-admin-status" aria-live="polite"></p>
+            <div class="list-stack compact" id="tenant-list"></div>
+          </section>
+
           <section class="panel" aria-labelledby="documents-title">
             <div class="panel-header">
               <div>

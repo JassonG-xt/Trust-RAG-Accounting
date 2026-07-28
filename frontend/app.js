@@ -92,6 +92,7 @@ const META_LABELS = {
   tags: "标签",
   input: "输入",
   output: "输出",
+  tenant_id: "租户 ID",
 };
 
 function labelQuestionType(value) {
@@ -274,6 +275,10 @@ function bindActions() {
     button.addEventListener("click", () => refreshPanel(button.dataset.refresh));
   });
   $("review-list").addEventListener("click", handleReviewClick);
+  const createTenantButton = $("create-tenant");
+  if (createTenantButton) {
+    createTenantButton.addEventListener("click", createTenant);
+  }
   bindReviewFilters();
 }
 
@@ -463,6 +468,7 @@ async function refreshAll() {
     refreshTraces(),
     refreshProviderBenchmark(),
     refreshProviderBenchmarkHistory(),
+    applyRoleGating(),
   ];
   if (reviewQueueEnabled()) {
     tasks.push(refreshReview());
@@ -483,6 +489,7 @@ async function refreshPanel(name) {
   if (name === "traces") return refreshTraces();
   if (name === "provider-benchmark") return refreshProviderBenchmark();
   if (name === "provider-trend") return refreshProviderBenchmarkHistory();
+  if (name === "tenants") return refreshTenants();
 }
 
 async function refreshDemoConfig() {
@@ -639,6 +646,95 @@ async function refreshProviderBenchmark() {
   } catch (error) {
     renderProviderBenchmarkError(messageOf(error));
   }
+}
+
+// --- Tenant admin console (platform_admin) ---------------------------------
+// Panel visibility is presentation, never authorization: /v1/admin/tenants is
+// gated server-side by the MANAGE_TENANTS permission, so a caller who unhides
+// the panel by hand still gets 403 from the API. /v1/me only tells the UI what
+// is worth rendering.
+const PLATFORM_ADMIN_ROLE = "platform_admin";
+
+async function applyRoleGating() {
+  try {
+    const me = await fetchJson("/v1/me");
+    const roles = (me && me.roles) || [];
+    if (!roles.includes(PLATFORM_ADMIN_ROLE)) return;
+  } catch (error) {
+    // Anonymous, expired or rejected session: keep the panel hidden and let
+    // the rest of the dashboard boot normally.
+    return;
+  }
+  const panel = $("tenant-admin");
+  if (panel) panel.hidden = false;
+  await refreshTenants();
+}
+
+async function refreshTenants() {
+  const list = $("tenant-list");
+  const summary = $("tenant-admin-summary");
+  if (!list) return;
+  try {
+    const data = await fetchJson("/v1/admin/tenants");
+    const tenants = data.tenants || [];
+    if (summary) summary.textContent = `${tenants.length} 个活跃租户`;
+    const nodes = tenants.length
+      ? tenants.map((tenant) => makeItemNode({
+          title: tenant.name || tenant.tenant_id,
+          badgeText: tenant.status,
+          meta: {
+            tenant_id: tenant.tenant_id,
+            created_at: tenant.created_at,
+          },
+        }))
+      : [makeEmptyNode("尚无活跃租户。")];
+    list.replaceChildren(...nodes);
+  } catch (error) {
+    if (summary) summary.textContent = `租户列表不可用：${tenantErrorReason(error)}`;
+    list.replaceChildren(makeEmptyNode("无可用租户数据。"));
+  }
+}
+
+async function createTenant() {
+  const idInput = $("new-tenant-id");
+  const nameInput = $("new-tenant-name");
+  if (!idInput || !nameInput) return;
+  const status = $("tenant-admin-status");
+  const button = $("create-tenant");
+  if (button) button.disabled = true;
+  if (status) status.textContent = "开通中…";
+  try {
+    await fetchJson("/v1/admin/tenants", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({tenant_id: idInput.value, name: nameInput.value}),
+    });
+    idInput.value = "";
+    nameInput.value = "";
+    if (status) status.textContent = "开通成功。";
+    await refreshTenants();
+  } catch (error) {
+    if (status) status.textContent = `开通失败：${tenantErrorReason(error)}`;
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+/** Map a rejected request to a fixed, user-facing reason.
+ *
+ * fetchJson never reads an error body, so the only thing available here is the
+ * status line — translating it keeps backend internals (stack traces, SQL,
+ * other tenants' ids) out of the DOM even if a handler starts returning them.
+ */
+function tenantErrorReason(error) {
+  const match = /^(\d{3})\b/.exec(messageOf(error));
+  const status = match ? Number(match[1]) : 0;
+  if (status === 401) return "请先登录。";
+  if (status === 403) return "需要平台管理员权限。";
+  if (status === 404) return "租户注册表不可用。";
+  if (status === 409) return "该租户 ID 已存在。";
+  if (status === 400 || status === 422) return "租户 ID 与名称不能为空。";
+  return status ? `请求被拒绝（HTTP ${status}）。` : "网络错误。";
 }
 
 // Artifact-sourced strings only reach DOM nodes through textContent.

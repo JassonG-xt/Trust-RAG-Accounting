@@ -30,6 +30,19 @@ class DemoConfigResponse(BaseModel):
     demo_mode_label: str = "Local full demo"
 
 
+class PrincipalResponse(BaseModel):
+    """Identity echo for ``/v1/me``.
+
+    Deliberately the smallest possible projection of ``RequestPrincipal``: the
+    dashboard needs it to decide what to render, so it must never carry a
+    token, a credential, or anything copied from the request.
+    """
+
+    subject_id: str
+    tenant_id: str
+    roles: list[str] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Core domain objects
 # ---------------------------------------------------------------------------

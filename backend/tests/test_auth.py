@@ -218,6 +218,76 @@ def test_review_action_uses_authenticated_subject_not_request_body(tmp_path: Pat
     assert response.json()["action"]["reviewer"] == "reviewer-1"
 
 
+def test_me_returns_the_principal_identity_only(tmp_path: Path) -> None:
+    """``/v1/me`` echoes identity for the dashboard — nothing else.
+
+    No token, no credentials, no request headers: the response body is exactly
+    the three identity fields the console needs to decide what to render.
+    """
+    principal = RequestPrincipal("viewer-1", "alpha-firm", frozenset({"viewer"}))
+    client = TestClient(create_app(_container(tmp_path, principal)))
+
+    response = client.get(
+        "/v1/me",
+        headers={"Authorization": "Bearer super-secret-token", "X-Trace": "leak-me"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "subject_id": "viewer-1",
+        "tenant_id": "alpha-firm",
+        "roles": ["viewer"],
+    }
+    assert "super-secret-token" not in response.text
+    assert "leak-me" not in response.text
+
+
+def test_me_reports_platform_admin_for_the_tenant_console(tmp_path: Path) -> None:
+    """The console reads ``roles`` to decide whether to show the admin panel."""
+    principal = RequestPrincipal(
+        "ops-1", "platform", frozenset({"admin", "platform_admin"})
+    )
+    client = TestClient(create_app(_container(tmp_path, principal)))
+
+    response = client.get("/v1/me")
+
+    assert response.status_code == 200
+    assert response.json()["roles"] == ["admin", "platform_admin"]
+
+
+def test_me_is_authenticated_only_and_needs_no_policy_change() -> None:
+    """Guard: ``/v1/me`` must keep mapping to the default QUERY permission.
+
+    It is deliberately readable by every role, but it must never join the
+    unauthenticated bypass list next to ``/v1/demo/config``.
+    """
+    assert permission_for_request("GET", "/v1/me") == Permission.QUERY
+    viewer = RequestPrincipal("viewer-1", "alpha-firm", frozenset({"viewer"}))
+    assert AuthorizationPolicy().is_allowed(viewer, Permission.QUERY)
+
+
+def test_me_rejects_an_unauthenticated_caller(tmp_path: Path) -> None:
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_key = private_key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    oidc = OIDCJWTAuthenticator(
+        issuer="https://identity.example.com",
+        audience="trust-rag",
+        tenant_id="local",
+        public_key=public_key,
+    )
+    base = _container(
+        tmp_path,
+        RequestPrincipal("local", "local", frozenset({"admin"})),
+    )
+
+    response = TestClient(create_app(replace(base, authenticator=oidc))).get("/v1/me")
+
+    assert response.status_code == 401
+
+
 def test_production_disables_global_review_queue_clear(tmp_path: Path) -> None:
     principal = RequestPrincipal("admin-1", "local", frozenset({"admin"}))
     container = replace(

@@ -208,6 +208,50 @@ def test_dashboard_auth_bootstrap_wiring_behaves() -> None:
     assert "dashboard-auth-wiring: OK" in result.stdout
 
 
+def test_dashboard_has_tenant_admin_panel_wiring() -> None:
+    """The rail carries a tenant console that ships hidden until /v1/me says so."""
+    client = TestClient(app)
+
+    html = client.get("/dashboard").text
+    js = client.get("/dashboard/static/app.js").text
+
+    assert 'id="tenant-admin"' in html
+    assert 'id="create-tenant-form"' in html
+    assert 'id="new-tenant-id"' in html
+    assert 'id="new-tenant-name"' in html
+    assert 'id="create-tenant"' in html
+    assert 'id="tenant-list"' in html
+    assert 'data-refresh="tenants"' in html
+    # Ships hidden: the panel is revealed only after /v1/me reports the role.
+    start = html.index('<section class="panel" id="tenant-admin"')
+    assert "hidden" in html[start : html.index(">", start)]
+    assert "/v1/me" in js
+    assert "/v1/admin/tenants" in js
+    assert "platform_admin" in js
+    assert "applyRoleGating" in js
+    assert "refreshTenants" in js
+    assert "createTenant" in js
+
+
+def test_dashboard_tenant_admin_role_gating_behaves() -> None:
+    """Only a platform_admin principal reveals the panel; failures stay silent."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for the tenant console role gating regression")
+
+    harness = Path(__file__).with_name("dashboard_role_gating.mjs")
+    app_js = Path(__file__).resolve().parents[2] / "frontend" / "app.js"
+    result = subprocess.run(
+        [node, str(harness), str(app_js)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "dashboard-role-gating: OK" in result.stdout
+
+
 def test_dashboard_app_js_avoids_html_parsing_sinks() -> None:
     client = TestClient(app)
 

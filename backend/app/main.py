@@ -73,6 +73,7 @@ from .schemas.rag import (
     EvalLatestSummary,
     HealthResponse,
     HumanReviewSummary,
+    PrincipalResponse,
     RAGQueryRequest,
     RAGQueryResponse,
     TracesClearResponse,
@@ -214,6 +215,24 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
             demo_mode_label=(
                 "Public read-only demo" if public_demo else "Local full demo"
             ),
+        )
+
+    @app.get("/v1/me", response_model=PrincipalResponse, tags=["meta"])
+    def whoami(http_request: Request) -> PrincipalResponse:
+        """Echo the authenticated principal's identity.
+
+        ``/v1/me`` falls through ``permission_for_request``'s default branch to
+        ``Permission.QUERY``, so every authenticated role can read its own
+        identity and no policy change is needed. The console uses ``roles`` to
+        decide which panels to render — that is presentation only; every
+        privileged route stays authorized server-side by the middleware.
+        """
+
+        principal: RequestPrincipal = http_request.state.principal
+        return PrincipalResponse(
+            subject_id=principal.subject_id,
+            tenant_id=principal.tenant_id,
+            roles=sorted(principal.roles),
         )
 
     @app.get("/dashboard", include_in_schema=False)
