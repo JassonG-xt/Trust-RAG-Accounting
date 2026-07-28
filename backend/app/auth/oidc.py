@@ -43,6 +43,26 @@ class OIDCJWTAuthenticator:
                 raise ImportError("install trust-rag[production] for OIDC support") from exc
             self._jwks_client = jwt.PyJWKClient(jwks_url)
 
+    def jwks_is_ready(self) -> bool:
+        """Report whether the signing keys can be fetched and parsed.
+
+        Readiness only. This never validates, decodes or accepts a token and
+        never receives token material — ``/readyz`` is unauthenticated, so a
+        probe that verified tokens would be a public verification oracle. It
+        answers exactly one question: can this process reach key material?
+
+        ``PyJWKClient`` caches the JWKS document (300s by default), so the
+        probe is cheap and does not hammer the identity provider. A statically
+        configured public key needs no endpoint and is ready by definition.
+        """
+
+        if self._jwks_client is None:
+            return True
+        try:
+            return bool(self._jwks_client.get_signing_keys())
+        except Exception:
+            return False
+
     def authenticate(self, token: str | None):
         from .models import RequestPrincipal
 

@@ -298,6 +298,9 @@ def build_application_container(
 
     if source_object_store is not None:
         readiness_checks["s3"] = source_object_store.health
+    if isinstance(authenticator, OIDCJWTAuthenticator):
+        # JWKS reachability only — the probe never verifies a token.
+        readiness_checks["oidc"] = authenticator.jwks_is_ready
     telemetry = build_telemetry(current, local_collector=traces)
 
     return ApplicationContainer(
