@@ -31,6 +31,11 @@ ignored, and a token with no recognized role is rejected as `401`.
 | `admin` | Reviewer access plus debug, maintenance and indexing administration for its own tenant. |
 | `platform_admin` | Everything, plus `/v1/admin/tenants`. Internal operators only. |
 
+`reviewer`, `admin` and `platform_admin` reach the review queue and the index
+job routes, which are **still pinned to `TRUSTRAG_TENANT_ID`** and are therefore
+readable and writable across tenants. Read the WARNING in [step 7](#7-configure-trustrag)
+before granting any of those three roles. A `viewer` is unaffected.
+
 Authentik UI labels move between releases. Where a field name may differ, the
 verification command is the authority — read the discovery document rather than
 trusting a screenshot.
@@ -109,7 +114,7 @@ Create four groups named exactly `viewer`, `reviewer`, `admin`,
 tenant_id: alpha-firm
 ```
 
-`tenant_id` must equal the `tenant_id` registered in TrustRAG (step 8). A user
+`tenant_id` must equal the `tenant_id` registered in TrustRAG (step 9). A user
 with a blank or missing attribute gets `401` — TrustRAG refuses a token with no
 tenant rather than falling back to a default tenant.
 
@@ -225,10 +230,52 @@ Missing configuration fails fast at startup rather than at first request:
 TRUSTRAG_AUTH_MODE=oidc requires issuer, audience and JWKS URL
 ```
 
-## 8. Register the tenants
+## 8. Bootstrap the platform tenant
+
+**Do this before any authenticated request, including the ones in step 10.**
+
+The `authorize_request` middleware rejects any token whose tenant is not an
+*active* row in `tenants`, and it runs *before* the role check. `alembic upgrade
+head` creates that table **empty**, so on a fresh deployment every `/v1/` route
+answers `403 {"detail": "tenant is not active"}` — `POST /v1/admin/tenants`
+included. The first tenant therefore cannot be registered over HTTP; it has to
+be seeded from the server host:
+
+```bash
+python -m backend.app.operations.provision_tenant \
+  --database-url "$DATABASE_URL" \
+  --tenant-id platform \
+  --name 'Platform Operators' \
+  --now "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" \
+  --registry-only
+```
+
+Expected:
+
+```text
+tenant_id=platform registered=True
+```
+
+`--registry-only` writes the registry row and imports nothing; rerunning it
+prints `registered=False` and leaves the existing row untouched. Seed the tenant
+that your `platform_admin` users carry in their `tenant_id` attribute (step 5).
+Without `--registry-only` the same command also imports a corpus and requires
+`--generation-id`, `--documents`, `--chunks`, `--checkpoints` and `--actions`.
+
+> [!WARNING]
+> **Upgrading an existing single-tenant Postgres deployment:** the tenant-active
+> check applies whenever `TRUSTRAG_STORAGE_BACKEND=postgres`, *including under
+> `TRUSTRAG_AUTH_MODE=local`*. Running `alembic upgrade head` on a deployment
+> that predates the registry therefore takes the whole API down — every request
+> 403s — while `/healthz` and `/readyz` keep reporting healthy, so monitoring
+> will not catch it. Run the command above for the incumbent
+> `TRUSTRAG_TENANT_ID` in the same maintenance window as the migration.
+
+## 9. Register the remaining tenants
 
 A verified token is not enough — the tenant must exist and be active in the
-registry. Provision it with a `platform_admin` token:
+registry. Once step 8 has seeded the operators' own tenant, a `platform_admin`
+token can register the rest over HTTP:
 
 ```bash
 curl -s -X POST http://localhost:8000/v1/admin/tenants \
@@ -251,7 +298,7 @@ the `tenants` table directly to see non-active rows. Operators can also do this
 from the dashboard's tenant console, which is rendered only for
 `platform_admin`.
 
-## 9. Verify the role matrix over HTTP
+## 10. Verify the role matrix over HTTP
 
 Obtain tokens through the normal login: sign in to `/dashboard` as a user in the
 role you want to test, and read the token the dashboard stored in
@@ -303,7 +350,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $VIEWER_TOKEN
 Finish with a two-tenant read: log in as a user from tenant A and as a user from
 tenant B, and confirm `GET /v1/documents` returns disjoint document sets.
 
-## 10. Dashboard login
+## 11. Dashboard login
 
 The MVP dashboard reads the access token from the URL fragment that the identity
 provider redirects back with, keeps it in `sessionStorage` under
@@ -316,13 +363,40 @@ Implicit flow is a deliberate MVP shortcut. Authorization code with PKCE is the
 follow-up, and it is the reason the dashboard keeps the token in
 `sessionStorage` rather than `localStorage`.
 
+> [!WARNING]
+> **The fragment token is accepted without a `state` or `nonce`, so
+> `/dashboard` is vulnerable to session fixation.**
+>
+> The dashboard has no `state`, `nonce` or PKCE `code_challenge` anywhere. It
+> reads `access_token` out of whatever fragment the browser arrives with,
+> *before* it looks at `sessionStorage`, and overwrites any existing session
+> unconditionally. Anyone who gets a logged-in operator to open
+> `https://your-host/dashboard#access_token=<attacker's own JWT>` silently
+> rebinds that browser to the attacker's subject, tenant and roles. There is no
+> visible change beyond the panel contents: the header still reads 已登录.
+>
+> The consequence is not just a spoofed view. Everything the victim then does in
+> that tab — uploads, queries, review actions — is attributed to the attacker's
+> subject and lands in the attacker's tenant, where the attacker can read it
+> back afterwards.
+>
+> **Until authorization code + PKCE lands, do not expose `/dashboard` to
+> untrusted links.** Treat a dashboard URL received by mail or chat as hostile,
+> and reach the dashboard only by starting the login at Authentik. Restricting
+> `/dashboard` to a trusted network does not help on its own — the victim's own
+> browser makes the request.
+>
+> Tracked as Stage 3 work: the PKCE flow must *replace* the fragment reader, not
+> extend it.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | `401` on every route | token not RS256, wrong `iss`/`aud`, or expired | compare step 6 output with `TRUSTRAG_OIDC_ISSUER` / `TRUSTRAG_OIDC_AUDIENCE`; confirm the provider has an RSA signing key |
 | `401` for one user only | blank `tenant_id` attribute, or no recognized role | set the user attribute in step 5 and check group membership |
-| `403 tenant is not active` | tenant missing from the registry or suspended | register it (step 8) |
+| `403 tenant is not active` on **every** route, including `POST /v1/admin/tenants` | the registry is empty — a fresh migration, or an upgrade that predates the registry | seed the tenant from the server host with `provision_tenant --registry-only` (step 8). It cannot be fixed over HTTP: the tenant check runs before the role check, so `platform_admin` is gated too |
+| `403 tenant is not active` for one tenant only | that tenant is missing from the registry or suspended | register it (step 9), or set `status='active'` on its `tenants` row — a suspended tenant is absent from `GET /v1/admin/tenants` but re-creating it returns `409` |
 | `403 permission denied` | role is genuinely insufficient | grant the correct group; do not widen the policy |
 | `/readyz` reports `"oidc": false` | JWKS endpoint unreachable, TLS failure, or empty key set | curl the JWKS URL from the server host; check egress and CA trust |
 | Startup fails with `requires TRUSTRAG_STORAGE_BACKEND=postgres` | OIDC without Postgres | point `DATABASE_URL` at Postgres and rerun `alembic upgrade head` |
@@ -341,3 +415,15 @@ follow-up, and it is the reason the dashboard keeps the token in
   request body is ignored.
 - Rotate the Authentik signing key on the provider, not in TrustRAG: the JWKS
   client picks up the new key at the next fetch.
+- **The dashboard's implicit-flow login has no `state`/`nonce`, so a crafted
+  `/dashboard#access_token=…` link is session fixation into the attacker's
+  tenant.** Do not expose `/dashboard` to untrusted links until PKCE lands —
+  see the WARNING in [step 11](#11-dashboard-login).
+- **`TRUSTRAG_TENANT_ID` still scopes the review queue, review actions and index
+  jobs even under multi-tenant OIDC**, so those surfaces are cross-tenant reads
+  *and writes* for `reviewer`, `admin` and `platform_admin`. Do not serve
+  reviewers from more than one tenant — see the WARNING in
+  [step 7](#7-configure-trustrag).
+- The tenant-active check runs **before** the role check, so an empty registry
+  locks out `platform_admin` too. Bootstrap the first tenant from the server
+  host ([step 8](#8-bootstrap-the-platform-tenant)), never over HTTP.
