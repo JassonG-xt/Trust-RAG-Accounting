@@ -9,8 +9,9 @@ log, commit, or this file. Every credential below is an obvious placeholder.
 
 ## Prerequisites
 
-Multi-tenant OIDC **requires Postgres**. `Settings.validate_persistence` rejects
-any other storage backend at startup:
+Every `TRUSTRAG_AUTH_MODE=oidc` deployment **requires Postgres**, multi-tenant or
+not. `Settings.validate_persistence` rejects any other storage backend at
+startup:
 
 ```text
 TRUSTRAG_AUTH_MODE=oidc requires TRUSTRAG_STORAGE_BACKEND=postgres (Postgres required)
@@ -170,6 +171,29 @@ With `TRUSTRAG_OIDC_MULTI_TENANT=true` the tenant comes from the token and
 `TRUSTRAG_TENANT_ID` stops acting as an authorization boundary. Leaving it
 `false` pins the deployment to one tenant and rejects every other token.
 
+> [!WARNING]
+> **`TRUSTRAG_TENANT_ID` still scopes the review queue, review actions and index
+> jobs — multi-tenant OIDC does not make them per-request.**
+>
+> Documents (`GET /v1/documents`) and RAG retrieval (`POST /v1/rag/query`) *are*
+> scoped to the tenant in the caller's token, and that isolation is covered by
+> tests. The review and indexing stores are not. The container builds them once
+> against `TRUSTRAG_TENANT_ID`, so every `/v1/review/...` and
+> `/v1/admin/index/...` request reads and writes that one tenant's rows whatever
+> the token says, and a query that hands off to human review writes its
+> checkpoint into that same queue rather than the caller's.
+>
+> A `reviewer` whose token carries a different tenant therefore reads the
+> `TRUSTRAG_TENANT_ID` review queue, question text included. The same applies to
+> `admin` and `platform_admin`, which inherit the review permissions, and to the
+> index job routes. **Until per-request review scoping lands, a deployment must
+> not serve reviewers from more than one tenant.** Run one deployment per tenant
+> with `TRUSTRAG_TENANT_ID` set to that tenant, or grant `reviewer`, `admin` and
+> `platform_admin` only to users whose `tenant_id` attribute equals
+> `TRUSTRAG_TENANT_ID`. A `viewer` cannot reach either surface (`403`).
+>
+> Tracked as Stage 3 work: per-request tenant scoping for review and indexing.
+
 Start the server and check readiness:
 
 ```bash
@@ -219,8 +243,12 @@ Expected: HTTP `201` and
 {"tenant_id": "alpha-firm", "name": "Alpha Firm", "status": "active", "created_at": "..."}
 ```
 
-A repeated call returns `409`. Listing is the same route with `GET`. Operators
-can also do this from the dashboard's tenant console, which is rendered only for
+A repeated call returns `409`. Listing is the same route with `GET`, but it
+returns **active tenants only** — a suspended tenant disappears from the list
+without having been deleted. Its row still exists (a `POST` for the same
+`tenant_id` still returns `409`) and its tokens are rejected with `403`; check
+the `tenants` table directly to see non-active rows. Operators can also do this
+from the dashboard's tenant console, which is rendered only for
 `platform_admin`.
 
 ## 9. Verify the role matrix over HTTP
