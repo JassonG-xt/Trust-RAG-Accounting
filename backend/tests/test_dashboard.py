@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -11,6 +12,23 @@ from fastapi.testclient import TestClient
 
 from backend.app.evals.models import EvalRunSummary
 from backend.app.main import app
+
+
+def _require_node(gate: str) -> str:
+    """Resolve the ``node`` binary for one of the frontend security gates.
+
+    Locally a missing node is a skip. Under CI it is a hard failure: these three
+    harnesses are the only behavioural coverage of the dashboard's escaping,
+    auth wiring and role gating, and a silent skip would let all three go
+    green-by-absence the day the runner image stops shipping node.
+    """
+    node = shutil.which("node")
+    if node is not None:
+        return node
+    message = f"Node.js is required for the {gate}"
+    if os.environ.get("CI"):
+        pytest.fail(f"{message}, and CI must provide it (actions/setup-node)")
+    pytest.skip(message)
 
 
 def test_dashboard_returns_html() -> None:
@@ -191,9 +209,7 @@ def test_dashboard_app_js_bootstraps_auth_without_leaking_token() -> None:
 
 def test_dashboard_auth_bootstrap_wiring_behaves() -> None:
     """The real app.js bootstraps auth on DOMContentLoaded without leaking the token."""
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("Node.js is required for the vanilla dashboard auth wiring regression")
+    node = _require_node("vanilla dashboard auth wiring regression")
 
     harness = Path(__file__).with_name("dashboard_auth_wiring.mjs")
     app_js = Path(__file__).resolve().parents[2] / "frontend" / "app.js"
@@ -235,9 +251,7 @@ def test_dashboard_has_tenant_admin_panel_wiring() -> None:
 
 def test_dashboard_tenant_admin_role_gating_behaves() -> None:
     """Only a platform_admin principal reveals the panel; failures stay silent."""
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("Node.js is required for the tenant console role gating regression")
+    node = _require_node("tenant console role gating regression")
 
     harness = Path(__file__).with_name("dashboard_role_gating.mjs")
     app_js = Path(__file__).resolve().parents[2] / "frontend" / "app.js"
@@ -274,9 +288,7 @@ def test_dashboard_app_js_avoids_html_parsing_sinks() -> None:
 
 
 def test_dashboard_renders_malicious_api_strings_as_text() -> None:
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("Node.js is required for the vanilla dashboard DOM regression")
+    node = _require_node("vanilla dashboard DOM regression")
 
     harness = Path(__file__).with_name("dashboard_xss_regression.mjs")
     app_js = Path(__file__).resolve().parents[2] / "frontend" / "app.js"
@@ -474,3 +486,21 @@ def test_latest_eval_returns_parsed_summary_when_files_exist(
     }
     assert payload["by_category"]["unsafe_intent"]["score"] == 1.0
     assert payload["markdown_report"] == "# TrustRAG Accounting Eval Report\n"
+
+
+def test_ci_workflow_provides_node_for_the_frontend_gates() -> None:
+    """The three node harnesses only run if the workflow installs node.
+
+    Without this, they passed solely because ``ubuntu-latest`` happened to ship
+    node — and ``_require_node`` would turn its removal into three silent
+    skips rather than a failure, if the ``CI`` guard were the only defence.
+    """
+    workflow = (
+        Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "actions/setup-node@v4" in workflow
+    # The gates live in the job that runs the whole backend/tests directory.
+    pytest_job = workflow[workflow.index("  backend-tests-and-evals:") :]
+    assert "actions/setup-node@v4" in pytest_job
+    assert "python -m pytest backend/tests" in pytest_job

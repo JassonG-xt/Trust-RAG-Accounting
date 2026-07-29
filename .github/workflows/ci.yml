@@ -79,6 +79,15 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
+      # The three frontend security gates (XSS sinks, auth wiring, role gating)
+      # shell out to node. Without this step they depend on whatever the runner
+      # image happens to ship, and test_dashboard.py turns a hard CI failure
+      # into a skip if it disappears.
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
