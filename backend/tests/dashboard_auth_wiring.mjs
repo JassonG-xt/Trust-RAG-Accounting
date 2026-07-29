@@ -50,6 +50,10 @@ class FakeNode {
     this.attributes[name] = String(value);
   }
 
+  click() {
+    this.clicks = (this.clicks || 0) + 1;
+  }
+
   addEventListener() {}
 }
 
@@ -94,6 +98,9 @@ function boot({hash = "", storage = null, history = null, location = null, respo
   const nodes = new Map([["auth-status", new FakeNode("span")]]);
   const logs = [];
   const fetches = [];
+  const created = [];
+  const objectUrls = [];
+  const windowOpens = [];
   const sessionStorage = storage ?? makeStorage({});
   const historyFake = history ?? {calls: [], replaceState(_state, _title, url) { this.calls.push(url); }};
   const locationFake = location ?? {pathname: "/dashboard", search: "?x=1", hash};
@@ -104,7 +111,11 @@ function boot({hash = "", storage = null, history = null, location = null, respo
     addEventListener(type, handler) {
       if (type === "DOMContentLoaded") domReady = handler;
     },
-    createElement: (tag) => new FakeNode(tag),
+    createElement(tag) {
+      const node = new FakeNode(tag);
+      created.push(node);
+      return node;
+    },
     getElementById(id) {
       if (!nodes.has(id)) nodes.set(id, new FakeNode("div"));
       return nodes.get(id);
@@ -115,9 +126,22 @@ function boot({hash = "", storage = null, history = null, location = null, respo
   const context = {
     console: {log: record, info: record, warn: record, error: record, debug: record},
     document,
-    window: {},
+    // window.open is recorded, never stubbed away: an export that navigates
+    // instead of fetching cannot carry the Authorization header.
+    window: {open: (...args) => { windowOpens.push(args.map(String)); }},
     Node: FakeNode,
     HTMLElement: FakeNode,
+    URL: {
+      createObjectURL(blob) {
+        const url = `blob:mock/${objectUrls.length}`;
+        objectUrls.push({url, blob, revoked: false});
+        return url;
+      },
+      revokeObjectURL(url) {
+        const entry = objectUrls.find((candidate) => candidate.url === url);
+        if (entry) entry.revoked = true;
+      },
+    },
     URLSearchParams,
     setTimeout,
     clearTimeout,
@@ -127,7 +151,11 @@ function boot({hash = "", storage = null, history = null, location = null, respo
     fetch: async (url, options) => {
       fetches.push({url, options});
       const next = responses.shift() ?? {ok: true, status: 200, statusText: "OK"};
-      return {...next, json: async () => ({})};
+      return {
+        ...next,
+        json: async () => ({}),
+        blob: async () => ({body: next.body ?? "", type: next.type ?? "application/octet-stream"}),
+      };
     },
   };
   vm.createContext(context);
@@ -152,14 +180,21 @@ function boot({hash = "", storage = null, history = null, location = null, respo
     initSteps,
     logs,
     fetches,
+    created,
+    objectUrls,
+    windowOpens,
     sessionStorage,
     history: historyFake,
     location: locationFake,
+    node: (id) => nodes.get(id),
     authNode: nodes.get("auth-status"),
     authToken: () => vm.runInContext("state.authToken", context),
     leakSurfaces: () => [
       ...[...nodes.values()].flatMap(domSurfaces),
       ...fetches.map((call) => String(call.url)),
+      ...created.flatMap((node) => [String(node.href ?? ""), String(node.download ?? "")]),
+      ...objectUrls.map((entry) => String(entry.url)),
+      ...windowOpens.flat(),
       ...historyFake.calls.map(String),
       ...logs,
     ],
@@ -284,6 +319,70 @@ function authHeaderOf(call) {
   const blind = boot({storage: hostileStorage, history: hostileHistory, location: blindLocation});
   assertHealthyInit(blind, "opaque-origin-location");
   check(blind.authNode.textContent === "未登录", `opaque-origin-location: rendered "${blind.authNode.textContent}"`);
+}
+
+// --- review exports must fetch WITH the header, not navigate via window.open ---
+// window.open cannot carry an Authorization header, so under OIDC both export
+// buttons used to open a tab containing a raw 401 body while the header still
+// read 已登录. The export has to go through fetch + Blob, with the token in the
+// header and never in the URL.
+{
+  const env = boot({
+    storage: makeStorage({trustrag_token: TOKEN}),
+    responses: [{ok: true, status: 200, statusText: "OK", body: "review_queue_id,status\n"}],
+  });
+  assertHealthyInit(env, "export");
+
+  await env.context.downloadExport("csv");
+
+  const call = env.fetches.at(-1);
+  check(
+    call !== undefined && String(call.url).startsWith("/v1/review/queue/export.csv"),
+    `export: no fetch was issued for the export (last call ${JSON.stringify(call && call.url)})`,
+  );
+  check(
+    authHeaderOf(call) === `Bearer ${TOKEN}`,
+    `export: Authorization header missing, headers=${JSON.stringify(call.options && call.options.headers)}`,
+  );
+  check(
+    env.windowOpens.length === 0,
+    `export: navigated via window.open(${JSON.stringify(env.windowOpens)}), which drops the Authorization header`,
+  );
+  check(!String(call.url).includes(TOKEN), `export: token was put in the URL ${call.url}`);
+
+  check(env.objectUrls.length === 1, `export: expected one Blob object URL, got ${env.objectUrls.length}`);
+  const anchor = env.created.find((node) => node.tagName === "A");
+  check(anchor !== undefined, "export: no anchor element was created to trigger the download");
+  check(anchor.href === env.objectUrls[0].url, `export: anchor href is not the Blob object URL, got "${anchor.href}"`);
+  check(anchor.download === "review-queue.csv", `export: download filename is "${anchor.download}"`);
+  check(anchor.clicks === 1, `export: the download anchor was clicked ${anchor.clicks} time(s)`);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check(env.objectUrls[0].revoked === true, "export: the Blob object URL was never revoked");
+  assertNoTokenLeak(env, "export");
+}
+
+// --- a 401 on export runs the same clear-token path as every other panel -------
+{
+  const env = boot({
+    storage: makeStorage({trustrag_token: TOKEN}),
+    responses: [{ok: false, status: 401, statusText: "Unauthorized"}],
+  });
+  assertHealthyInit(env, "export-401");
+
+  await env.context.downloadExport("json");
+
+  check(env.authToken() === null, "export-401: rejected token kept in memory — the export bypassed the 401 clear path");
+  check(env.sessionStorage.getItem("trustrag_token") === null, "export-401: rejected token survives in sessionStorage");
+  check(
+    env.authNode.textContent === "未登录",
+    `export-401: header still reads "${env.authNode.textContent}" after the server rejected the token`,
+  );
+  check(env.objectUrls.length === 0, "export-401: a rejected export still produced a download");
+  const summary = env.node("review-summary");
+  check(
+    summary !== undefined && summary.textContent.includes("导出失败"),
+    `export-401: the failure was silent, review-summary reads "${summary && summary.textContent}"`,
+  );
 }
 
 console.log("dashboard-auth-wiring: OK");

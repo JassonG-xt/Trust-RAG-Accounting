@@ -366,12 +366,48 @@ function reviewFilterQueryString({includePaging = true} = {}) {
   return params.toString();
 }
 
-function downloadExport(format) {
+async function downloadExport(format) {
   if (!reviewQueueEnabled()) return;
   const qs = reviewFilterQueryString({includePaging: false});
   const suffix = format === "csv" ? "csv" : "json";
   const url = `/v1/review/queue/export.${suffix}${qs ? `?${qs}` : ""}`;
-  window.open(url, "_blank");
+  try {
+    // window.open cannot carry the Authorization header, so the export has to
+    // be fetched and handed to the browser as a Blob. The token stays in the
+    // header — never in the URL.
+    const blob = await fetchBlob(url);
+    saveBlob(blob, `review-queue.${suffix}`);
+  } catch (error) {
+    $("review-summary").textContent = `导出失败：${messageOf(error)}`;
+  }
+}
+
+async function fetchBlob(url, options = {}) {
+  const headers = {...(options.headers || {})};
+  if (state.authToken) {
+    headers["Authorization"] = `Bearer ${state.authToken}`;
+  }
+  const response = await fetch(url, {...options, headers});
+  if (!response.ok) {
+    if (response.status === 401) {
+      // Same stale-token handling as fetchJson: drop it so the UI stops
+      // claiming a session instead of failing silently in a new tab.
+      clearAuthToken();
+    }
+    throw new Error(`${response.status} ${response.statusText}`);
+  }
+  return response.blob();
+}
+
+function saveBlob(blob, filename) {
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  link.click();
+  // Revoke on the next task: revoking synchronously after click() can cancel
+  // the download in some browsers.
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
 }
 
 async function clearReviewQueue() {
