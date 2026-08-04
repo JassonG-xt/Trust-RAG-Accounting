@@ -192,6 +192,34 @@ def _client_for(container: ApplicationContainer, tenant_id: str) -> TestClient:
     return TestClient(create_app(scoped))
 
 
+@pytest.mark.parametrize("retrieval_source", ["wiki", "hybrid"])
+def test_tenant_rag_query_rejects_configured_global_retrieval_default(
+    two_tenant_container: ApplicationContainer,
+    retrieval_source: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An omitted source must not fall back to a shared wiki/hybrid corpus."""
+
+    configured = replace(
+        two_tenant_container,
+        settings=replace(
+            two_tenant_container.settings,
+            retrieval_source=retrieval_source,
+        ),
+    )
+
+    def workflow_must_not_run(*args, **kwargs):
+        raise AssertionError("configured global retrieval source reached the RAG workflow")
+
+    monkeypatch.setattr("backend.app.main.run_query", workflow_must_not_run)
+    response = _client_for(configured, "beta-firm").post(
+        "/v1/rag/query", json={"question": ALPHA_QUESTION}
+    )
+
+    assert response.status_code == 400
+    assert "not available for tenant-scoped queries" in response.json()["detail"]
+
+
 def _rag_response_blob(container: ApplicationContainer, tenant_id: str, question: str) -> str:
     """Full RAG response for ``tenant_id`` serialized to one string.
 

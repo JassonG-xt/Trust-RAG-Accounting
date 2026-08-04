@@ -16,7 +16,7 @@ import re
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -268,9 +268,13 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
     @app.post("/v1/rag/query", response_model=RAGQueryResponse, tags=["rag"])
     def rag_query(request: RAGQueryRequest, http_request: Request) -> RAGQueryResponse:
         principal: RequestPrincipal = http_request.state.principal
+        effective_retrieval_source = (
+            request.retrieval_source
+            or container.current_settings().retrieval_source.strip().lower()
+        )
         if (
             container._engine is not None
-            and request.retrieval_source in {"wiki", "hybrid"}
+            and effective_retrieval_source in {"wiki", "hybrid"}
         ):
             raise HTTPException(
                 status_code=400,
@@ -639,7 +643,7 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
         )
         entries, _ = container.current_review_service().list_queue(filter_spec)
         return ReviewQueueExportResponse(
-            exported_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            exported_at=datetime.now(UTC).isoformat(timespec="seconds"),
             count=len(entries),
             filters=filter_spec.as_dict(),
             sort=filter_spec.sort,
