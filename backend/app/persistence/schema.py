@@ -14,6 +14,7 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    text,
 )
 
 metadata = MetaData()
@@ -159,4 +160,15 @@ index_jobs = Table(
     Column("created_at", String(64), nullable=False),
     Column("updated_at", String(64), nullable=False),
     UniqueConstraint("tenant_id", "idempotency_key"),
+)
+
+tenants = Table(
+    "tenants",
+    metadata,
+    Column("tenant_id", String(128), primary_key=True),
+    Column("name", Text, nullable=False),
+    Column("status", String(32), nullable=False, default="active", server_default="active"),
+    Column("created_at", String(64), nullable=False),
+    Column("updated_at", String(64), nullable=False),
+    Column("config_json", JSON, nullable=False, default=dict, server_default=text("'{}'")),
 )

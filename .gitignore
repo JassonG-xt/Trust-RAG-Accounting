@@ -62,3 +62,6 @@ CLAUDE.md
 skills-lock.json
 .agents/
 .learnings/
+.claude/
+docs/superpowers/
+.superpowers/

@@ -38,6 +38,7 @@ unsafe path remains retrieval-free and does not enter the review queue.
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
@@ -240,24 +241,31 @@ def run_query(
     tenant_id: str = "local",
     actor_id: str = "local-admin",
     retrieval_source: str | None = None,
+    catalog: Any | None = None,
 ) -> dict:
     """Convenience entry point used by the FastAPI route and tests.
 
     ``retrieval_source`` (``raw`` | ``wiki`` | ``hybrid``) overrides the
     configured default for this call only; the retriever nodes read it via the
     repository router, so the node graph itself is unchanged.
+
+    ``catalog`` (when given) is the request's tenant-scoped repository — the RAG
+    route passes ``container.catalog_for(tenant_id)`` so the raw-source retriever
+    nodes read only that tenant's documents. ``None`` (every non-route caller)
+    leaves retrieval on the process-global raw store, unchanged.
     """
 
     from ..services.document_repository import (
         raw_document_ids,
         use_retrieval_source,
+        use_tenant_repository,
         wiki_page_source_map,
     )
     from ..wiki.citations import enforce_wiki_citation_grounding, enrich_wiki_citations
 
     workflow = get_workflow()
     state = initial_state(question, tenant_id=tenant_id, actor_id=actor_id)
-    with use_retrieval_source(retrieval_source) as source:
+    with use_retrieval_source(retrieval_source) as source, use_tenant_repository(catalog):
         result = workflow.invoke(state)
     if source in ("wiki", "hybrid"):
         page_sources = wiki_page_source_map()

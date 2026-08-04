@@ -152,6 +152,9 @@ class Settings:
     oidc_tenant_claim: str = field(
         default_factory=lambda: os.getenv("TRUSTRAG_OIDC_TENANT_CLAIM", "tenant_id")
     )
+    oidc_multi_tenant: bool = field(
+        default_factory=lambda: _bool_env("TRUSTRAG_OIDC_MULTI_TENANT", False)
+    )
     telemetry_mode: str = field(
         default_factory=lambda: os.getenv("TRUSTRAG_TELEMETRY_MODE", "noop")
     )
@@ -490,6 +493,11 @@ class Settings:
         auth_mode = self.auth_mode.strip().lower()
         if auth_mode not in {"local", "oidc"}:
             raise ValueError("TRUSTRAG_AUTH_MODE must be either 'local' or 'oidc'")
+        if auth_mode == "oidc" and backend != "postgres":
+            raise ValueError(
+                "TRUSTRAG_AUTH_MODE=oidc requires "
+                "TRUSTRAG_STORAGE_BACKEND=postgres (Postgres required)"
+            )
         if auth_mode == "oidc" and not all(
             (self.oidc_issuer, self.oidc_audience, self.oidc_jwks_url)
         ):

@@ -20,9 +20,12 @@ class OIDCJWTAuthenticator:
         public_key: bytes | str | None = None,
         roles_claim: str = "roles",
         tenant_claim: str = "tenant_id",
+        multi_tenant: bool = False,
     ) -> None:
-        if not issuer or not audience or not tenant_id:
-            raise ValueError("issuer, audience and tenant_id are required")
+        if not issuer or not audience:
+            raise ValueError("issuer and audience are required")
+        if not multi_tenant and not tenant_id:
+            raise ValueError("tenant_id is required unless multi_tenant is enabled")
         if not jwks_url and public_key is None:
             raise ValueError("either jwks_url or public_key is required")
         self._issuer = issuer
@@ -31,6 +34,7 @@ class OIDCJWTAuthenticator:
         self._public_key = public_key
         self._roles_claim = roles_claim
         self._tenant_claim = tenant_claim
+        self._multi_tenant = multi_tenant
         self._jwks_client = None
         if jwks_url:
             try:
@@ -38,6 +42,26 @@ class OIDCJWTAuthenticator:
             except ImportError as exc:  # pragma: no cover
                 raise ImportError("install trust-rag[production] for OIDC support") from exc
             self._jwks_client = jwt.PyJWKClient(jwks_url)
+
+    def jwks_is_ready(self) -> bool:
+        """Report whether the signing keys can be fetched and parsed.
+
+        Readiness only. This never validates, decodes or accepts a token and
+        never receives token material — ``/readyz`` is unauthenticated, so a
+        probe that verified tokens would be a public verification oracle. It
+        answers exactly one question: can this process reach key material?
+
+        ``PyJWKClient`` caches the JWKS document (300s by default), so the
+        probe is cheap and does not hammer the identity provider. A statically
+        configured public key needs no endpoint and is ready by definition.
+        """
+
+        if self._jwks_client is None:
+            return True
+        try:
+            return bool(self._jwks_client.get_signing_keys())
+        except Exception:
+            return False
 
     def authenticate(self, token: str | None):
         from .models import RequestPrincipal
@@ -62,7 +86,9 @@ class OIDCJWTAuthenticator:
             raise AuthenticationError("invalid bearer token") from exc
 
         token_tenant = str(claims.get(self._tenant_claim) or "")
-        if token_tenant != self._tenant_id:
+        if not token_tenant:
+            raise AuthenticationError("token has no tenant")
+        if not self._multi_tenant and token_tenant != self._tenant_id:
             raise AuthenticationError("token tenant does not match configured tenant")
         subject_id = str(claims.get("sub") or "").strip()
         if not subject_id:
@@ -70,7 +96,11 @@ class OIDCJWTAuthenticator:
         raw_roles = claims.get(self._roles_claim, [])
         if isinstance(raw_roles, str):
             raw_roles = [raw_roles]
-        roles = frozenset(str(role) for role in raw_roles if str(role) in {"viewer", "reviewer", "admin"})
+        roles = frozenset(
+            str(role)
+            for role in raw_roles
+            if str(role) in {"viewer", "reviewer", "admin", "platform_admin"}
+        )
         if not roles:
             raise AuthenticationError("token has no recognized role")
         return RequestPrincipal(

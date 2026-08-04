@@ -16,7 +16,7 @@ import re
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -61,6 +61,11 @@ from .review import (
     ReviewQueueResponse,
     ReviewQueueSummaryResponse,
 )
+from .schemas.admin import (
+    CreateTenantRequest,
+    TenantListResponse,
+    TenantSummary,
+)
 from .schemas.rag import (
     DemoConfigResponse,
     DocumentsResponse,
@@ -68,6 +73,7 @@ from .schemas.rag import (
     EvalLatestSummary,
     HealthResponse,
     HumanReviewSummary,
+    PrincipalResponse,
     RAGQueryRequest,
     RAGQueryResponse,
     TracesClearResponse,
@@ -120,6 +126,10 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
             principal = authenticator.authenticate(token)
         except AuthenticationError:
             return JSONResponse(status_code=401, content={"detail": "authentication required"})
+        if container.tenant_registry is not None and not container.tenant_registry.is_active(
+            principal.tenant_id
+        ):
+            return JSONResponse(status_code=403, content={"detail": "tenant is not active"})
         if not container.authorization_policy.is_allowed(principal, permission):
             return JSONResponse(status_code=403, content={"detail": "permission denied"})
         request.state.principal = principal
@@ -207,6 +217,24 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
             ),
         )
 
+    @app.get("/v1/me", response_model=PrincipalResponse, tags=["meta"])
+    def whoami(http_request: Request) -> PrincipalResponse:
+        """Echo the authenticated principal's identity.
+
+        ``/v1/me`` falls through ``permission_for_request``'s default branch to
+        ``Permission.QUERY``, so every authenticated role can read its own
+        identity and no policy change is needed. The console uses ``roles`` to
+        decide which panels to render — that is presentation only; every
+        privileged route stays authorized server-side by the middleware.
+        """
+
+        principal: RequestPrincipal = http_request.state.principal
+        return PrincipalResponse(
+            subject_id=principal.subject_id,
+            tenant_id=principal.tenant_id,
+            roles=sorted(principal.roles),
+        )
+
     @app.get("/dashboard", include_in_schema=False)
     def dashboard() -> FileResponse:
         if not FRONTEND_INDEX.exists():
@@ -217,13 +245,18 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
         return FileResponse(FRONTEND_INDEX)
 
     @app.get("/v1/documents", response_model=DocumentsResponse, tags=["meta"])
-    def list_documents() -> DocumentsResponse:
+    def list_documents(http_request: Request) -> DocumentsResponse:
         """Diagnostic listing of every document currently loaded into the
         repository, plus the count of chunks it produced. Read-only — no
         upload / delete / update is exposed through HTTP in this phase.
+
+        Scoped to the authenticated principal's tenant: the middleware maps
+        ``/v1/documents`` to ``READ_DOCUMENTS`` and always sets
+        ``request.state.principal`` before this handler runs.
         """
 
-        repository = container.current_document_catalog()
+        principal: RequestPrincipal = http_request.state.principal
+        repository = container.catalog_for(principal.tenant_id)
         summaries = repository.describe()
         return DocumentsResponse(
             count=len(summaries),
@@ -234,8 +267,20 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
 
     @app.post("/v1/rag/query", response_model=RAGQueryResponse, tags=["rag"])
     def rag_query(request: RAGQueryRequest, http_request: Request) -> RAGQueryResponse:
+        principal: RequestPrincipal = http_request.state.principal
+        effective_retrieval_source = (
+            request.retrieval_source
+            or container.current_settings().retrieval_source.strip().lower()
+        )
+        if (
+            container._engine is not None
+            and effective_retrieval_source in {"wiki", "hybrid"}
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="retrieval_source is not available for tenant-scoped queries",
+            )
         try:
-            principal: RequestPrincipal = http_request.state.principal
             review_service = container.current_review_service()
             with bind_request_context(
                 principal=principal,
@@ -250,6 +295,7 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
                         tenant_id=principal.tenant_id,
                         actor_id=principal.subject_id,
                         retrieval_source=request.retrieval_source,
+                        catalog=container.catalog_for(principal.tenant_id),
                     )
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("workflow failed")
@@ -597,7 +643,7 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
         )
         entries, _ = container.current_review_service().list_queue(filter_spec)
         return ReviewQueueExportResponse(
-            exported_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            exported_at=datetime.now(UTC).isoformat(timespec="seconds"),
             count=len(entries),
             filters=filter_spec.as_dict(),
             sort=filter_spec.sort,
@@ -873,6 +919,61 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
         if container.index_generations is None:
             raise HTTPException(status_code=503, detail="index generation storage unavailable")
         return container.index_generations.list_generations()
+
+    @app.get(
+        "/v1/admin/tenants",
+        response_model=TenantListResponse,
+        tags=["admin"],
+    )
+    def list_tenants() -> TenantListResponse:
+        """List active tenants for the internal platform admin console.
+
+        Authorization is enforced by the ``authorize_request`` middleware,
+        which maps ``/v1/admin/tenants`` to ``MANAGE_TENANTS`` (platform_admin
+        only), so no role check is repeated here. Returns a stable 404 when the
+        tenant registry is not configured (local / non-Postgres mode).
+        """
+
+        registry = container.tenant_registry
+        if registry is None:
+            raise HTTPException(status_code=404, detail="tenant registry unavailable")
+        return TenantListResponse(
+            tenants=[
+                TenantSummary(
+                    tenant_id=record.tenant_id,
+                    name=record.name,
+                    status=record.status,
+                    created_at=record.created_at,
+                )
+                for record in registry.list_active()
+            ]
+        )
+
+    @app.post(
+        "/v1/admin/tenants",
+        response_model=TenantSummary,
+        status_code=201,
+        tags=["admin"],
+    )
+    def create_tenant(request: CreateTenantRequest) -> TenantSummary:
+        """Provision a new active tenant (internal platform operation).
+
+        Duplicate ``tenant_id`` -> 409; registry unavailable -> 404.
+        """
+
+        registry = container.tenant_registry
+        if registry is None:
+            raise HTTPException(status_code=404, detail="tenant registry unavailable")
+        if registry.get(request.tenant_id) is not None:
+            raise HTTPException(status_code=409, detail="tenant already exists")
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        record = registry.create(request.tenant_id, request.name, now=now)
+        return TenantSummary(
+            tenant_id=record.tenant_id,
+            name=record.name,
+            status=record.status,
+            created_at=record.created_at,
+        )
 
     return app
 

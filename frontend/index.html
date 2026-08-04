@@ -18,6 +18,7 @@
           </p>
           <div class="hero-meta" aria-label="Demo 模式">
             <span class="demo-mode-pill" id="demo-mode-pill">Local full demo</span>
+            <span class="hero-note" id="auth-status">未登录</span>
             <span class="hero-note">Fictional clients only · FastAPI-served static dashboard</span>
           </div>
         </div>
@@ -40,90 +41,123 @@
 
       <main class="dashboard-shell">
         <section class="workspace-column">
-          <section class="panel query-panel" aria-labelledby="query-title">
+          <div class="conversation-workspace">
+            <section class="panel query-panel" aria-labelledby="query-title">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">控制台</p>
+                  <h2 id="query-title">RAG 查询</h2>
+                </div>
+                <button class="secondary-button" id="clear-query" type="button">清空</button>
+              </div>
+
+              <label class="field-label" for="question-input">问题</label>
+              <textarea
+                id="question-input"
+                rows="4"
+                placeholder="输入一个 bookkeeping、invoice、reimbursement、tax policy 或安全性问题。"
+              ></textarea>
+
+              <div class="example-list" id="example-list" aria-label="示例问题"></div>
+
+              <div class="query-actions">
+                <button class="primary-button" id="run-query" type="button">运行查询</button>
+                <p class="inline-status" id="query-status">空闲</p>
+              </div>
+            </section>
+
+            <div class="focus-column">
+              <section class="panel answer-panel" aria-labelledby="answer-title">
+                <div class="panel-header">
+                  <div>
+                    <p class="eyebrow">结果</p>
+                    <h2 id="answer-title">回答</h2>
+                  </div>
+                  <div class="badge-row" id="answer-badges"></div>
+                </div>
+
+                <div class="answer-shell">
+                  <div class="answer-text" id="answer-text">
+                    运行查询以查看回答、证据和结构化分析。
+                  </div>
+                  <dl class="metadata-grid" id="answer-metadata"></dl>
+                  <div id="review-handoff" class="review-handoff" hidden aria-live="polite"></div>
+                </div>
+
+                <div class="json-strip" aria-label="结构化分析">
+                  <details class="json-details">
+                    <summary>安全 JSON</summary>
+                    <pre id="safety-json">{}</pre>
+                  </details>
+                  <details class="json-details">
+                    <summary>时效 JSON</summary>
+                    <pre id="temporal-json">{}</pre>
+                  </details>
+                  <details class="json-details">
+                    <summary>冲突 JSON</summary>
+                    <pre id="conflict-json">{}</pre>
+                  </details>
+                </div>
+              </section>
+            </div>
+          </div>
+
+          <section class="panel evidence-panel" aria-labelledby="citations-title">
             <div class="panel-header">
               <div>
-                <p class="eyebrow">控制台</p>
-                <h2 id="query-title">RAG 查询</h2>
+                <p class="eyebrow">证据</p>
+                <h2 id="citations-title">证据 / 引用</h2>
               </div>
-              <button class="secondary-button" id="clear-query" type="button">清空</button>
             </div>
 
-            <label class="field-label" for="question-input">问题</label>
-            <textarea
-              id="question-input"
-              rows="8"
-              placeholder="输入一个 bookkeeping、invoice、reimbursement、tax policy 或安全性问题。"
-            ></textarea>
-
-            <div class="example-list" id="example-list" aria-label="示例问题"></div>
-
-            <div class="query-actions">
-              <button class="primary-button" id="run-query" type="button">运行查询</button>
-              <p class="inline-status" id="query-status">空闲</p>
+            <div class="evidence-columns">
+              <div>
+                <h3>引用</h3>
+                <div class="list-stack" id="citations-list"></div>
+              </div>
+              <div>
+                <h3>支持证据</h3>
+                <div class="list-stack" id="support-list"></div>
+              </div>
+              <div>
+                <h3>反对证据</h3>
+                <div class="list-stack" id="counter-list"></div>
+              </div>
             </div>
           </section>
-
-          <div class="focus-column">
-            <section class="panel answer-panel" aria-labelledby="answer-title">
-              <div class="panel-header">
-                <div>
-                  <p class="eyebrow">结果</p>
-                  <h2 id="answer-title">回答</h2>
-                </div>
-                <div class="badge-row" id="answer-badges"></div>
-              </div>
-
-              <div class="answer-shell">
-                <div class="answer-text" id="answer-text">
-                  运行查询以查看回答、证据和结构化分析。
-                </div>
-                <dl class="metadata-grid" id="answer-metadata"></dl>
-              </div>
-
-              <div class="json-strip" aria-label="结构化分析">
-                <details class="json-details">
-                  <summary>安全 JSON</summary>
-                  <pre id="safety-json">{}</pre>
-                </details>
-                <details class="json-details">
-                  <summary>时效 JSON</summary>
-                  <pre id="temporal-json">{}</pre>
-                </details>
-                <details class="json-details">
-                  <summary>冲突 JSON</summary>
-                  <pre id="conflict-json">{}</pre>
-                </details>
-              </div>
-            </section>
-
-            <section class="panel evidence-panel" aria-labelledby="citations-title">
-              <div class="panel-header">
-                <div>
-                  <p class="eyebrow">证据</p>
-                  <h2 id="citations-title">证据 / 引用</h2>
-                </div>
-              </div>
-
-              <div class="evidence-columns">
-                <div>
-                  <h3>引用</h3>
-                  <div class="list-stack" id="citations-list"></div>
-                </div>
-                <div>
-                  <h3>支持证据</h3>
-                  <div class="list-stack" id="support-list"></div>
-                </div>
-                <div>
-                  <h3>反对证据</h3>
-                  <div class="list-stack" id="counter-list"></div>
-                </div>
-              </div>
-            </section>
-          </div>
         </section>
 
         <aside class="rail-column">
+          <section class="panel" id="tenant-admin" aria-labelledby="tenant-admin-title" hidden>
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">平台</p>
+                <h2 id="tenant-admin-title">租户管理</h2>
+              </div>
+              <button class="secondary-button" data-refresh="tenants" type="button">刷新</button>
+            </div>
+            <p class="review-disclaimer">
+              仅平台管理员可见。面板可见性只是界面呈现：<code>/v1/admin/tenants</code>
+              始终由后端 <code>manage_tenants</code> 权限授权，隐藏面板不构成访问控制。
+            </p>
+            <div class="summary-line" id="tenant-admin-summary">尚未加载租户数据。</div>
+
+            <form class="review-filters" id="create-tenant-form" aria-label="开通租户">
+              <label>
+                <span>租户 ID</span>
+                <input type="text" name="tenant_id" id="new-tenant-id" placeholder="alpha-firm" />
+              </label>
+              <label>
+                <span>名称</span>
+                <input type="text" name="name" id="new-tenant-name" placeholder="Alpha Firm" />
+              </label>
+              <button class="primary-button" id="create-tenant" type="button">开通</button>
+            </form>
+
+            <p class="inline-status" id="tenant-admin-status" aria-live="polite"></p>
+            <div class="list-stack compact" id="tenant-list"></div>
+          </section>
+
           <section class="panel" aria-labelledby="documents-title">
             <div class="panel-header">
               <div>
@@ -146,6 +180,7 @@
                 <button class="secondary-button" data-refresh="review" type="button">刷新</button>
                 <button class="secondary-button" id="review-export-json" type="button">导出 JSON</button>
                 <button class="secondary-button" id="review-export-csv" type="button">导出 CSV</button>
+                <button class="secondary-button danger-button" id="review-clear-queue" type="button">清空队列</button>
               </div>
             </div>
             <p class="review-disclaimer">

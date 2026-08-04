@@ -38,6 +38,7 @@ if TYPE_CHECKING:
         PostgresIndexGenerationRepository,
         PostgresIndexJobRepository,
     )
+    from ..persistence.tenants import TenantRegistryRepository
 
 
 class DocumentCatalog(Protocol):
@@ -64,6 +65,7 @@ class ApplicationContainer:
     )
     index_jobs: PostgresIndexJobRepository | None = None
     index_generations: PostgresIndexGenerationRepository | None = None
+    tenant_registry: TenantRegistryRepository | None = None
     telemetry: Telemetry = field(default_factory=NoopTelemetry)
     readiness_checks: dict[str, Callable[[], bool]] = field(default_factory=dict)
     _settings_provider: Callable[[], Settings] | None = field(default=None, repr=False)
@@ -75,6 +77,12 @@ class ApplicationContainer:
     )
     _trace_collector_provider: Callable[[], LocalTraceCollector] | None = field(
         default=None, repr=False
+    )
+    _engine: Engine | None = field(default=None, repr=False)
+    _embedding_provider: Any | None = field(default=None, repr=False)
+    _vector_store: Any | None = field(default=None, repr=False)
+    _catalog_cache: dict[str, DocumentCatalog] = field(
+        default_factory=dict, repr=False
     )
 
     def current_settings(self) -> Settings:
@@ -94,6 +102,32 @@ class ApplicationContainer:
         if self._trace_collector_provider:
             return self._trace_collector_provider()
         return self.trace_collector
+
+    def catalog_for(self, tenant_id: str) -> DocumentCatalog:
+        """Return the read catalog scoped to ``tenant_id``.
+
+        In postgres mode a per-tenant :class:`PostgresDocumentCatalog` is built
+        (and cached) over the shared engine so each request observes only its
+        own tenant's documents. In local mode there is no per-tenant engine, so
+        this falls back to the single configured catalog unchanged.
+        """
+
+        if self._engine is None:
+            return self.current_document_catalog()
+        cached = self._catalog_cache.get(tenant_id)
+        if cached is not None:
+            return cached
+        from ..persistence.document_catalog import PostgresDocumentCatalog
+
+        catalog = PostgresDocumentCatalog(
+            self._engine,
+            tenant_id=tenant_id,
+            settings=self.current_settings(),
+            embedding_provider=self._embedding_provider,
+            vector_store=self._vector_store,
+        )
+        self._catalog_cache[tenant_id] = catalog
+        return catalog
 
 
 def _build_current_review_service() -> ReviewService:
@@ -123,6 +157,7 @@ def build_application_container(
             jwks_url=current.oidc_jwks_url,
             roles_claim=current.oidc_roles_claim,
             tenant_claim=current.oidc_tenant_claim,
+            multi_tenant=current.oidc_multi_tenant,
         )
     else:
         local_roles = frozenset({"viewer"}) if current.trustrag_public_demo_enabled else frozenset({"admin"})
@@ -142,6 +177,11 @@ def build_application_container(
             client=s3_client,
         )
 
+    database_engine = None
+    embedding_provider = None
+    vector_store = None
+    tenant_registry = None
+
     if current.storage_backend.strip().lower() == "postgres":
         from sqlalchemy import create_engine
 
@@ -158,6 +198,9 @@ def build_application_container(
             current.database_url,
             pool_pre_ping=True,
         )
+        from ..persistence.tenants import TenantRegistryRepository
+
+        tenant_registry = TenantRegistryRepository(database_engine)
         readiness_checks: dict[str, Callable[[], bool]] = {
             "postgres": lambda: _database_is_ready(database_engine)
         }
@@ -255,6 +298,9 @@ def build_application_container(
 
     if source_object_store is not None:
         readiness_checks["s3"] = source_object_store.health
+    if isinstance(authenticator, OIDCJWTAuthenticator):
+        # JWKS reachability only — the probe never verifies a token.
+        readiness_checks["oidc"] = authenticator.jwks_is_ready
     telemetry = build_telemetry(current, local_collector=traces)
 
     return ApplicationContainer(
@@ -266,12 +312,16 @@ def build_application_container(
         authenticator=authenticator,
         index_jobs=index_jobs,
         index_generations=index_generations,
+        tenant_registry=tenant_registry,
         telemetry=telemetry,
         readiness_checks=readiness_checks,
         _settings_provider=settings_provider,
         _document_catalog_provider=document_provider,
         _review_service_provider=review_provider,
         _trace_collector_provider=trace_provider,
+        _engine=database_engine,
+        _embedding_provider=embedding_provider,
+        _vector_store=vector_store,
     )
 
 

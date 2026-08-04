@@ -129,6 +129,26 @@ def test_postgres_container_uses_durable_review_adapters() -> None:
     assert isinstance(container.review_service._actions, PostgresReviewActionRepository)
 
 
+@pytest.mark.parametrize("multi_tenant", [False, True])
+def test_oidc_authentication_requires_postgres_storage(
+    multi_tenant: bool,
+) -> None:
+    settings = Settings(
+        storage_backend="local",
+        auth_mode="oidc",
+        oidc_issuer="https://identity.example.com",
+        oidc_audience="trust-rag",
+        oidc_jwks_url="https://identity.example.com/.well-known/jwks.json",
+        oidc_multi_tenant=multi_tenant,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="TRUSTRAG_AUTH_MODE=oidc requires TRUSTRAG_STORAGE_BACKEND=postgres",
+    ):
+        settings.validate_persistence()
+
+
 def test_postgres_storage_requires_database_url() -> None:
     settings = Settings(storage_backend="postgres", database_url=None)
 
