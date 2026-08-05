@@ -304,6 +304,31 @@ def test_reviewer_cannot_reach_admin_routes(
     assert response.json() == {"detail": "permission denied"}
 
 
+def test_viewer_cannot_act_on_wiki_proposals(
+    client: TestClient, signing_key: rsa.RSAPrivateKey
+) -> None:
+    """A viewer must never reach the wiki proposal write path.
+
+    The wiki API mirrors the review queue's permission split: reads need
+    READ_REVIEW, actions need WRITE_REVIEW. Without the explicit ``/v1/wiki/``
+    branch in ``permission_for_request`` this falls through to QUERY and the
+    viewer would sail past the middleware.
+    """
+
+    token = _token(
+        signing_key, subject="viewer-1", tenant=HOME_TENANT, roles=["viewer"]
+    )
+
+    response = client.post(
+        "/v1/wiki/proposals/prop-1/actions",
+        json={"action_type": "approve"},
+        headers=_auth(token),
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "permission denied"}
+
+
 def test_tenant_admin_cannot_reach_the_tenant_admin_api(
     client: TestClient, signing_key: rsa.RSAPrivateKey
 ) -> None:

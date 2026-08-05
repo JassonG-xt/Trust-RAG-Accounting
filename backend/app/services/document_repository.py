@@ -35,6 +35,7 @@ from ..ingestion.chunker import chunk_documents
 from ..ingestion.models import AccountingDocument, DocumentChunk
 from ..ingestion.unified_loader import load_documents_from_directory
 from ..retrieval import RetrievalService, ScoredChunk
+from ..wiki.paths import derived_stores_for
 
 logger = logging.getLogger(__name__)
 
@@ -564,6 +565,29 @@ def get_raw_repository() -> DocumentRepository:
         return _repository_singleton
 
 
+def _wiki_chunk_store_path() -> Path:
+    """The derived wiki chunk store to serve — tenant-aware (Phase 10D).
+
+    The wiki apply path writes a tenant-suffixed store
+    (``trustrag_wiki_chunks_{tenant}.json`` via ``derived_stores_for``), so
+    local-mode retrieval must read that store or it would serve an empty
+    corpus (the pre-10D global store is no longer written). Falls back to the
+    legacy global store when the tenant store is absent (pre-10D corpora and
+    tests that monkeypatch ``_DEFAULT_WIKI_CHUNK_STORE``).
+    """
+
+    from ..core.config import get_settings
+
+    try:
+        settings = get_settings()
+        _, tenant_chunks = derived_stores_for(settings, settings.tenant_id)
+    except (ValueError, AttributeError):
+        return _DEFAULT_WIKI_CHUNK_STORE
+    if tenant_chunks.exists():
+        return tenant_chunks
+    return _DEFAULT_WIKI_CHUNK_STORE
+
+
 def get_wiki_repository() -> DocumentRepository:
     """The wiki-corpus repository over the derived wiki chunk store (no fallback)."""
 
@@ -571,7 +595,7 @@ def get_wiki_repository() -> DocumentRepository:
     with _singleton_lock:
         if _wiki_repository_singleton is None:
             _wiki_repository_singleton = DocumentRepository(
-                chunk_store_path=_DEFAULT_WIKI_CHUNK_STORE,
+                chunk_store_path=_wiki_chunk_store_path(),
                 document_store_path=_NO_STORE,
                 sample_dir=_NO_STORE,
                 allow_fallback=False,

@@ -91,6 +91,42 @@ def test_missing_wiki_store_is_empty_not_raw_seed(tmp_path, monkeypatch):
         reset_repository()
 
 
+def test_wiki_retrieval_reads_tenant_store(monkeypatch, tmp_path):
+    """Phase 10D: retrieval serves the tenant-suffixed store, not the legacy global.
+
+    The wiki apply path writes ``trustrag_wiki_chunks_{tenant}.json``; the
+    legacy global store is never written anymore, so the wiki / hybrid sources
+    must read the tenant store or they would serve an empty corpus.
+    """
+
+    from backend.app.wiki.paths import derived_stores_for
+
+    monkeypatch.setenv("WIKI_DIR", str(tmp_path / "wiki"))
+    from backend.app.core.config import get_settings
+
+    tenant = get_settings().tenant_id
+    _, tenant_chunks = derived_stores_for(get_settings(), tenant)
+    monkeypatch.setattr(dr, "_DEFAULT_WIKI_CHUNK_STORE", tmp_path / "absent.json")
+    reset_repository()
+    try:
+        missing = tmp_path / "__none__.json"
+        monkeypatch.setattr(dr, "_DEFAULT_CHUNK_STORE", missing)
+        monkeypatch.setattr(dr, "_DEFAULT_DOCUMENT_STORE", missing)
+        refresh_wiki_stores(
+            FIXTURE_WIKI, tmp_path / "wiki_pages.json", tenant_chunks,
+            source_doc_types=derive_source_doc_types(make_repository()),
+        )
+        wiki_repo = get_wiki_repository()
+        assert wiki_repo.load_chunks(), "tenant-suffixed wiki store must be served"
+        with use_retrieval_source("wiki"):
+            hits = get_repository().search(
+                _REIMBURSEMENT_Q, question_type="reimbursement_rule"
+            )
+        assert {h["doc_id"] for h in hits} >= {"policy-reimbursement-2026"}
+    finally:
+        reset_repository()
+
+
 # ---------------------------------------------------------------------------
 # End-to-end through run_query (graph unchanged, source switched)
 # ---------------------------------------------------------------------------

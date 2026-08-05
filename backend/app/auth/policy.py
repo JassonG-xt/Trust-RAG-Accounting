@@ -47,6 +47,14 @@ def permission_for_request(method: str, path: str) -> Permission | None:
         if method.upper() in {"POST", "PUT", "PATCH"}:
             return Permission.WRITE_REVIEW
         return Permission.READ_REVIEW
+    if path.startswith("/v1/wiki/"):
+        # Phase 10D wiki proposal review — same permission split as the RAG
+        # review queue. Explicit branch BEFORE the QUERY fallthrough: without
+        # it a viewer would reach wiki reads (and, with a write mapped to
+        # QUERY, the actions endpoint too).
+        if method.upper() in {"POST", "PUT", "PATCH"}:
+            return Permission.WRITE_REVIEW
+        return Permission.READ_REVIEW
     if path == "/v1/documents":
         return Permission.READ_DOCUMENTS
     return Permission.QUERY

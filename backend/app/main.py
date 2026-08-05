@@ -84,6 +84,14 @@ from .schemas.rag import (
     TracesClearResponse,
     TracesResponse,
 )
+from .wiki.paths import derived_stores_for, wiki_dir_for
+from .wiki.review_queue import (
+    WikiProposalActionRequest,
+    WikiProposalActionResponse,
+    WikiProposalRecord,
+    WikiProposalsResponse,
+    approve_and_apply,
+)
 
 logger = logging.getLogger("trust_rag.main")
 
@@ -979,6 +987,130 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
             filters=filter_spec.as_dict(),
             actions=page,
         )
+
+    @app.get(
+        "/v1/wiki/proposals",
+        response_model=WikiProposalsResponse,
+        tags=["wiki"],
+    )
+    def list_wiki_proposals(http_request: Request) -> WikiProposalsResponse:
+        """Phase 10D wiki proposal review queue (current tenant only).
+
+        Returns ``enabled=false`` and an empty list — never a 404 — when
+        ``WIKI_ENABLED`` is false or no proposal store is wired (postgres mode
+        until the defect-A migration). Entries are scoped to the request
+        principal's tenant.
+        """
+
+        current_settings = container.current_settings()
+        _raise_if_public_demo(current_settings)
+        store = container.wiki_proposal_store
+        if store is None or not current_settings.wiki_enabled:
+            return WikiProposalsResponse(enabled=False, count=0, total=0, entries=[])
+        principal: RequestPrincipal = http_request.state.principal
+        entries = store.list(tenant_id=principal.tenant_id)
+        return WikiProposalsResponse(
+            enabled=True,
+            count=len(entries),
+            total=len(entries),
+            entries=entries,
+        )
+
+    @app.get(
+        "/v1/wiki/proposals/{proposal_id}",
+        response_model=WikiProposalRecord,
+        tags=["wiki"],
+    )
+    def get_wiki_proposal(
+        proposal_id: str,
+        http_request: Request,
+    ) -> WikiProposalRecord:
+        """Fetch one proposal (patches + review state) — own tenant only."""
+
+        current_settings = container.current_settings()
+        _raise_if_public_demo(current_settings)
+        store = container.wiki_proposal_store
+        if store is None or not current_settings.wiki_enabled:
+            raise HTTPException(status_code=404, detail="wiki proposals disabled")
+        principal: RequestPrincipal = http_request.state.principal
+        try:
+            record = store.get(proposal_id)
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail=exc.args[0] if exc.args else "proposal not found",
+            ) from exc
+        if record.tenant_id not in (None, principal.tenant_id):
+            raise HTTPException(
+                status_code=404,
+                detail=f"no such proposal: {proposal_id}",
+            )
+        return record
+
+    @app.post(
+        "/v1/wiki/proposals/{proposal_id}/actions",
+        response_model=WikiProposalActionResponse,
+        tags=["wiki"],
+    )
+    def apply_wiki_proposal_action(
+        proposal_id: str,
+        request: WikiProposalActionRequest,
+        http_request: Request,
+    ) -> WikiProposalActionResponse:
+        """Reviewer action on a wiki proposal — own tenant only.
+
+        ``approve`` runs the applier into the principal's tenant wiki tree via
+        ``wiki_dir_for`` + ``derived_stores_for`` (never the applier's
+        cross-tenant defaults), with the tenant-scoped document catalog arming
+        the lint gates. ``400`` when the feature is disabled or the transition
+        is rejected by the FSM; ``404`` when the proposal is unknown or belongs
+        to another tenant.
+        """
+
+        current_settings = container.current_settings()
+        _raise_if_public_demo(current_settings)
+        store = container.wiki_proposal_store
+        if store is None or not current_settings.wiki_enabled:
+            raise HTTPException(status_code=400, detail="wiki proposals disabled")
+        principal: RequestPrincipal = http_request.state.principal
+        try:
+            record = store.get(proposal_id)
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail=exc.args[0] if exc.args else "proposal not found",
+            ) from exc
+        if record.tenant_id not in (None, principal.tenant_id):
+            raise HTTPException(
+                status_code=404,
+                detail=f"no such proposal: {proposal_id}",
+            )
+        try:
+            if request.action_type == "approve":
+                pages_out, chunks_out = derived_stores_for(
+                    current_settings, principal.tenant_id
+                )
+                approve_and_apply(
+                    store,
+                    proposal_id,
+                    wiki_dir_for(current_settings, principal.tenant_id),
+                    at=datetime.now(UTC).isoformat(timespec="seconds"),
+                    repository=container.catalog_for(principal.tenant_id),
+                    pages_out=pages_out,
+                    chunks_out=chunks_out,
+                )
+                return WikiProposalActionResponse(
+                    proposal_id=proposal_id,
+                    status="approved",
+                )
+            new_status = store.act(
+                proposal_id,
+                request.action_type,
+                at=datetime.now(UTC).isoformat(timespec="seconds"),
+            )
+        except InvalidReviewTransitionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return WikiProposalActionResponse(proposal_id=proposal_id, status=new_status)
 
     @app.post(
         "/v1/admin/index/jobs",

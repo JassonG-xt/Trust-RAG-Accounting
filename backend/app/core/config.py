@@ -487,6 +487,19 @@ class Settings:
     wiki_ingest_max_tool_calls: int = field(
         default_factory=lambda: _int_env("WIKI_INGEST_MAX_TOOL_CALLS", 20)
     )
+    # Phase 10D — wiki multi-tenant CLI/REST. The review queue is a single JSON
+    # file the CLI owns (single-process; the REST queue moves to Postgres). Mock
+    # ingest replays committed fixture proposals from ``wiki_mock_proposals_dir``.
+    wiki_proposal_store_path: str = field(
+        default_factory=lambda: os.getenv(
+            "WIKI_PROPOSAL_STORE_PATH", "data/wiki_proposals.json"
+        )
+    )
+    wiki_mock_proposals_dir: str = field(
+        default_factory=lambda: os.getenv(
+            "WIKI_MOCK_PROPOSALS_DIR", "data/wiki_mock_proposals"
+        )
+    )
     # Phase 10C — retrieval corpus for /v1/rag/query: raw (default) | wiki | hybrid.
     # ``raw`` preserves the existing behavior exactly; ``wiki`` serves from the
     # derived wiki chunk store; ``hybrid`` fuses both. Overridable per request.

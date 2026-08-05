@@ -77,6 +77,37 @@ def test_platform_admin_can_manage_tenants_but_tenant_admin_cannot() -> None:
     assert policy.is_allowed(platform_admin, Permission.MANAGE_TENANTS)
 
 
+def test_wiki_proposals_require_review_permissions() -> None:
+    """The wiki proposal review API must never fall through to QUERY.
+
+    Without an explicit branch, ``permission_for_request`` would return
+    ``Permission.QUERY`` for ``/v1/wiki/`` paths, letting a viewer read (and
+    with WRITE_REVIEW semantics intended for the actions endpoint) act on
+    proposals. Reads map to READ_REVIEW, state changes to WRITE_REVIEW.
+    """
+
+    assert (
+        permission_for_request("GET", "/v1/wiki/proposals")
+        == Permission.READ_REVIEW
+    )
+    assert (
+        permission_for_request("GET", "/v1/wiki/proposals/prop-1")
+        == Permission.READ_REVIEW
+    )
+    assert (
+        permission_for_request("POST", "/v1/wiki/proposals/prop-1/actions")
+        == Permission.WRITE_REVIEW
+    )
+    assert (
+        permission_for_request("PUT", "/v1/wiki/proposals/prop-1/actions")
+        == Permission.WRITE_REVIEW
+    )
+    assert (
+        permission_for_request("PATCH", "/v1/wiki/proposals/prop-1/actions")
+        == Permission.WRITE_REVIEW
+    )
+
+
 def test_oidc_authenticator_validates_signature_issuer_audience_and_tenant() -> None:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     public_key = private_key.public_key().public_bytes(

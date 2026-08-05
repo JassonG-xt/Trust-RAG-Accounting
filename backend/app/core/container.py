@@ -29,6 +29,7 @@ from ..review import (
 from ..services.document_repository import DocumentRepository, get_repository
 from ..telemetry import NoopTelemetry, Telemetry, build_telemetry
 from ..tracing import LocalTraceCollector, get_local_trace_collector
+from ..wiki.review_queue import WikiReviewQueue
 from .config import Settings, get_settings
 
 if TYPE_CHECKING:
@@ -43,10 +44,14 @@ if TYPE_CHECKING:
 
 
 class DocumentCatalog(Protocol):
-    """Read seam used by the HTTP document diagnostics."""
+    """Read seam used by the HTTP document diagnostics and the wiki write
+    paths (``approve_and_apply`` derives the client-isolation / unknown-source
+    lint gates from :meth:`load_documents`)."""
 
     @property
     def source(self) -> str | None: ...
+
+    def load_documents(self) -> list[Any]: ...
 
     def describe(self) -> list[dict]: ...
 
@@ -70,6 +75,7 @@ class ApplicationContainer:
     session_manager: SessionManager | None = None
     telemetry: Telemetry = field(default_factory=NoopTelemetry)
     readiness_checks: dict[str, Callable[[], bool]] = field(default_factory=dict)
+    wiki_proposal_store: WikiReviewQueue | None = None
     _settings_provider: Callable[[], Settings] | None = field(default=None, repr=False)
     _document_catalog_provider: Callable[[], DocumentCatalog] | None = field(
         default=None, repr=False
@@ -262,6 +268,9 @@ def build_application_container(
         document_provider = None
         review_provider = None
         trace_provider = None
+        # Phase 10D: the postgres wiki proposal store (defect A) is deferred;
+        # until then the feature reports enabled=false in postgres mode.
+        wiki_proposals = None
     elif settings is None:
         documents: DocumentRepository = get_repository()
         checkpoints = get_review_checkpoint_store()
@@ -274,6 +283,7 @@ def build_application_container(
         index_jobs = None
         index_generations = None
         readiness_checks = {}
+        wiki_proposals = WikiReviewQueue(current.wiki_proposal_store_path)
     else:
         current = settings
         documents = DocumentRepository()
@@ -297,6 +307,7 @@ def build_application_container(
         index_jobs = None
         index_generations = None
         readiness_checks = {}
+        wiki_proposals = WikiReviewQueue(current.wiki_proposal_store_path)
 
     if source_object_store is not None:
         readiness_checks["s3"] = source_object_store.health
@@ -327,6 +338,7 @@ def build_application_container(
         session_manager=session_manager,
         telemetry=telemetry,
         readiness_checks=readiness_checks,
+        wiki_proposal_store=wiki_proposals,
         _settings_provider=settings_provider,
         _document_catalog_provider=document_provider,
         _review_service_provider=review_provider,
