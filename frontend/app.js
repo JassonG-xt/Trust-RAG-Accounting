@@ -128,6 +128,7 @@ const AUTH_TOKEN_KEY = "trustrag_token";
 
 const state = {
   authToken: null,
+  sessionAuthenticated: false,
   demoConfig: {
     public_demo_enabled: false,
     review_queue_enabled: true,
@@ -172,20 +173,31 @@ document.addEventListener("DOMContentLoaded", () => {
 // Everything here runs from DOMContentLoaded so the DOM-less test sandbox never
 // touches browser storage or location.
 function bootstrapAuth() {
-  try {
-    const token = readTokenFromFragment();
-    if (token) {
-      storeAuthToken(token);
-    } else {
-      state.authToken = readStoredAuthToken();
-    }
-  } catch (error) {
-    // Opaque-origin documents (sandboxed iframe, file://) throw on storage,
-    // location and history access. Stay anonymous rather than abort the rest
-    // of the dashboard bootstrap.
-    state.authToken = null;
-  }
-  renderAuthStatus();
+  // Stage 2 BFF: ask the backend whether the HttpOnly session cookie is live.
+  // The token never enters JS — this is just a boolean for the login controls.
+  fetchJson("/v1/auth/status", {credentials: "same-origin"})
+    .then((status) => {
+      state.sessionAuthenticated = Boolean(status && status.authenticated);
+    })
+    .catch(() => {
+      state.sessionAuthenticated = false;
+    })
+    .finally(() => {
+      try {
+        const token = readTokenFromFragment();
+        if (token) {
+          storeAuthToken(token);
+        } else {
+          state.authToken = readStoredAuthToken();
+        }
+      } catch (error) {
+        // Opaque-origin documents (sandboxed iframe, file://) throw on storage,
+        // location and history access. Stay anonymous rather than abort the rest
+        // of the dashboard bootstrap.
+        state.authToken = null;
+      }
+      renderAuthStatus();
+    });
 }
 
 function authStorage() {
@@ -259,10 +271,29 @@ function clearUrlFragment() {
 function renderAuthStatus() {
   const node = $("auth-status");
   if (!node) return;
-  const authenticated = Boolean(state.authToken);
+  const authenticated = Boolean(state.authToken) || Boolean(state.sessionAuthenticated);
   // Never render the token itself — only whether a session exists.
   node.textContent = authenticated ? "已登录" : "未登录";
   node.dataset.authenticated = authenticated ? "true" : "false";
+  const login = $("auth-login");
+  const logout = $("auth-logout");
+  if (login) login.hidden = authenticated;
+  if (logout) logout.hidden = !authenticated;
+}
+
+function submitPastedToken() {
+  const input = $("auth-token-input");
+  const token = input ? input.value.trim() : "";
+  if (!token) return;
+  storeAuthToken(token);
+  if (input) input.value = "";
+  renderAuthStatus();
+  refreshAll();
+}
+
+function revealAuthControls() {
+  const container = $("auth-controls");
+  if (container) container.hidden = false;
 }
 
 function bindActions() {
@@ -278,6 +309,37 @@ function bindActions() {
   const createTenantButton = $("create-tenant");
   if (createTenantButton) {
     createTenantButton.addEventListener("click", createTenant);
+  }
+  const authLogin = $("auth-login");
+  if (authLogin) {
+    authLogin.addEventListener("click", () => {
+      // Stage 2 BFF login: navigate to the backend, which performs the whole
+      // authorization-code + PKCE exchange and sets the HttpOnly session
+      // cookie. The token never enters JS.
+      location.assign("/v1/auth/login");
+    });
+  }
+  const authTokenInput = $("auth-token-input");
+  if (authTokenInput) {
+    authTokenInput.addEventListener("keydown", (event) => {
+      // Manual token fallback for API-client-style testing (Stage 1).
+      if (event.key === "Enter") submitPastedToken();
+    });
+  }
+  const authLogout = $("auth-logout");
+  if (authLogout) {
+    authLogout.addEventListener("click", async () => {
+      try {
+        await fetchJson("/v1/auth/logout", {
+          method: "POST",
+          headers: {"X-Requested-With": "TrustRAG-Console"},
+        });
+      } catch (error) {
+        // The session may already be gone; clear locally and reload anyway.
+      }
+      clearAuthToken();
+      location.reload();
+    });
   }
   bindReviewFilters();
 }
@@ -548,6 +610,11 @@ function applyDemoConfigToUi() {
   const pill = $("demo-mode-pill");
   if (pill) {
     pill.textContent = modeLabel;
+  }
+  const authControls = $("auth-controls");
+  if (authControls) {
+    // Local mode never needs the token-paste controls.
+    authControls.hidden = (state.demoConfig.auth_mode || "local") === "local";
   }
   setReviewControlsEnabled(reviewQueueEnabled());
 }
@@ -1247,11 +1314,15 @@ async function fetchJson(url, options = {}) {
   if (state.authToken) {
     headers["Authorization"] = `Bearer ${state.authToken}`;
   }
-  const response = await fetch(url, {...options, headers});
+  // same-origin so the BFF session cookie rides along; the Bearer branch above
+  // stays for Stage 1 pasted tokens / API clients.
+  const response = await fetch(url, {...options, credentials: "same-origin", headers});
   if (!response.ok) {
     if (response.status === 401) {
-      // The stored token is stale; drop it so the UI stops claiming a session.
+      // The stored token is stale; drop it and surface the login controls so
+      // the user can paste a fresh token instead of staring at 401s.
       clearAuthToken();
+      revealAuthControls();
     }
     throw new Error(`${response.status} ${response.statusText}`);
   }

@@ -91,6 +91,12 @@ def _oidc_settings() -> Settings:
         oidc_audience=AUDIENCE,
         oidc_jwks_url=JWKS_URL,
         oidc_multi_tenant=True,
+        oidc_client_id="trust-rag",
+        oidc_client_secret="client-secret",
+        oidc_authorization_endpoint="https://identity.example.com/application/o/trust-rag/authorize/",
+        oidc_token_endpoint="https://identity.example.com/application/o/trust-rag/token/",
+        oidc_redirect_uri="http://testserver/v1/auth/callback",
+        session_secret="session-secret-0123456789",
     )
 
 

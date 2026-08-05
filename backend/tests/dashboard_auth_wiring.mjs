@@ -150,6 +150,18 @@ function boot({hash = "", storage = null, history = null, location = null, respo
     history: historyFake,
     fetch: async (url, options) => {
       fetches.push({url, options});
+      // Stage 2 BFF: bootstrapAuth probes /v1/auth/status first. It must not
+      // consume the caller's queued responses, and always answers unauthenticated
+      // so the harness assertions keep exercising the token paths below.
+      if (String(url).startsWith("/v1/auth/status")) {
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          json: async () => ({authenticated: false, auth_mode: "local"}),
+          blob: async () => ({body: "", type: "application/json"}),
+        };
+      }
       const next = responses.shift() ?? {ok: true, status: 200, statusText: "OK"};
       return {
         ...next,
@@ -214,6 +226,13 @@ function assertNoTokenLeak(env, label) {
   check(leaked.length === 0, `${label}: token leaked to ${leaked.length} surface(s): ${JSON.stringify(leaked)}`);
 }
 
+// bootstrapAuth resolves through the mocked fetch promise chain; assertions on
+// its side effects must run after the microtasks have flushed.
+async function settleAuth() {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 function authHeaderOf(call) {
   const headers = call.options?.headers ?? {};
   const key = Object.keys(headers).find((name) => name.toLowerCase() === "authorization");
@@ -224,6 +243,7 @@ function authHeaderOf(call) {
 {
   const env = boot({hash: `#access_token=${TOKEN}&token_type=bearer&expires_in=3600`});
   assertHealthyInit(env, "fragment");
+  await settleAuth();
   check(env.authToken() === TOKEN, `fragment: bootstrapAuth was not invoked by DOMContentLoaded (state.authToken=${env.authToken()})`);
   check(env.authNode.textContent === "已登录", `fragment: auth status not rendered, got "${env.authNode.textContent}"`);
   check(env.authNode.dataset.authenticated === "true", "fragment: data-authenticated was not set to true");
@@ -242,6 +262,7 @@ function authHeaderOf(call) {
 {
   const env = boot({});
   assertHealthyInit(env, "anonymous");
+  await settleAuth();
   check(env.authToken() === null, `anonymous: expected no token, got ${env.authToken()}`);
   check(env.authNode.textContent === "未登录", `anonymous: rendered a logged-in state ("${env.authNode.textContent}") while unauthenticated`);
   check(env.authNode.dataset.authenticated === "false", "anonymous: data-authenticated was not set to false");
@@ -256,6 +277,7 @@ function authHeaderOf(call) {
 {
   const env = boot({storage: makeStorage({trustrag_token: TOKEN})});
   assertHealthyInit(env, "stored");
+  await settleAuth();
   check(env.authToken() === TOKEN, "stored: sessionStorage token was not picked up");
   await env.context.fetchJson("/v1/documents");
   check(authHeaderOf(env.fetches.at(-1)) === `Bearer ${TOKEN}`, "stored: Authorization header missing");
@@ -269,6 +291,7 @@ function authHeaderOf(call) {
     responses: [{ok: false, status: 401, statusText: "Unauthorized"}],
   });
   assertHealthyInit(env, "stale");
+  await settleAuth();
 
   let thrown = null;
   try {
@@ -300,12 +323,14 @@ function authHeaderOf(call) {
     history: hostileHistory,
   });
   assertHealthyInit(env, "opaque-origin-fragment");
+  await settleAuth();
   check(env.authToken() === TOKEN, "opaque-origin-fragment: a blocked address-bar cleanup must not cost the captured session");
   check(env.authNode.textContent === "已登录", `opaque-origin-fragment: auth status rendered "${env.authNode.textContent}"`);
   assertNoTokenLeak(env, "opaque-origin-fragment");
 
   const anon = boot({storage: hostileStorage, history: hostileHistory});
   assertHealthyInit(anon, "opaque-origin-anonymous");
+  await settleAuth();
   check(anon.authToken() === null, "opaque-origin-anonymous: expected no token");
   check(anon.authNode.textContent === "未登录", `opaque-origin-anonymous: rendered "${anon.authNode.textContent}"`);
 
@@ -318,6 +343,7 @@ function authHeaderOf(call) {
   };
   const blind = boot({storage: hostileStorage, history: hostileHistory, location: blindLocation});
   assertHealthyInit(blind, "opaque-origin-location");
+  await settleAuth();
   check(blind.authNode.textContent === "未登录", `opaque-origin-location: rendered "${blind.authNode.textContent}"`);
 }
 
@@ -332,6 +358,7 @@ function authHeaderOf(call) {
     responses: [{ok: true, status: 200, statusText: "OK", body: "review_queue_id,status\n"}],
   });
   assertHealthyInit(env, "export");
+  await settleAuth();
 
   await env.context.downloadExport("csv");
 
@@ -368,6 +395,7 @@ function authHeaderOf(call) {
     responses: [{ok: false, status: 401, statusText: "Unauthorized"}],
   });
   assertHealthyInit(env, "export-401");
+  await settleAuth();
 
   await env.context.downloadExport("json");
 
@@ -383,6 +411,31 @@ function authHeaderOf(call) {
     summary !== undefined && summary.textContent.includes("导出失败"),
     `export-401: the failure was silent, review-summary reads "${summary && summary.textContent}"`,
   );
+}
+
+// --- pasting a token into the login control stores it, clears the input -------
+{
+  const env = boot({});
+  assertHealthyInit(env, "pasted");
+  await settleAuth();
+
+  const input = env.context.document.getElementById("auth-token-input");
+  check(input !== undefined, "pasted: auth-token-input node not resolvable in the sandbox");
+  input.value = TOKEN;
+  await env.context.submitPastedToken();
+
+  check(env.authToken() === TOKEN, "pasted: submitPastedToken did not store the token");
+  check(
+    env.sessionStorage.getItem("trustrag_token") === TOKEN,
+    "pasted: token was not persisted to sessionStorage",
+  );
+  check(input.value === "", `pasted: input still holds "${input.value}" after submit`);
+  check(env.authNode.textContent === "已登录", `pasted: header rendered "${env.authNode.textContent}" after login`);
+  check(env.authNode.dataset.authenticated === "true", "pasted: data-authenticated was not set to true");
+  assertNoTokenLeak(env, "pasted");
+
+  await env.context.fetchJson("/v1/documents");
+  check(authHeaderOf(env.fetches.at(-1)) === `Bearer ${TOKEN}`, "pasted: pasted token was not sent as Authorization header");
 }
 
 console.log("dashboard-auth-wiring: OK");

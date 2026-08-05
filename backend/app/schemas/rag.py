@@ -28,6 +28,10 @@ class DemoConfigResponse(BaseModel):
     public_demo_enabled: bool = False
     review_queue_enabled: bool = True
     demo_mode_label: str = "Local full demo"
+    # Stage 1 — lets the dashboard decide whether to render the token-paste
+    # login controls. Non-sensitive: "local" / "oidc" is already public
+    # configuration, not a credential.
+    auth_mode: str = "local"  # local | oidc
 
 
 class PrincipalResponse(BaseModel):
@@ -41,6 +45,18 @@ class PrincipalResponse(BaseModel):
     subject_id: str
     tenant_id: str
     roles: list[str] = Field(default_factory=list)
+
+
+class AuthStatusResponse(BaseModel):
+    """Stage 2 — whether the browser holds a live BFF session cookie.
+
+    Never carries a token, subject, tenant or role: the dashboard only needs
+    to know whether to show the login controls, and the login/logout buttons
+    are pure navigation. Everything else is resolved server-side per request.
+    """
+
+    authenticated: bool = False
+    auth_mode: str = "local"  # local | oidc
 
 
 # ---------------------------------------------------------------------------

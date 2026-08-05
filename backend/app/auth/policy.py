@@ -32,6 +32,11 @@ def permission_for_request(method: str, path: str) -> Permission | None:
 
     if not path.startswith("/v1/") or path == "/v1/demo/config":
         return None
+    if path.startswith("/v1/auth/"):
+        # Stage 2 BFF routes implement their own auth (login/callback exchange
+        # the code, logout revokes, status reports) and must not be gated by
+        # the middleware.
+        return None
     if path.startswith("/v1/admin/tenants"):
         return Permission.MANAGE_TENANTS
     if path.startswith("/v1/debug/") or path.startswith("/v1/admin/"):
@@ -39,6 +44,14 @@ def permission_for_request(method: str, path: str) -> Permission | None:
     if path.startswith("/v1/review/"):
         if method.upper() == "DELETE":
             return Permission.ADMIN
+        if method.upper() in {"POST", "PUT", "PATCH"}:
+            return Permission.WRITE_REVIEW
+        return Permission.READ_REVIEW
+    if path.startswith("/v1/wiki/"):
+        # Phase 10D wiki proposal review — same permission split as the RAG
+        # review queue. Explicit branch BEFORE the QUERY fallthrough: without
+        # it a viewer would reach wiki reads (and, with a write mapped to
+        # QUERY, the actions endpoint too).
         if method.upper() in {"POST", "PUT", "PATCH"}:
             return Permission.WRITE_REVIEW
         return Permission.READ_REVIEW

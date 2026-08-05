@@ -723,6 +723,7 @@ def test_api_public_demo_config_reports_read_only_mode(
         "public_demo_enabled": True,
         "review_queue_enabled": False,
         "demo_mode_label": "Public read-only demo",
+        "auth_mode": "local",
     }
 
 

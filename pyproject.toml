@@ -81,6 +81,7 @@ Issues = "https://github.com/yourname/trust-rag/issues"
 trustrag-import-legacy = "backend.app.persistence.import_legacy:main"
 trustrag-index-worker = "backend.app.indexing.worker:main"
 trustrag-verify-production = "backend.app.operations.verify_production:main"
+trustrag-wiki = "backend.app.wiki.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
