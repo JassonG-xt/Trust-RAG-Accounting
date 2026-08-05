@@ -21,11 +21,15 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.routing import Match
 
 from .auth import (
+    CSRF_HEADER,
+    CSRF_VALUE,
+    LOGIN_STATE_COOKIE_NAME,
+    SESSION_COOKIE_NAME,
     AuthenticationError,
     RequestPrincipal,
     StaticAuthenticator,
@@ -67,6 +71,7 @@ from .schemas.admin import (
     TenantSummary,
 )
 from .schemas.rag import (
+    AuthStatusResponse,
     DemoConfigResponse,
     DocumentsResponse,
     EvalLatestResponse,
@@ -85,6 +90,29 @@ logger = logging.getLogger("trust_rag.main")
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 FRONTEND_INDEX = FRONTEND_DIR / "index.html"
+
+
+def _session_cookie_kwargs(current_settings) -> dict:
+    """Shared cookie attributes for the opaque session cookie."""
+    return {
+        "httponly": True,
+        "samesite": "lax",
+        "secure": current_settings.session_cookie_secure,
+        "max_age": current_settings.session_max_age_seconds,
+        "path": "/",
+    }
+
+
+def _with_rotated_cookie(request: Request, rotated_cookie: str | None, response: Response) -> Response:
+    """After a silent token refresh the session id rotated; the client must
+    be told about its new cookie on every response path (including 401/403)."""
+    if rotated_cookie:
+        response.set_cookie(
+            SESSION_COOKIE_NAME,
+            rotated_cookie,
+            **_session_cookie_kwargs(request.app.state.container.current_settings()),
+        )
+    return response
 
 
 def create_app(container: ApplicationContainer | None = None) -> FastAPI:
@@ -120,20 +148,60 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
         authenticator = container.authenticator or StaticAuthenticator(
             RequestPrincipal("local-admin", settings.tenant_id, frozenset({"admin"}))
         )
+        # Stage 2 — accept either an API Bearer token (Stage 1 paste flow,
+        # API clients) or the BFF session cookie. Both feed the SAME
+        # authenticator, so the authorization model below is untouched.
         authorization = request.headers.get("Authorization", "")
-        token = authorization[7:].strip() if authorization.startswith("Bearer ") else None
+        token = (
+            authorization[7:].strip() if authorization.startswith("Bearer ") else None
+        )
+        rotated_cookie: str | None = None
+        used_session_cookie = False
+        if token is None and container.session_manager is not None:
+            session_id = request.cookies.get(SESSION_COOKIE_NAME)
+            if session_id:
+                session, rotated_cookie = container.session_manager.resolve_cookie(
+                    session_id
+                )
+                if session is not None:
+                    token = session.access_token
+                    used_session_cookie = True
+        # Cookie-authenticated state changes need the custom header: a
+        # cross-origin page cannot set it without triggering a CORS preflight,
+        # and this app has no CORS middleware, so this is same-origin-only by
+        # construction. Bearer-authenticated requests are API clients and
+        # exempt (they cannot be driven by a browser CSRF victim).
+        if (
+            used_session_cookie
+            and request.method not in {"GET", "HEAD", "OPTIONS"}
+            and request.headers.get(CSRF_HEADER) != CSRF_VALUE
+        ):
+            return JSONResponse(status_code=403, content={"detail": "CSRF check failed"})
         try:
             principal = authenticator.authenticate(token)
         except AuthenticationError:
-            return JSONResponse(status_code=401, content={"detail": "authentication required"})
+            return _with_rotated_cookie(
+                request,
+                rotated_cookie,
+                JSONResponse(status_code=401, content={"detail": "authentication required"}),
+            )
         if container.tenant_registry is not None and not container.tenant_registry.is_active(
             principal.tenant_id
         ):
-            return JSONResponse(status_code=403, content={"detail": "tenant is not active"})
+            return _with_rotated_cookie(
+                request,
+                rotated_cookie,
+                JSONResponse(status_code=403, content={"detail": "tenant is not active"}),
+            )
         if not container.authorization_policy.is_allowed(principal, permission):
-            return JSONResponse(status_code=403, content={"detail": "permission denied"})
+            return _with_rotated_cookie(
+                request,
+                rotated_cookie,
+                JSONResponse(status_code=403, content={"detail": "permission denied"}),
+            )
         request.state.principal = principal
-        return await call_next(request)
+        response = await call_next(request)
+        return _with_rotated_cookie(request, rotated_cookie, response)
 
     @app.middleware("http")
     async def observe_request(request: Request, call_next):
@@ -215,6 +283,90 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
             demo_mode_label=(
                 "Public read-only demo" if public_demo else "Local full demo"
             ),
+            auth_mode=current_settings.auth_mode,
+        )
+
+    @app.get("/v1/auth/login", include_in_schema=False)
+    def auth_login(http_request: Request) -> Response:
+        """Start the BFF login flow: server-side PKCE state, then redirect to
+        the IdP. The client secret never appears in the redirect URL."""
+        manager = container.session_manager
+        if manager is None:
+            raise HTTPException(status_code=400, detail="OIDC auth is not configured")
+        state, signed_state, code_verifier = manager.start_login()
+        response = RedirectResponse(
+            manager.authorization_url(state, code_verifier),
+            status_code=302,
+        )
+        current_settings = container.current_settings()
+        response.set_cookie(
+            LOGIN_STATE_COOKIE_NAME,
+            signed_state,
+            httponly=True,
+            samesite="lax",
+            secure=current_settings.session_cookie_secure,
+            max_age=600,
+            path="/",
+        )
+        return response
+
+    @app.get("/v1/auth/callback", include_in_schema=False)
+    def auth_callback(
+        http_request: Request,
+        code: str | None = Query(default=None),
+        state: str | None = Query(default=None),
+    ) -> Response:
+        """Server-side code exchange, then set the HttpOnly session cookie."""
+        manager = container.session_manager
+        if manager is None:
+            raise HTTPException(status_code=400, detail="OIDC auth is not configured")
+        if not code or not state:
+            raise HTTPException(status_code=400, detail="missing code or state")
+        try:
+            session = manager.complete_login(
+                code=code,
+                state=state,
+                state_cookie=http_request.cookies.get(LOGIN_STATE_COOKIE_NAME),
+            )
+        except AuthenticationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        response = RedirectResponse("/dashboard", status_code=302)
+        response.delete_cookie(LOGIN_STATE_COOKIE_NAME, path="/")
+        response.set_cookie(
+            SESSION_COOKIE_NAME,
+            session.session_id,
+            **_session_cookie_kwargs(container.current_settings()),
+        )
+        return response
+
+    @app.post("/v1/auth/logout", include_in_schema=False)
+    def auth_logout(http_request: Request) -> JSONResponse:
+        """Revoke the session and clear the cookie. Idempotent; requires the
+        same-origin CSRF header because it is a state change."""
+        if http_request.headers.get(CSRF_HEADER) != CSRF_VALUE:
+            raise HTTPException(status_code=403, detail="CSRF check failed")
+        manager = container.session_manager
+        session_id = http_request.cookies.get(SESSION_COOKIE_NAME)
+        if manager is not None and session_id:
+            manager.revoke(session_id)
+        response = JSONResponse({"ok": True})
+        response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+        response.delete_cookie(LOGIN_STATE_COOKIE_NAME, path="/")
+        return response
+
+    @app.get("/v1/auth/status", response_model=AuthStatusResponse, include_in_schema=False)
+    def auth_status(http_request: Request) -> AuthStatusResponse:
+        """Whether the browser holds a live session. Minimal by design: no
+        subject, tenant or role — just enough for the login controls."""
+        manager = container.session_manager
+        authenticated = False
+        if manager is not None:
+            authenticated = manager.session_status(
+                http_request.cookies.get(SESSION_COOKIE_NAME)
+            )
+        return AuthStatusResponse(
+            authenticated=authenticated,
+            auth_mode=container.current_settings().auth_mode,
         )
 
     @app.get("/v1/me", response_model=PrincipalResponse, tags=["meta"])

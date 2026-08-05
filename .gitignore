@@ -65,3 +65,10 @@ skills-lock.json
 .claude/
 docs/superpowers/
 .superpowers/
+
+# Local tool config (may embed API tokens)
+.mcp.json
+opencode.json
+
+# Local acceptance-review findings (phase worktrees; not repo docs)
+docs/phase10*_review_findings.md

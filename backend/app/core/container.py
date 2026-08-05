@@ -34,6 +34,7 @@ from .config import Settings, get_settings
 if TYPE_CHECKING:
     from sqlalchemy import Engine
 
+    from ..auth.session import SessionManager
     from ..indexing import (
         PostgresIndexGenerationRepository,
         PostgresIndexJobRepository,
@@ -66,6 +67,7 @@ class ApplicationContainer:
     index_jobs: PostgresIndexJobRepository | None = None
     index_generations: PostgresIndexGenerationRepository | None = None
     tenant_registry: TenantRegistryRepository | None = None
+    session_manager: SessionManager | None = None
     telemetry: Telemetry = field(default_factory=NoopTelemetry)
     readiness_checks: dict[str, Callable[[], bool]] = field(default_factory=dict)
     _settings_provider: Callable[[], Settings] | None = field(default=None, repr=False)
@@ -301,6 +303,15 @@ def build_application_container(
     if isinstance(authenticator, OIDCJWTAuthenticator):
         # JWKS reachability only — the probe never verifies a token.
         readiness_checks["oidc"] = authenticator.jwks_is_ready
+    session_manager = None
+    if current.auth_mode.strip().lower() == "oidc" and database_engine is not None:
+        from ..auth.session import PostgresSessionStore, SessionManager
+
+        session_manager = SessionManager(
+            PostgresSessionStore(database_engine),
+            current,
+            authenticator,
+        )
     telemetry = build_telemetry(current, local_collector=traces)
 
     return ApplicationContainer(
@@ -313,6 +324,7 @@ def build_application_container(
         index_jobs=index_jobs,
         index_generations=index_generations,
         tenant_registry=tenant_registry,
+        session_manager=session_manager,
         telemetry=telemetry,
         readiness_checks=readiness_checks,
         _settings_provider=settings_provider,

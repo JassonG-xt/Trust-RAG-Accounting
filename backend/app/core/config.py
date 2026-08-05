@@ -137,6 +137,36 @@ class Settings:
     auth_mode: str = field(
         default_factory=lambda: os.getenv("TRUSTRAG_AUTH_MODE", "local")
     )
+    # Stage 2 BFF — confidential OIDC client held server-side. Tokens never
+    # reach the browser; the dashboard only gets an opaque HttpOnly session
+    # cookie. Endpoints are explicit (no .well-known discovery) so the flow
+    # works without a startup network dependency and is unit-testable.
+    oidc_client_id: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_OIDC_CLIENT_ID", "")
+    )
+    oidc_client_secret: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_OIDC_CLIENT_SECRET", "")
+    )
+    oidc_authorization_endpoint: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_OIDC_AUTHORIZATION_ENDPOINT", "")
+    )
+    oidc_token_endpoint: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_OIDC_TOKEN_ENDPOINT", "")
+    )
+    oidc_redirect_uri: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_OIDC_REDIRECT_URI", "")
+    )
+    # HMAC key that signs the short-lived login-state cookie, binding the
+    # OAuth ``state`` to the browser that started the flow (login CSRF).
+    session_secret: str = field(
+        default_factory=lambda: os.getenv("TRUSTRAG_SESSION_SECRET", "")
+    )
+    session_cookie_secure: bool = field(
+        default_factory=lambda: _bool_env("TRUSTRAG_SESSION_COOKIE_SECURE", False)
+    )
+    session_max_age_seconds: int = field(
+        default_factory=lambda: _int_env("TRUSTRAG_SESSION_MAX_AGE_SECONDS", 7 * 86400)
+    )
     oidc_issuer: str | None = field(
         default_factory=lambda: _optional_str_env("TRUSTRAG_OIDC_ISSUER")
     )
@@ -504,6 +534,20 @@ class Settings:
             raise ValueError(
                 "TRUSTRAG_AUTH_MODE=oidc requires issuer, audience and JWKS URL"
             )
+        if auth_mode == "oidc" and not all(
+            (
+                self.oidc_client_id,
+                self.oidc_client_secret,
+                self.oidc_authorization_endpoint,
+                self.oidc_token_endpoint,
+                self.oidc_redirect_uri,
+                self.session_secret,
+            )
+        ):
+            raise ValueError(
+                "TRUSTRAG_AUTH_MODE=oidc requires BFF client credentials, "
+                "authorization/token endpoints, redirect URI and a session secret"
+            )
         telemetry_mode = self.telemetry_mode.strip().lower()
         if telemetry_mode not in {"noop", "local", "otlp"}:
             raise ValueError("TRUSTRAG_TELEMETRY_MODE must be noop, local, or otlp")
@@ -524,6 +568,8 @@ class Settings:
             raise ValueError("Production indexing requires S3 source storage")
         if self.auth_mode.strip().lower() != "oidc":
             raise ValueError("Production requires OIDC authentication")
+        if not self.session_cookie_secure:
+            raise ValueError("Production OIDC requires Secure session cookies")
         if self.vector_store.strip().lower() != "qdrant" or not self.qdrant_url:
             raise ValueError("Production requires Qdrant vector storage")
         if self.telemetry_mode.strip().lower() != "otlp":

@@ -172,3 +172,29 @@ tenants = Table(
     Column("updated_at", String(64), nullable=False),
     Column("config_json", JSON, nullable=False, default=dict, server_default=text("'{}'")),
 )
+
+# Stage 2 BFF — opaque server-side sessions. The cookie only carries
+# ``session_id``; access/refresh tokens never leave the backend. Sessions are
+# not tenant-scoped rows: the session's tenant is whatever its access token
+# says, re-derived on every request through the authenticator.
+auth_login_states = Table(
+    "auth_login_states",
+    metadata,
+    Column("state", String(128), primary_key=True),
+    Column("code_verifier", String(255), nullable=False),
+    Column("created_at", String(64), nullable=False),
+    Column("expires_at", String(64), nullable=False),
+)
+
+auth_sessions = Table(
+    "auth_sessions",
+    metadata,
+    Column("session_id", String(128), primary_key=True),
+    Column("subject_id", String(255), nullable=False),
+    Column("tenant_id", String(128), nullable=False),
+    Column("access_token", Text, nullable=False),
+    Column("refresh_token", Text, nullable=True),
+    Column("access_expires_at", String(64), nullable=False),
+    Column("expires_at", String(64), nullable=False),
+    Column("created_at", String(64), nullable=False),
+)

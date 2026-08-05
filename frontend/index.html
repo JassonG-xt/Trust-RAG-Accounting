@@ -19,6 +19,17 @@
           <div class="hero-meta" aria-label="Demo 模式">
             <span class="demo-mode-pill" id="demo-mode-pill">Local full demo</span>
             <span class="hero-note" id="auth-status">未登录</span>
+            <div class="auth-controls" id="auth-controls" hidden>
+              <input
+                type="password"
+                id="auth-token-input"
+                placeholder="粘贴 access token"
+                autocomplete="off"
+                aria-label="Access token"
+              />
+              <button class="secondary-button" id="auth-login" type="button">登录</button>
+              <button class="secondary-button" id="auth-logout" type="button" hidden>退出</button>
+            </div>
             <span class="hero-note">Fictional clients only · FastAPI-served static dashboard</span>
           </div>
         </div>

@@ -32,6 +32,11 @@ def permission_for_request(method: str, path: str) -> Permission | None:
 
     if not path.startswith("/v1/") or path == "/v1/demo/config":
         return None
+    if path.startswith("/v1/auth/"):
+        # Stage 2 BFF routes implement their own auth (login/callback exchange
+        # the code, logout revokes, status reports) and must not be gated by
+        # the middleware.
+        return None
     if path.startswith("/v1/admin/tenants"):
         return Permission.MANAGE_TENANTS
     if path.startswith("/v1/debug/") or path.startswith("/v1/admin/"):
