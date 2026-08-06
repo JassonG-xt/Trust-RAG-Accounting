@@ -12,11 +12,15 @@ from sqlalchemy import Engine, and_, insert, select, update
 
 from ..ingestion.models import AccountingDocument, DocumentChunk
 from ..review.models import ReviewAction, ReviewCheckpoint
+from ..review.state_machine import apply_review_action
+from ..wiki.review_queue import WikiProposalRecord
 from .schema import (
     document_chunks,
     document_versions,
     documents,
     index_generations,
+    wiki_proposal_actions,
+    wiki_proposals,
 )
 from .sqlalchemy import (
     PostgresReviewActionRepository,
@@ -38,6 +42,14 @@ class DocumentImportResult:
     documents_imported: int = 0
     versions_imported: int = 0
     chunks_imported: int = 0
+
+
+@dataclass(frozen=True)
+class WikiProposalImportResult:
+    proposals_imported: int = 0
+    actions_imported: int = 0
+    malformed_records_skipped: int = 0
+    tenant_mismatches_skipped: int = 0
 
 
 def import_review_jsonl(
@@ -253,3 +265,118 @@ def _lines(path: Path) -> list[tuple[int, str]]:
         )
         if line.strip()
     ]
+
+
+def import_wiki_proposals_json(
+    engine: Engine,
+    *,
+    tenant_id: str,
+    proposal_path: Path,
+) -> WikiProposalImportResult:
+    """Import the legacy ``proposal_id -> record`` wiki queue JSON into Postgres.
+
+    Proposals and their actions are imported idempotently by their natural keys
+    (``(tenant_id, proposal_id)`` / ``(tenant_id, action_id)``), so rerunning
+    the import never duplicates rows. Each record keeps its original status,
+    risk, ``created_at`` and action order; ``previous_status`` is replayed
+    through the shared review state machine so the audit log is
+    self-consistent. Records whose non-null ``tenant_id`` disagrees with the
+    import ``tenant_id`` and malformed records are skipped (counted + logged)
+    without interrupting the rest of the file.
+    """
+
+    raw = json.loads(proposal_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError("wiki proposal store must be a proposal_id -> record object")
+    malformed = 0
+    tenant_mismatches = 0
+    proposal_count = 0
+    action_count = 0
+
+    with engine.begin() as connection:
+        for proposal_id, raw_record in raw.items():
+            try:
+                record = WikiProposalRecord.model_validate(raw_record)
+            except Exception:
+                malformed += 1
+                logger.warning("skipping malformed wiki proposal %r", proposal_id)
+                continue
+            if record.tenant_id is not None and record.tenant_id != tenant_id:
+                tenant_mismatches += 1
+                logger.warning(
+                    "skipping wiki proposal %r: tenant %r != import tenant %r",
+                    proposal_id,
+                    record.tenant_id,
+                    tenant_id,
+                )
+                continue
+
+            existing_proposal = connection.execute(
+                select(wiki_proposals.c.proposal_id).where(
+                    and_(
+                        wiki_proposals.c.tenant_id == tenant_id,
+                        wiki_proposals.c.proposal_id == proposal_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing_proposal is None:
+                connection.execute(
+                    insert(wiki_proposals).values(
+                        tenant_id=tenant_id,
+                        proposal_id=proposal_id,
+                        status=record.status,
+                        risk=record.risk,
+                        created_at=record.created_at,
+                        proposal=record.proposal.model_dump(mode="json"),
+                    )
+                )
+                proposal_count += 1
+
+            previous_status = "pending"
+            for index, action in enumerate(record.actions):
+                try:
+                    new_status = apply_review_action(
+                        previous_status, action["action_type"]
+                    )
+                except Exception:
+                    malformed += 1
+                    logger.warning(
+                        "skipping invalid action chain on wiki proposal %r",
+                        proposal_id,
+                    )
+                    continue
+                action_id = f"{proposal_id}:{index:08d}"
+                existing_action = connection.execute(
+                    select(wiki_proposal_actions.c.action_id).where(
+                        and_(
+                            wiki_proposal_actions.c.tenant_id == tenant_id,
+                            wiki_proposal_actions.c.action_id == action_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if existing_action is None:
+                    connection.execute(
+                        insert(wiki_proposal_actions).values(
+                            tenant_id=tenant_id,
+                            action_id=action_id,
+                            proposal_id=proposal_id,
+                            action_type=action["action_type"],
+                            previous_status=previous_status,
+                            new_status=new_status,
+                            created_at=action.get("at", record.created_at),
+                            payload={
+                                "action_type": action["action_type"],
+                                "at": action.get("at", record.created_at),
+                                "new_status": new_status,
+                            },
+                        )
+                    )
+                    action_count += 1
+                previous_status = new_status
+
+    return WikiProposalImportResult(
+        proposals_imported=proposal_count,
+        actions_imported=action_count,
+        malformed_records_skipped=malformed,
+        tenant_mismatches_skipped=tenant_mismatches,
+    )

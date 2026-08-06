@@ -26,7 +26,11 @@ from .ingest import derive_source_doc_types, ingest_source
 from .lint import lint_wiki
 from .mock_ingest import mock_ingest
 from .paths import derived_stores_for, validate_tenant_id, wiki_dir_for
-from .review_queue import WikiReviewQueue, approve_and_apply
+from .review_queue import (
+    WikiProposalRecord,
+    WikiProposalStore,
+    approve_and_apply,
+)
 from .store import refresh_wiki_stores
 
 CatalogFor = Callable[[str], object]
@@ -36,8 +40,13 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _queue(settings: Settings) -> WikiReviewQueue:
-    return WikiReviewQueue(settings.wiki_proposal_store_path)
+def _store_for(
+    store_factory: Callable[[str], WikiProposalStore | None], tenant_id: str
+) -> WikiProposalStore:
+    store = store_factory(tenant_id)
+    if store is None:
+        raise SystemExit("error: wiki proposal store unavailable for this backend")
+    return store
 
 
 def _resolve_tenant(settings: Settings, tenant: str | None) -> str:
@@ -45,6 +54,15 @@ def _resolve_tenant(settings: Settings, tenant: str | None) -> str:
     try:
         return validate_tenant_id(tenant_id)
     except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from None
+
+
+def _get_queued(
+    store_factory: Callable[[str], WikiProposalStore | None], tenant_id: str, proposal_id: str
+) -> WikiProposalRecord:
+    try:
+        return _store_for(store_factory, tenant_id).get(proposal_id)
+    except KeyError as exc:
         raise SystemExit(f"error: {exc}") from None
 
 
@@ -57,7 +75,12 @@ def _guard_tenant(settings: Settings, record, tenant_id: str) -> None:
         )
 
 
-def _cmd_ingest(args, settings: Settings, catalog_for: CatalogFor) -> int:
+def _cmd_ingest(
+    args,
+    settings: Settings,
+    catalog_for: CatalogFor,
+    store_factory: Callable[[str], WikiProposalStore | None],
+) -> int:
     tenant_id = _resolve_tenant(settings, args.tenant)
     mode = settings.wiki_ingest_mode.strip().lower()
     created_at = _now()
@@ -84,7 +107,9 @@ def _cmd_ingest(args, settings: Settings, catalog_for: CatalogFor) -> int:
         )
     else:  # pragma: no cover - config validation already rejects this
         raise SystemExit(f"error: unknown wiki_ingest_mode {mode!r}")
-    _queue(settings).enqueue(proposal, created_at=created_at, tenant_id=tenant_id)
+    _store_for(store_factory, tenant_id).enqueue(
+        proposal, created_at=created_at, tenant_id=tenant_id
+    )
     print(
         f"staged {proposal.proposal_id} (risk={proposal.risk}) "
         f"for tenant {tenant_id}; review with: trustrag-wiki show"
@@ -92,9 +117,14 @@ def _cmd_ingest(args, settings: Settings, catalog_for: CatalogFor) -> int:
     return 0
 
 
-def _cmd_list(args, settings: Settings, catalog_for: CatalogFor) -> int:
+def _cmd_list(
+    args,
+    settings: Settings,
+    catalog_for: CatalogFor,
+    store_factory: Callable[[str], WikiProposalStore | None],
+) -> int:
     tenant_id = _resolve_tenant(settings, args.tenant)
-    for rec in _queue(settings).list(tenant_id=tenant_id):
+    for rec in _store_for(store_factory, tenant_id).list(tenant_id=tenant_id):
         print(
             f"{rec.proposal_id:44} {rec.status:16} risk={rec.risk:9} "
             f"{rec.created_at}"
@@ -102,9 +132,14 @@ def _cmd_list(args, settings: Settings, catalog_for: CatalogFor) -> int:
     return 0
 
 
-def _cmd_show(args, settings: Settings, catalog_for: CatalogFor) -> int:
+def _cmd_show(
+    args,
+    settings: Settings,
+    catalog_for: CatalogFor,
+    store_factory: Callable[[str], WikiProposalStore | None],
+) -> int:
     tenant_id = _resolve_tenant(settings, args.tenant)
-    rec = _queue(settings).get(args.proposal)
+    rec = _get_queued(store_factory, tenant_id, args.proposal)
     _guard_tenant(settings, rec, tenant_id)
     print(f"proposal: {rec.proposal_id}  status={rec.status}  risk={rec.risk}")
     print(f"source:   {rec.proposal.source_doc_id}")
@@ -119,10 +154,15 @@ def _cmd_show(args, settings: Settings, catalog_for: CatalogFor) -> int:
     return 0
 
 
-def _cmd_approve(args, settings: Settings, catalog_for: CatalogFor) -> int:
+def _cmd_approve(
+    args,
+    settings: Settings,
+    catalog_for: CatalogFor,
+    store_factory: Callable[[str], WikiProposalStore | None],
+) -> int:
     tenant_id = _resolve_tenant(settings, args.tenant)
-    queue = _queue(settings)
-    rec = queue.get(args.proposal)
+    queue = _store_for(store_factory, tenant_id)
+    rec = _get_queued(store_factory, tenant_id, args.proposal)
     _guard_tenant(settings, rec, tenant_id)
     pages_out, chunks_out = derived_stores_for(settings, tenant_id)
     result = approve_and_apply(
@@ -141,17 +181,27 @@ def _cmd_approve(args, settings: Settings, catalog_for: CatalogFor) -> int:
     return 0
 
 
-def _cmd_reject(args, settings: Settings, catalog_for: CatalogFor) -> int:
+def _cmd_reject(
+    args,
+    settings: Settings,
+    catalog_for: CatalogFor,
+    store_factory: Callable[[str], WikiProposalStore | None],
+) -> int:
     tenant_id = _resolve_tenant(settings, args.tenant)
-    queue = _queue(settings)
-    rec = queue.get(args.proposal)
+    queue = _store_for(store_factory, tenant_id)
+    rec = _get_queued(store_factory, tenant_id, args.proposal)
     _guard_tenant(settings, rec, tenant_id)
     status = queue.act(args.proposal, "reject", at=_now())
     print(f"proposal {args.proposal} now {status}")
     return 0
 
 
-def _cmd_lint(args, settings: Settings, catalog_for: CatalogFor) -> int:
+def _cmd_lint(
+    args,
+    settings: Settings,
+    catalog_for: CatalogFor,
+    store_factory: Callable[[str], WikiProposalStore | None],
+) -> int:
     tenant_id = _resolve_tenant(settings, args.tenant)
     repository = catalog_for(tenant_id)
     docs = list(getattr(repository, "load_documents", lambda: [])())
@@ -173,7 +223,12 @@ def _cmd_lint(args, settings: Settings, catalog_for: CatalogFor) -> int:
     return 0
 
 
-def _cmd_refresh(args, settings: Settings, catalog_for: CatalogFor) -> int:
+def _cmd_refresh(
+    args,
+    settings: Settings,
+    catalog_for: CatalogFor,
+    store_factory: Callable[[str], WikiProposalStore | None],
+) -> int:
     tenant_id = _resolve_tenant(settings, args.tenant)
     pages_out, chunks_out = derived_stores_for(settings, tenant_id)
     source_doc_types = derive_source_doc_types(catalog_for(tenant_id))
@@ -212,22 +267,31 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None,
-         catalog_for: CatalogFor | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    settings: Settings | None = None,
+    catalog_for: CatalogFor | None = None,
+    container=None,
+) -> int:
     """Entry point for the ``trustrag-wiki`` console script.
 
-    ``settings`` / ``catalog_for`` are injectable for tests; production builds
-    them from the environment (the default ``catalog_for`` routes through the
-    application container so approve/refresh/lint see the same corpus the REST
-    layer serves).
+    ``settings`` / ``catalog_for`` / ``container`` are injectable for tests;
+    production builds them from the environment (the default ``container``
+    routes both the catalog and the proposal-store factory through the
+    application container so approve/refresh/lint and the review queue see the
+    same corpus the REST layer serves).
     """
 
     args = _build_parser().parse_args(argv)
     effective_settings = settings or get_settings()
-    if catalog_for is None:
+    if container is None:
         from ..core.container import build_application_container
 
-        catalog_for = build_application_container(effective_settings).catalog_for
+        container = build_application_container(effective_settings)
+    if catalog_for is None:
+        catalog_for = container.catalog_for
+    store_factory = container.wiki_proposal_store_for
     handlers = {
         "ingest": _cmd_ingest,
         "list": _cmd_list,
@@ -237,7 +301,7 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None,
         "lint": _cmd_lint,
         "refresh": _cmd_refresh,
     }
-    return handlers[args.command](args, effective_settings, catalog_for)
+    return handlers[args.command](args, effective_settings, catalog_for, store_factory)
 
 
 if __name__ == "__main__":  # pragma: no cover

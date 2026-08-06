@@ -29,7 +29,7 @@ from ..review import (
 from ..services.document_repository import DocumentRepository, get_repository
 from ..telemetry import NoopTelemetry, Telemetry, build_telemetry
 from ..tracing import LocalTraceCollector, get_local_trace_collector
-from ..wiki.review_queue import WikiReviewQueue
+from ..wiki.review_queue import WikiProposalStore, WikiReviewQueue
 from .config import Settings, get_settings
 
 if TYPE_CHECKING:
@@ -92,6 +92,9 @@ class ApplicationContainer:
     _catalog_cache: dict[str, DocumentCatalog] = field(
         default_factory=dict, repr=False
     )
+    _wiki_proposal_store_cache: dict[str, WikiProposalStore] = field(
+        default_factory=dict, repr=False
+    )
 
     def current_settings(self) -> Settings:
         return self._settings_provider() if self._settings_provider else self.settings
@@ -136,6 +139,28 @@ class ApplicationContainer:
         )
         self._catalog_cache[tenant_id] = catalog
         return catalog
+
+    def wiki_proposal_store_for(self, tenant_id: str) -> WikiProposalStore | None:
+        """Return the wiki proposal store scoped to ``tenant_id``.
+
+        In local mode every tenant shares the single JSON queue. In postgres
+        mode a per-tenant :class:`PostgresWikiProposalRepository` is built (and
+        cached) over the shared engine so the REST layer and the CLI read and
+        write the same durable proposals.
+        """
+
+        if self._engine is None:
+            return self.wiki_proposal_store
+        cached = self._wiki_proposal_store_cache.get(tenant_id)
+        if cached is not None:
+            return cached
+        from ..wiki.postgres_queue import PostgresWikiProposalRepository
+
+        store: WikiProposalStore = PostgresWikiProposalRepository(
+            self._engine, tenant_id=tenant_id
+        )
+        self._wiki_proposal_store_cache[tenant_id] = store
+        return store
 
 
 def _build_current_review_service() -> ReviewService:
@@ -189,6 +214,10 @@ def build_application_container(
     embedding_provider = None
     vector_store = None
     tenant_registry = None
+    # The wiki proposal store is tenant-scoped: local mode uses the shared JSON
+    # queue below, postgres mode builds per-tenant repositories on demand via
+    # ``wiki_proposal_store_for`` (no single default store in postgres mode).
+    wiki_proposals = None
 
     if current.storage_backend.strip().lower() == "postgres":
         from sqlalchemy import create_engine
@@ -268,9 +297,6 @@ def build_application_container(
         document_provider = None
         review_provider = None
         trace_provider = None
-        # Phase 10D: the postgres wiki proposal store (defect A) is deferred;
-        # until then the feature reports enabled=false in postgres mode.
-        wiki_proposals = None
     elif settings is None:
         documents: DocumentRepository = get_repository()
         checkpoints = get_review_checkpoint_store()

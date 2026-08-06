@@ -997,17 +997,16 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
         """Phase 10D wiki proposal review queue (current tenant only).
 
         Returns ``enabled=false`` and an empty list — never a 404 — when
-        ``WIKI_ENABLED`` is false or no proposal store is wired (postgres mode
-        until the defect-A migration). Entries are scoped to the request
-        principal's tenant.
+        ``WIKI_ENABLED`` is false or no proposal store is wired. Entries are
+        scoped to the request principal's tenant.
         """
 
         current_settings = container.current_settings()
         _raise_if_public_demo(current_settings)
-        store = container.wiki_proposal_store
+        principal: RequestPrincipal = http_request.state.principal
+        store = container.wiki_proposal_store_for(principal.tenant_id)
         if store is None or not current_settings.wiki_enabled:
             return WikiProposalsResponse(enabled=False, count=0, total=0, entries=[])
-        principal: RequestPrincipal = http_request.state.principal
         entries = store.list(tenant_id=principal.tenant_id)
         return WikiProposalsResponse(
             enabled=True,
@@ -1029,10 +1028,10 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
 
         current_settings = container.current_settings()
         _raise_if_public_demo(current_settings)
-        store = container.wiki_proposal_store
+        principal: RequestPrincipal = http_request.state.principal
+        store = container.wiki_proposal_store_for(principal.tenant_id)
         if store is None or not current_settings.wiki_enabled:
             raise HTTPException(status_code=404, detail="wiki proposals disabled")
-        principal: RequestPrincipal = http_request.state.principal
         try:
             record = store.get(proposal_id)
         except KeyError as exc:
@@ -1069,10 +1068,10 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
 
         current_settings = container.current_settings()
         _raise_if_public_demo(current_settings)
-        store = container.wiki_proposal_store
+        principal: RequestPrincipal = http_request.state.principal
+        store = container.wiki_proposal_store_for(principal.tenant_id)
         if store is None or not current_settings.wiki_enabled:
             raise HTTPException(status_code=400, detail="wiki proposals disabled")
-        principal: RequestPrincipal = http_request.state.principal
         try:
             record = store.get(proposal_id)
         except KeyError as exc:

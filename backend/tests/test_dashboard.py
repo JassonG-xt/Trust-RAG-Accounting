@@ -333,7 +333,8 @@ def test_dashboard_styles_wrap_long_api_summary_values_on_mobile() -> None:
     response = client.get("/dashboard/static/styles.css")
 
     assert response.status_code == 200
-    assert ".summary-line {\n  overflow-wrap: anywhere;" in response.text
+    body = response.text.replace("\r\n", "\n")
+    assert ".summary-line {\n  overflow-wrap: anywhere;" in body
 
 
 def test_dashboard_contains_provider_benchmark_panel() -> None:

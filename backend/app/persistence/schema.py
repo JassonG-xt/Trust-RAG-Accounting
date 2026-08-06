@@ -110,6 +110,41 @@ Index(
     review_actions.c.action_id,
 )
 
+wiki_proposals = Table(
+    "wiki_proposals",
+    metadata,
+    Column("tenant_id", String(128), primary_key=True),
+    Column("proposal_id", String(255), primary_key=True),
+    Column("status", String(64), nullable=False),
+    Column("risk", String(32), nullable=False),
+    Column("created_at", String(64), nullable=False),
+    Column("proposal", JSON, nullable=False),
+)
+
+wiki_proposal_actions = Table(
+    "wiki_proposal_actions",
+    metadata,
+    Column("tenant_id", String(128), primary_key=True),
+    Column("action_id", String(255), primary_key=True),
+    Column("proposal_id", String(255), nullable=False),
+    Column("action_type", String(64), nullable=False),
+    Column("previous_status", String(64), nullable=False),
+    Column("new_status", String(64), nullable=False),
+    Column("created_at", String(64), nullable=False),
+    Column("payload", JSON, nullable=False),
+    ForeignKeyConstraint(
+        ["tenant_id", "proposal_id"],
+        ["wiki_proposals.tenant_id", "wiki_proposals.proposal_id"],
+    ),
+)
+Index(
+    "ix_wiki_proposal_actions_tenant_proposal_created",
+    wiki_proposal_actions.c.tenant_id,
+    wiki_proposal_actions.c.proposal_id,
+    wiki_proposal_actions.c.created_at,
+    wiki_proposal_actions.c.action_id,
+)
+
 evaluation_runs = Table(
     "evaluation_runs",
     metadata,

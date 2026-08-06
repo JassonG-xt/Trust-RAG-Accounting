@@ -17,6 +17,8 @@ from backend.app.persistence.sqlalchemy import (
 )
 from backend.app.review import LocalReviewActionStore, LocalReviewCheckpointStore, ReviewService
 from backend.app.tracing import LocalTraceCollector
+from backend.app.wiki.postgres_queue import PostgresWikiProposalRepository
+from backend.app.wiki.review_queue import WikiReviewQueue
 
 
 class _DocumentCatalogStub:
@@ -170,3 +172,35 @@ def test_container_builds_s3_source_store() -> None:
     container = build_application_container(settings, s3_client=s3_client)
 
     assert isinstance(container.source_object_store, S3SourceObjectStore)
+
+
+def test_postgres_container_wiki_store_for_builds_per_tenant_repositories() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    settings = Settings(
+        storage_backend="postgres",
+        database_url="sqlite+pysqlite:///:memory:",
+        tenant_id="tenant-a",
+    )
+
+    container = build_application_container(settings, engine=engine)
+
+    alpha = container.wiki_proposal_store_for("alpha")
+    assert isinstance(alpha, PostgresWikiProposalRepository)
+    assert container.wiki_proposal_store_for("alpha") is alpha
+    assert isinstance(
+        container.wiki_proposal_store_for("beta"), PostgresWikiProposalRepository
+    )
+    # No single-tenant default store in postgres mode; tenants get one on demand.
+    assert container.wiki_proposal_store is None
+
+
+def test_local_container_wiki_store_for_returns_json_queue(tmp_path: Path) -> None:
+    settings = Settings(
+        wiki_proposal_store_path=str(tmp_path / "wiki_proposals.json")
+    )
+
+    container = build_application_container(settings)
+
+    assert isinstance(container.wiki_proposal_store_for("alpha"), WikiReviewQueue)
+    assert isinstance(container.wiki_proposal_store, WikiReviewQueue)

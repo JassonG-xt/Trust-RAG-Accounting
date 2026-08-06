@@ -8,7 +8,11 @@ from pathlib import Path
 
 from sqlalchemy import create_engine
 
-from .importers import import_document_json, import_review_jsonl
+from .importers import (
+    import_document_json,
+    import_review_jsonl,
+    import_wiki_proposals_json,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -20,6 +24,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--chunks", required=True, type=Path)
     parser.add_argument("--checkpoints", required=True, type=Path)
     parser.add_argument("--actions", required=True, type=Path)
+    parser.add_argument(
+        "--wiki-proposals",
+        default=None,
+        type=Path,
+        help="optional legacy wiki proposal queue JSON (proposal_id -> record)",
+    )
     return parser
 
 
@@ -39,7 +49,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         checkpoint_path=args.checkpoints,
         action_path=args.actions,
     )
-    print(
+    output = (
         f"documents_imported={document_result.documents_imported} "
         f"versions_imported={document_result.versions_imported} "
         f"chunks_imported={document_result.chunks_imported} "
@@ -47,6 +57,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"actions_imported={review_result.actions_imported} "
         f"malformed_lines_skipped={review_result.malformed_lines_skipped}"
     )
+    if args.wiki_proposals is not None:
+        wiki_result = import_wiki_proposals_json(
+            engine,
+            tenant_id=args.tenant_id,
+            proposal_path=args.wiki_proposals,
+        )
+        output += (
+            f" wiki_proposals_imported={wiki_result.proposals_imported} "
+            f"wiki_actions_imported={wiki_result.actions_imported} "
+            f"wiki_malformed_skipped={wiki_result.malformed_records_skipped} "
+            f"wiki_tenant_mismatches_skipped={wiki_result.tenant_mismatches_skipped}"
+        )
+    print(output)
     return 0
 
 
