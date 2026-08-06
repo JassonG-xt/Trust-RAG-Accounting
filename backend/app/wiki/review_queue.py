@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Protocol
 
 from pydantic import BaseModel, Field
 
@@ -65,6 +66,30 @@ class WikiProposalActionResponse(BaseModel):
 
     proposal_id: str
     status: str
+
+
+class WikiProposalStore(Protocol):
+    """Persistence seam shared by the local JSON queue and Postgres.
+
+    Both implementations keep the same review surface (``enqueue`` /
+    ``list`` / ``get`` / ``act``) so the REST layer, the CLI and the applier
+    observe identical semantics — the stored proposal records, however, are
+    tenant-scoped by the store that owns them.
+    """
+
+    def enqueue(
+        self,
+        proposal: WikiUpdateProposal,
+        *,
+        created_at: str,
+        tenant_id: str | None = None,
+    ) -> str: ...
+
+    def list(self, *, tenant_id: str | None = None) -> list[WikiProposalRecord]: ...
+
+    def get(self, proposal_id: str) -> WikiProposalRecord: ...
+
+    def act(self, proposal_id: str, action_type: str, *, at: str) -> str: ...
 
 
 class WikiReviewQueue:
@@ -146,7 +171,7 @@ class WikiReviewQueue:
 
 
 def approve_and_apply(
-    queue: WikiReviewQueue,
+    queue: WikiProposalStore,
     proposal_id: str,
     wiki_dir: Path | str,
     *,

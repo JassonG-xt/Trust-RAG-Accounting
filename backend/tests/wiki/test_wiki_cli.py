@@ -243,3 +243,73 @@ def test_unsafe_tenant_id_rejected(tmp_path, bad):
     settings = _settings(tmp_path)
     with pytest.raises(SystemExit):
         _run(settings, "list", "--tenant", bad)
+
+
+# --- postgres queue (defect A): CLI and REST share one durable store --------------
+
+
+def test_postgres_cli_and_rest_share_the_wiki_queue(tmp_path, capsys) -> None:
+    from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine
+
+    from backend.app.core.container import build_application_container
+    from backend.app.main import create_app
+    from backend.app.persistence.sqlalchemy import create_schema
+
+    database_path = tmp_path / "wiki.sqlite3"
+    settings = Settings(
+        storage_backend="postgres",
+        database_url=f"sqlite+pysqlite:///{database_path}",
+        tenant_id="alpha",
+        wiki_enabled=True,
+        wiki_dir=str(tmp_path / "data/wiki"),
+        wiki_mock_proposals_dir=str(Proposals(test_dir=tmp_path)),
+    )
+    engine = create_engine(f"sqlite+pysqlite:///{database_path}")
+    create_schema(engine)
+    container = build_application_container(settings, engine=engine)
+    registry = container.tenant_registry
+    for tid in ("alpha", "beta"):
+        registry.create(tid, f"{tid} co", now="2026-07-21T00:00:00Z")
+
+    def run(*argv) -> int:
+        return cli.main(
+            list(argv),
+            settings=settings,
+            container=container,
+            catalog_for=lambda tenant: make_repository(),
+        )
+
+    # 1. CLI ingest is visible to REST.
+    assert run("ingest", "--tenant", "alpha", "--doc-id",
+               "alpha_trading_bookkeeping_sop_2026") == 0
+    capsys.readouterr()
+    client = TestClient(create_app(container))
+    body = client.get("/v1/wiki/proposals").json()
+    assert body["enabled"] is True
+    assert [e["proposal_id"] for e in body["entries"]] == ["prop-alpha-sop-0001"]
+
+    # 2. A REST action is visible to the CLI.
+    response = client.post(
+        "/v1/wiki/proposals/prop-alpha-sop-0001/actions",
+        json={"action_type": "reject"},
+    )
+    assert response.status_code == 200
+    assert run("list", "--tenant", "alpha") == 0
+    assert "rejected" in capsys.readouterr().out
+    assert run("show", "--tenant", "alpha", "--proposal", "prop-alpha-sop-0001") == 0
+    assert "status=rejected" in capsys.readouterr().out
+
+    # 3. A second tenant's data never leaks into the first.
+    assert run("ingest", "--tenant", "beta", "--doc-id", BETA_SOURCE) == 0
+    capsys.readouterr()
+    assert run("list", "--tenant", "alpha") == 0
+    alpha_out = capsys.readouterr().out
+    assert "prop-alpha-sop-0001" in alpha_out
+    assert "prop-beta-sop-0001" not in alpha_out
+    assert run("list", "--tenant", "beta") == 0
+    assert "prop-beta-sop-0001" in capsys.readouterr().out
+    alpha_records = container.wiki_proposal_store_for("alpha").list()
+    beta_records = container.wiki_proposal_store_for("beta").list()
+    assert {p.proposal_id for p in alpha_records} == {"prop-alpha-sop-0001"}
+    assert {p.proposal_id for p in beta_records} == {"prop-beta-sop-0001"}

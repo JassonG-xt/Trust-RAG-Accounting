@@ -35,6 +35,7 @@ TrustRAG Accounting is phase-gated by tests and evals, not dates. Each phase is 
 | 10B | Complete | OIDC/JWT trusted identity, centralized RBAC, tenant propagation, and authenticated review audit actors. |
 | 10C | Complete | Durable indexing jobs, worker leases/retries, generation switching, active Postgres catalog, and Qdrant hard filters. |
 | 10D | Complete | OpenTelemetry OTLP traces/metrics, request correlation, readiness, production invariants, and rollout verification. |
+| 10E | Complete | Postgres-backed wiki proposal review queue shared by REST and `trustrag-wiki` CLI, with idempotent legacy import and locked concurrent review transitions. |
 
 Recent validated baselines:
 
@@ -69,6 +70,7 @@ are intentionally preserved rather than rewritten to the current gate size.
 - Optional production profile using Postgres, S3-compatible object storage, Qdrant, OIDC and OpenTelemetry.
 - Durable, authenticated review audit records and tenant-scoped retrieval.
 - Asynchronous document indexing with crash recovery and consistency reconciliation.
+- Postgres-backed wiki proposal review queue shared by the API and the `trustrag-wiki` CLI, with idempotent JSON import and safe concurrent review actions. See [production_persistence.md](production_persistence.md).
 
 ## Near-Term Next Steps
 

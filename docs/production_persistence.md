@@ -17,6 +17,31 @@ same application seams.
 The import command is idempotent. Review actions are inserted in historical
 order and their `previous_status` must match the stored state projection.
 
+## Wiki proposal queue rollout (defect A)
+
+The wiki proposal review queue also migrates from the local JSON store to
+Postgres so the REST `/v1/wiki/proposals*` endpoints and the `trustrag-wiki`
+CLI share the same durable proposals and review actions. Rollout order:
+
+1. Run `alembic upgrade head` to create `wiki_proposals` and
+   `wiki_proposal_actions`.
+2. Import the legacy queue with `--wiki-proposals data/wiki_proposals.json`
+   (unused for the old command when the flag is omitted).
+3. Compare proposal and wiki-action counts before/after the import, and
+   re-run the import to verify it is idempotent (no duplicates).
+4. Set `TRUSTRAG_STORAGE_BACKEND=postgres`.
+5. Set `WIKI_ENABLED=true` — the proposal list now returns `enabled=true`.
+6. Keep `data/wiki_proposals.json` read-only for one release before
+   archiving it.
+7. On rollback, switching back to `local` restores the JSON queue and does
+   **not** copy newer Postgres proposals/actions back into the JSON file.
+
+Concurrent reviewers are safe: `act()` locks the proposal row (`FOR UPDATE`),
+validates the shared review state machine against the fresh status, writes the
+action and updates the status in one transaction, so a second reviewer against
+the same proposal re-reads the latest status and gets an explicit invalid
+transition error instead of silently dropping their action.
+
 ## Consistency and rollback
 
 - Postgres review writes lock the checkpoint row and reject stale status

@@ -41,12 +41,15 @@ trustrag-import-legacy \
   --documents data/trustrag_documents.json \
   --chunks data/trustrag_chunks.json \
   --checkpoints data/review_queue.jsonl \
-  --actions data/review_actions.jsonl
+  --actions data/review_actions.jsonl \
+  --wiki-proposals data/wiki_proposals.json
 ```
 
 Rerunning the command does not duplicate document checksums, chunk identities,
-review queue IDs, or action IDs. Keep the local files read-only until database
-counts and checksums have been verified.
+review queue IDs, action IDs, or wiki proposal/action IDs. Keep the local files
+read-only until database counts and checksums have been verified. The
+`--wiki-proposals` flag is optional; without it the legacy command behaves
+exactly as before.
 
 ## Authentication and Authorization
 
@@ -123,6 +126,21 @@ The current app reads the default repository paths
 | `TRUSTRAG_REVIEW_CONFIDENCE_THRESHOLD` | `0.6` | Review handoff threshold for low-confidence cases. |
 
 Review files live under `data/` by default and must not be committed.
+
+## Wiki
+
+| Variable | Default | Notes |
+|---|---|---|
+| `WIKI_ENABLED` | `false` | Enables the wiki proposal review endpoints. The proposal list reports `enabled` accordingly. |
+| `WIKI_DIR` | `data/wiki` | Tenant-partitioned markdown tree written by approved proposals. |
+| `WIKI_MOCK_PROPOSALS_DIR` | `data/wiki_mock_proposals` | Replayed fixture proposals for ingest demos. |
+
+Under `TRUSTRAG_STORAGE_BACKEND=local`, proposals and review actions are held
+in `data/wiki_proposals.json`. Under `postgres`, the REST
+`/v1/wiki/proposals*` endpoints and the `trustrag-wiki` CLI read and write the
+same `wiki_proposals` / `wiki_proposal_actions` tables, so review decisions are
+shared and concurrent reviewers cannot silently drop actions. Import a legacy
+queue with `--wiki-proposals` as shown in the production persistence section.
 
 ## Retrieval
 
